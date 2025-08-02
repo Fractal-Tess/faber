@@ -1,6 +1,6 @@
 use axum::{
     extract::Request,
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode},
     middleware::Next,
     response::Response,
 };
@@ -40,8 +40,12 @@ pub async fn auth_middleware(
 // Timing middleware to log the duration of the request
 pub async fn timing_middleware(request: Request, next: Next) -> Result<Response, StatusCode> {
     let start = Instant::now();
-    let response = next.run(request).await;
+    let mut response = next.run(request).await;
     let duration = start.elapsed();
+    response.headers_mut().insert(
+        "X-Response-Time",
+        HeaderValue::from_str(&duration.as_secs_f64().to_string()).unwrap(),
+    );
     info!("Request took {:?}", duration);
     Ok(response)
 }
