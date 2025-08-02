@@ -1,5 +1,5 @@
 use axum::{
-    extract::Request,
+    extract::{Extension, Request},
     http::{HeaderMap, HeaderValue, StatusCode},
     middleware::Next,
     response::Response,
@@ -10,6 +10,7 @@ use tracing::{error, info};
 
 // Authentication middleware to check if the request has a valid API key
 pub async fn auth_middleware(
+    Extension(expected_api_key): Extension<Arc<String>>,
     headers: HeaderMap,
     request: Request,
     next: Next,
@@ -21,12 +22,6 @@ pub async fn auth_middleware(
             error!("Missing api_key header");
             StatusCode::UNAUTHORIZED
         })?;
-
-    // Get the expected API key from the request extensions
-    let expected_api_key = request.extensions().get::<Arc<String>>().ok_or_else(|| {
-        error!("API key not configured in application");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
 
     if api_key != expected_api_key.as_str() {
         error!("Invalid API key provided");

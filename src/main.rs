@@ -17,7 +17,7 @@ async fn run() {
     let config = ApiConfig::new();
     info!("Configuration loaded: {}:{}", config.host, config.port);
 
-    let app = create_router();
+    let app = create_router(config.api_key);
 
     let addr = format!("{}:{}", config.host, config.port);
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();

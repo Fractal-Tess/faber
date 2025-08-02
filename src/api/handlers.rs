@@ -1,18 +1,22 @@
 use axum::{
-    Router,
+    Extension, Router,
     http::StatusCode,
     middleware,
     response::{IntoResponse, Response},
     routing::get,
 };
+use std::sync::Arc;
 use tracing::info;
 
 use crate::api::middleware::{auth_middleware, timing_middleware};
 
-pub fn create_router() -> Router {
+pub fn create_router(api_key: String) -> Router {
+    let api_key = Arc::new(api_key);
+
     let protected_routes = Router::new()
         .route("/protected", get(protected))
-        .layer(middleware::from_fn(auth_middleware));
+        .layer(middleware::from_fn(auth_middleware))
+        .layer(Extension(api_key.clone()));
 
     let public_routes = Router::new().route("/health", get(health_check));
 
