@@ -1,8 +1,6 @@
-use axum::{Router, routing::get};
-use faber::api::health_check;
+use faber::api::create_router;
 use faber::config::ApiConfig;
 use faber::logging;
-use tower_http::trace::TraceLayer;
 use tracing::info;
 
 #[tokio::main]
@@ -19,9 +17,7 @@ async fn run() {
     let config = ApiConfig::new();
     info!("Configuration loaded: {}:{}", config.host, config.port);
 
-    let app = Router::new()
-        .route("/health", get(health_check))
-        .layer(TraceLayer::new_for_http());
+    let app = create_router();
 
     let addr = format!("{}:{}", config.host, config.port);
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();

@@ -3,3 +3,5 @@ target
 .direnv
 .env
 .cursorignore
+
+*.md
