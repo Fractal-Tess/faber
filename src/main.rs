@@ -1,31 +1,39 @@
 use axum::{Router, routing::get};
 use faber::api::health_check;
 use faber::config::ApiConfig;
+use faber::logging;
+use tower_http::trace::TraceLayer;
+use tracing::info;
 
 #[tokio::main]
 async fn main() {
+    // Initialize logging
+    logging::init_logging();
+
     run().await;
 }
 
 async fn run() {
-    println!("Starting Faber...");
+    info!("Starting Faber...");
 
     let config = ApiConfig::new();
+    info!("Configuration loaded: {}:{}", config.host, config.port);
 
-    let app = Router::new().route("/health", get(health_check));
+    let app = Router::new()
+        .route("/health", get(health_check))
+        .layer(TraceLayer::new_for_http());
 
     let addr = format!("{}:{}", config.host, config.port);
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+    info!("Listening on {}", listener.local_addr().unwrap());
     let shutdown_signal = async {
         tokio::signal::ctrl_c().await.ok();
     };
-
-    println!("Listening on {}", listener.local_addr().unwrap());
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal)
         .await
         .unwrap();
 
-    println!("\nShutting down...");
+    info!("Shutting down...");
 }
