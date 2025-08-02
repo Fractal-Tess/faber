@@ -3,8 +3,6 @@ name = "faber"
 version = "0.1.0"
 edition = "2024"
 
-[workspace]
-members = ["crates/math"]
-
 [dependencies]
-math = { path = "crates/math" }
+axum = "0.8.4"
+tokio = { version = "1.47.1", features = ["full"] }
