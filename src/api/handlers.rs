@@ -1,14 +1,23 @@
-use axum::{
-    Extension, Router,
-    http::StatusCode,
-    middleware,
-    response::{IntoResponse, Response},
-    routing::get,
-};
+use axum::{Extension, Json, Router, middleware, routing::get};
 use std::sync::Arc;
 use tracing::info;
+use utoipa::ToSchema;
 
 use crate::api::middleware::{auth_middleware, timing_middleware};
+
+/// Health check response
+#[derive(ToSchema, serde::Serialize)]
+pub struct HealthResponse {
+    /// Status message
+    status: String,
+}
+
+/// Protected endpoint response
+#[derive(ToSchema, serde::Serialize)]
+pub struct ProtectedResponse {
+    /// Success message
+    message: String,
+}
 
 pub fn create_router(api_key: String) -> Router {
     let api_key = Arc::new(api_key);
@@ -25,12 +34,44 @@ pub fn create_router(api_key: String) -> Router {
         .layer(middleware::from_fn(timing_middleware))
 }
 
-async fn health_check() -> Response {
+/// Health check endpoint
+///
+/// Returns the health status of the API
+#[utoipa::path(
+    get,
+    path = "/health",
+    tag = "health",
+    responses(
+        (status = 200, description = "API is healthy", body = HealthResponse)
+    )
+)]
+#[axum::debug_handler]
+pub async fn health_check() -> Json<HealthResponse> {
     info!("Health check requested");
-    (StatusCode::OK, "OK").into_response()
+    Json(HealthResponse {
+        status: "OK".to_string(),
+    })
 }
 
-async fn protected() -> Response {
+/// Protected endpoint
+///
+/// Returns protected content that requires valid API key authentication
+#[utoipa::path(
+    get,
+    path = "/protected",
+    tag = "protected",
+    security(
+        ("api_key" = [])
+    ),
+    responses(
+        (status = 200, description = "Protected content accessed successfully", body = ProtectedResponse),
+        (status = 401, description = "Unauthorized - Invalid or missing API key")
+    )
+)]
+#[axum::debug_handler]
+pub async fn protected() -> Json<ProtectedResponse> {
     info!("Protected route accessed with valid API key");
-    (StatusCode::OK, "Protected content accessed successfully").into_response()
+    Json(ProtectedResponse {
+        message: "Protected content accessed successfully".to_string(),
+    })
 }
