@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -7,9 +8,11 @@ use std::process::Stdio;
 use std::time::Instant;
 use tempfile::TempDir;
 use thiserror::Error;
-use tokio::process::Command as TokioCommand;
+use tokio::process::Command;
+use tracing::error;
 use utoipa::ToSchema;
 
+/// Errors that can occur during execution
 #[derive(Error, Debug)]
 pub enum ExecutorError {
     #[error("Failed to create sandbox directory: {0}")]
@@ -25,6 +28,7 @@ pub enum ExecutorError {
 /// File source for copying files into sandbox
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(untagged)]
+#[schema(example = json!({"content": "#include <iostream>\nint main() {\n    std::cout << \"Hello, World!\" << std::endl;\n    return 0;\n}"}))]
 pub enum FileSource {
     /// File content as string
     Content { content: String },
@@ -32,6 +36,16 @@ pub enum FileSource {
 
 /// A task to execute in the sandbox
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "order": 0,
+    "args": ["/usr/bin/g++", "main.cpp", "-o", "program"],
+    "env": ["PATH=/usr/bin:/bin"],
+    "src": {
+        "main.cpp": {
+            "content": "#include <iostream>\nint main() {\n    std::cout << \"Hello from C++!\" << std::endl;\n    return 0;\n}"
+        }
+    }
+}))]
 pub struct Task {
     /// Order of execution (must be unique, start from 0, no gaps)
     pub order: u32,
@@ -47,6 +61,22 @@ pub struct Task {
 
 /// Execution request containing named tasks
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "compile": {
+        "order": 0,
+        "args": ["/usr/bin/g++", "main.cpp", "-o", "program", "-std=c++17"],
+        "env": ["PATH=/usr/bin:/bin"],
+        "src": {
+            "main.cpp": {
+                "content": "#include <iostream>\n#include <vector>\n\nint main() {\n    std::vector<int> numbers = {1, 2, 3, 4, 5};\n    \n    std::cout << \"Numbers: \";\n    for (const auto& num : numbers) {\n        std::cout << num << \" \";\n    }\n    std::cout << std::endl;\n    \n    return 0;\n}"
+            }
+        }
+    },
+    "run": {
+        "order": 1,
+        "args": ["./program"]
+    }
+}))]
 pub struct ExecutionRequest {
     /// Tasks mapped by arbitrary names
     #[serde(flatten)]
@@ -55,7 +85,19 @@ pub struct ExecutionRequest {
 
 /// Result of a single task execution
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "status": "success",
+    "exitStatus": 0,
+    "time": "250ms",
+    "memory": "15mb",
+    "files": {
+        "stdout": "Numbers: 1 2 3 4 5 \n"
+    }
+}))]
 pub struct TaskResult {
+    /// Task execution status
+    #[serde(rename = "status")]
+    pub status: String,
     /// Exit code
     #[serde(rename = "exitStatus")]
     pub exit_status: i32,
@@ -69,8 +111,33 @@ pub struct TaskResult {
 
 /// Complete execution result
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[schema(example = json!({
+    "compile": {
+        "status": "success",
+        "exitStatus": 0,
+        "time": "1.2s",
+        "memory": "45mb",
+        "files": {}
+    },
+    "run": {
+        "status": "failure", 
+        "exitStatus": 1,
+        "time": "5ms",
+        "memory": "8mb",
+        "files": {
+            "stderr": "Segmentation fault (core dumped)\n"
+        }
+    },
+    "test": {
+        "status": "not executed",
+        "exitStatus": 0,
+        "time": "0ms",
+        "memory": "0mb",
+        "files": {}
+    }
+}))]
 pub struct ExecutionResult {
-    /// Results mapped by task names
+    /// Results mapped by the same task names from the request
     #[serde(flatten)]
     pub results: HashMap<String, TaskResult>,
 }
@@ -136,19 +203,56 @@ impl SandboxExecutor {
         Ok(Self { work_dir })
     }
 
-    /// Execute all tasks in the request
+    /// Execute all tasks in the request in order, stopping on first failure
     pub async fn execute(
         &self,
         request: &ExecutionRequest,
     ) -> Result<ExecutionResult, ExecutorError> {
-        request.validate()?;
-
         let mut results = HashMap::new();
+        let ordered_tasks = request.ordered_tasks();
+        let mut execution_stopped = false;
 
-        // Execute tasks in order
-        for (task_name, task) in request.ordered_tasks() {
-            let result = self.execute_task(task).await?;
-            results.insert(task_name.clone(), result);
+        for (task_name, task) in ordered_tasks {
+            if execution_stopped {
+                // Mark remaining tasks as not executed
+                results.insert(
+                    task_name.clone(),
+                    TaskResult {
+                        status: "not executed".to_string(),
+                        exit_status: 0,
+                        time: "0ms".to_string(),
+                        memory: "0mb".to_string(),
+                        files: HashMap::new(),
+                    },
+                );
+            } else {
+                // Execute the task - never return error, always capture result
+                let result = match self.execute_task(task).await {
+                    Ok(task_result) => task_result,
+                    Err(e) => {
+                        // Convert execution error to a failed task result
+                        error!("Task execution error: {e}");
+                        TaskResult {
+                            status: "failure".to_string(),
+                            exit_status: 1,
+                            time: "0ms".to_string(),
+                            memory: "0mb".to_string(),
+                            files: {
+                                let mut files = HashMap::new();
+                                files.insert("stderr".to_string(), format!("Execution error: {e}"));
+                                files
+                            },
+                        }
+                    }
+                };
+
+                let task_failed = result.status == "failure";
+                results.insert(task_name.clone(), result);
+
+                if task_failed {
+                    execution_stopped = true;
+                }
+            }
         }
 
         Ok(ExecutionResult { results })
@@ -165,7 +269,7 @@ impl SandboxExecutor {
 
         // Execute the command with memory monitoring
         let start_time = Instant::now();
-        let mut command = TokioCommand::new(&task.args[0]);
+        let mut command = Command::new(&task.args[0]);
 
         // Add arguments
         for arg in &task.args[1..] {
@@ -259,7 +363,14 @@ impl SandboxExecutor {
         let time_str = Self::format_duration(elapsed);
         let memory_str = Self::format_memory(peak_memory);
 
+        let status = if output.status.success() {
+            "success".to_string()
+        } else {
+            "failure".to_string()
+        };
+
         Ok(TaskResult {
+            status,
             exit_status: output.status.code().unwrap_or(-1),
             time: time_str,
             memory: memory_str,
