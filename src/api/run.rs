@@ -14,7 +14,7 @@ pub async fn run(
             executor
         }
         Err(e) => {
-            error!("Failed to create executor: {}", e);
+            error!("Failed to create executor: {e:?}");
             return (StatusCode::INTERNAL_SERVER_ERROR, Json(vec![]));
         }
     };
