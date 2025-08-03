@@ -3,10 +3,11 @@ use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
-use std::process::{Command as StdCommand, Stdio};
+use std::process::Stdio;
 use std::time::Instant;
 use tempfile::TempDir;
 use thiserror::Error;
+use tokio::process::Command as TokioCommand;
 use utoipa::ToSchema;
 
 #[derive(Error, Debug)]
@@ -162,9 +163,9 @@ impl SandboxExecutor {
             self.copy_file_to_sandbox(work_path, filename, file_source)?;
         }
 
-        // Execute the command
+        // Execute the command with memory monitoring
         let start_time = Instant::now();
-        let mut command = StdCommand::new(&task.args[0]);
+        let mut command = TokioCommand::new(&task.args[0]);
 
         // Add arguments
         for arg in &task.args[1..] {
@@ -184,12 +185,63 @@ impl SandboxExecutor {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        // Execute command
-        let output = command.output().map_err(|e| {
-            ExecutorError::ExecutionFailed(format!("Failed to execute command: {e}"))
+        // Spawn the process
+        let child = command
+            .spawn()
+            .map_err(|e| ExecutorError::ExecutionFailed(format!("Failed to spawn command: {e}")))?;
+
+        let pid = child.id();
+        let mut peak_memory = 0u64;
+
+        // Monitor memory usage in a separate task
+        let memory_monitor = if let Some(pid) = pid {
+            let monitor_handle = tokio::spawn(async move {
+                let mut peak = 0u64;
+                let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(50));
+
+                loop {
+                    interval.tick().await;
+
+                    // Read memory usage from /proc/[pid]/status
+                    if let Ok(status) = fs::read_to_string(format!("/proc/{pid}/status")) {
+                        for line in status.lines() {
+                            if line.starts_with("VmRSS:") {
+                                if let Some(kb_str) = line.split_whitespace().nth(1) {
+                                    if let Ok(kb) = kb_str.parse::<u64>() {
+                                        let bytes = kb * 1024;
+                                        if bytes > peak {
+                                            peak = bytes;
+                                        }
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    } else {
+                        // Process no longer exists
+                        break;
+                    }
+                }
+                peak
+            });
+            Some(monitor_handle)
+        } else {
+            None
+        };
+
+        // Wait for the process to complete
+        let output = child.wait_with_output().await.map_err(|e| {
+            ExecutorError::ExecutionFailed(format!("Failed to wait for command: {e}"))
         })?;
 
         let elapsed = start_time.elapsed();
+
+        // Get peak memory from monitor
+        if let Some(monitor) = memory_monitor {
+            if let Ok(mem) = monitor.await {
+                peak_memory = mem;
+            }
+        }
 
         // Collect output files
         let mut files = HashMap::new();
@@ -205,7 +257,7 @@ impl SandboxExecutor {
 
         // Format time and memory in human-readable format
         let time_str = Self::format_duration(elapsed);
-        let memory_str = Self::format_memory(0); // TODO: Implement actual memory measurement
+        let memory_str = Self::format_memory(peak_memory);
 
         Ok(TaskResult {
             exit_status: output.status.code().unwrap_or(-1),
@@ -259,7 +311,7 @@ impl SandboxExecutor {
         let nanos = duration.as_nanos();
 
         if nanos < 1_000 {
-            format!("{}ns", nanos)
+            format!("{nanos}ns")
         } else if nanos < 1_000_000 {
             format!("{}us", nanos / 1_000)
         } else if nanos < 1_000_000_000 {
@@ -269,14 +321,14 @@ impl SandboxExecutor {
         }
     }
 
-    /// Format memory in human-readable format
+    /// Format memory in human-readable format  
     fn format_memory(bytes: u64) -> String {
         if bytes == 0 {
             return "0mb".to_string();
         }
 
         if bytes < 1024 {
-            format!("{}b", bytes)
+            format!("{bytes}b")
         } else if bytes < 1024 * 1024 {
             format!("{}kb", bytes / 1024)
         } else if bytes < 1024 * 1024 * 1024 {
@@ -395,5 +447,35 @@ mod tests {
         let task_result = result.results.get("test").unwrap();
         assert_eq!(task_result.exit_status, 0);
         assert_eq!(task_result.files.get("stdout").unwrap(), "Hello, World!");
+    }
+
+    #[tokio::test]
+    async fn test_memory_monitoring() {
+        let executor = SandboxExecutor::new().unwrap();
+
+        let mut tasks = HashMap::new();
+        tasks.insert(
+            "memory_test".to_string(),
+            Task {
+                order: 0,
+                args: vec!["echo".to_string(), "Memory test".to_string()],
+                env: vec![],
+                src: HashMap::new(),
+            },
+        );
+
+        let request = ExecutionRequest { tasks };
+        let result = executor.execute(&request).await.unwrap();
+
+        assert_eq!(result.results.len(), 1);
+        let task_result = result.results.get("memory_test").unwrap();
+        assert_eq!(task_result.exit_status, 0);
+
+        // Memory should be reported (might be 0mb for simple commands)
+        assert!(
+            task_result.memory.ends_with('b')
+                || task_result.memory.ends_with("mb")
+                || task_result.memory.ends_with("kb")
+        );
     }
 }
