@@ -21,6 +21,7 @@
               # clang
               # Use mold when we are running in Linux
               # (pkgs.lib.optionals pkgs.stdenv.isLinux pkgs.mold)
+              cargo-watch
             ];
           buildInputs = with pkgs;
             [

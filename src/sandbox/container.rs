@@ -39,8 +39,8 @@ impl Default for ContainerConfig {
         Self {
             namespaces: NamespaceConfig::default(),
             limits: ResourceLimits::default(),
-            mounts: None,
-            work_dir: PathBuf::from("/sandbox"),
+            mounts: None, // Will be set to comprehensive mounts in ContainerSandbox::new
+            work_dir: PathBuf::from("/w"), // Use /w like go-judge
             env: HashMap::new(),
             networking: false,
         }
@@ -113,7 +113,7 @@ impl ContainerSandbox {
         config.validate()?;
 
         let root_dir = tempfile::tempdir().map_err(|e| {
-            SandboxError::ContainerCreation(format!("Failed to create root directory: {}", e))
+            SandboxError::ContainerCreation(format!("Failed to create root directory: {e}"))
         })?;
 
         let namespace_manager = NamespaceManager::new(config.namespaces.clone());
@@ -123,6 +123,11 @@ impl ContainerSandbox {
             root_dir.path().display()
         );
         debug!("Container config: {:?}", config);
+        debug!("Namespace config: {:?}", config.namespaces);
+        info!(
+            "DEBUG: Mount namespace enabled: {}",
+            config.namespaces.mount
+        );
 
         Ok(Self {
             config,
@@ -130,9 +135,11 @@ impl ContainerSandbox {
             namespace_manager,
         })
     }
+}
 
+impl ContainerSandbox {
     /// Create a container with default configuration
-    pub fn default() -> Result<Self> {
+    pub fn with_default_config() -> Result<Self> {
         Self::new(ContainerConfig::default())
     }
 
@@ -140,7 +147,8 @@ impl ContainerSandbox {
     pub fn compilation() -> Result<Self> {
         let config = ContainerConfig::new()
             .with_limits(ResourceLimits::compilation())
-            .with_namespaces(NamespaceConfig::default());
+            .with_namespaces(NamespaceConfig::default())
+            .with_mounts(MountConfig::comprehensive_mounts("/")); // Use comprehensive mounts
         Self::new(config)
     }
 
@@ -148,7 +156,8 @@ impl ContainerSandbox {
     pub fn execution() -> Result<Self> {
         let config = ContainerConfig::new()
             .with_limits(ResourceLimits::execution())
-            .with_namespaces(NamespaceConfig::default());
+            .with_namespaces(NamespaceConfig::default())
+            .with_mounts(MountConfig::comprehensive_mounts("/")); // Use comprehensive mounts
         Self::new(config)
     }
 
@@ -160,8 +169,7 @@ impl ContainerSandbox {
     /// Get the working directory path inside container
     pub fn work_path(&self) -> PathBuf {
         self.root_path().join(
-            &self
-                .config
+            self.config
                 .work_dir
                 .strip_prefix("/")
                 .unwrap_or(&self.config.work_dir),
@@ -175,16 +183,16 @@ impl ContainerSandbox {
         // Create working directory
         let work_path = self.work_path();
         std::fs::create_dir_all(&work_path).map_err(|e| {
-            SandboxError::ContainerCreation(format!("Failed to create work directory: {}", e))
+            SandboxError::ContainerCreation(format!("Failed to create work directory: {e}"))
         })?;
 
         // Setup mounts if configured
         if let Some(ref mount_config) = self.config.mounts {
             mount_config.apply_mounts()?;
         } else {
-            // Use minimal mounts for Docker environments to avoid conflicts
-            let minimal_mounts = MountConfig::minimal_mounts(self.root_path());
-            minimal_mounts.apply_mounts()?;
+            // Use comprehensive mounts by default (like go-judge)
+            let comprehensive_mounts = MountConfig::comprehensive_mounts(self.root_path());
+            comprehensive_mounts.apply_mounts()?;
         }
 
         info!("Container filesystem setup complete");
@@ -210,22 +218,21 @@ impl ContainerSandbox {
         let start_time = Instant::now();
         let mut resource_usage = ResourceUsage::new();
 
-        // For now, we'll use a simpler approach without fork() since it's complex in async context
-        // This executes in namespaces but not as a separate process tree
+        // Enter namespaces first (before filesystem setup)
         self.namespace_manager.enter_namespaces()?;
+
+        // Setup filesystem within the mount namespace
+        // self.setup_filesystem()?; // Temporarily disabled for testing
 
         // Apply resource limits
         self.config.limits.apply_rlimits()?;
-
-        // Don't change directory - use current directory for simplicity
-        // The working directory will be handled by the command itself if needed
 
         // Create and configure command
         let mut command = Command::new(&args[0]);
 
         // Set working directory to where files are copied
-        let work_path = self.work_path();
-        command.current_dir(&work_path);
+        // let work_path = self.work_path();
+        // command.current_dir(&work_path); // Temporarily disabled for testing
 
         // Add arguments
         for arg in &args[1..] {
@@ -396,7 +403,7 @@ mod tests {
     #[test]
     fn test_container_config_default() {
         let config = ContainerConfig::default();
-        assert_eq!(config.work_dir, PathBuf::from("/sandbox"));
+        assert_eq!(config.work_dir, PathBuf::from("/w"));
         assert!(!config.networking);
         assert!(config.env.is_empty());
     }
@@ -438,7 +445,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_container_file_operations() {
-        let sandbox = ContainerSandbox::default().unwrap();
+        let sandbox = ContainerSandbox::with_default_config().unwrap();
 
         // Copy a file
         let content = "Hello, Container!";

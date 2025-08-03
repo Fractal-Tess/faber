@@ -10,8 +10,8 @@ pub struct Config {
     pub open: bool,
 }
 
-impl Default for Config {
-    fn default() -> Self {
+impl Config {
+    pub fn from_env() -> Self {
         // Load .env file in development, ignore errors in production
         dotenvy::dotenv().ok();
 
@@ -41,12 +41,6 @@ impl Default for Config {
                 .unwrap_or(true),
             open,
         }
-    }
-}
-
-impl Config {
-    pub fn new() -> Self {
-        Self::default()
     }
 }
 

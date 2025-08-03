@@ -1,7 +1,7 @@
+use faber::api::create_router;
 use faber::config::Config;
-use faber::handlers::create_router;
 use faber::logging;
-use tracing::{debug, info};
+use tracing::info;
 
 #[tokio::main]
 async fn main() {
@@ -14,13 +14,13 @@ async fn main() {
 async fn run() {
     info!("Starting Faber...");
 
-    let config = Config::new();
-    debug!("Configuration loaded: {config}");
+    let config = Config::from_env();
 
     let app = create_router(&config);
 
-    let addr = format!("{}:{}", config.host, config.port);
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(&format!("{}:{}", config.host, config.port))
+        .await
+        .unwrap();
     info!("🚀 Listening on {}", listener.local_addr().unwrap());
 
     let shutdown_signal = async {

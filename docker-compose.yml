@@ -5,6 +5,10 @@ services:
       - .env
     ports:
       - '3000:3000'
+
+    volumes:
+      - ./target/x86_64-unknown-linux-musl/debug:/opt/faber:ro
+      - ./logs:/var/log/faber
     privileged: true
     healthcheck:
       test: ['CMD', 'curl', '-f', 'http://localhost:3000/health']

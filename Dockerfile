@@ -7,10 +7,10 @@ RUN apt update && apt install -y curl g++ && rm -rf /var/lib/apt/lists/*
 WORKDIR /opt
 
 # Copy the compiled binary
-COPY target/x86_64-unknown-linux-musl/debug/faber /opt/faber
+# COPY target/x86_64-unknown-linux-musl/debug/faber /opt/faber
 
 # Expose port
 EXPOSE 3000/tcp
 
 # Run the application
-ENTRYPOINT ["./faber"] 
+ENTRYPOINT ["tail", "-f", "/dev/null"] 
