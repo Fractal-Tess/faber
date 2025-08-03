@@ -56,8 +56,6 @@ impl Executor {
 
         info!("Completed execution of all tasks");
 
-        // Cleanup happens automatically when container is dropped
-
         results
     }
 
