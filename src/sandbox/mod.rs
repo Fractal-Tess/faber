@@ -3,7 +3,14 @@
 //! This module provides secure container isolation for task execution,
 //! similar to go-judge functionality.
 
+pub mod container;
 pub mod error;
-pub mod sandbox;
+pub mod mounts;
+pub mod namespaces;
 
-pub use sandbox::Sandbox;
+pub use container::{ContainerConfig, ContainerResult, ContainerSandbox};
+pub use mounts::{MountConfig, MountManager, MountPoint, MountType, SymLink};
+pub use namespaces::{NamespaceConfig, NamespaceManager};
+
+// Re-export ContainerSandbox as Sandbox for backward compatibility
+pub use container::ContainerSandbox as Sandbox;

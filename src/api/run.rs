@@ -1,5 +1,4 @@
 use crate::executor::{ExecutionTask, ExecutionTaskResult, Executor};
-use crate::sandbox::Sandbox;
 use axum::{Json, http::StatusCode};
 use tracing::{debug, error};
 
@@ -8,22 +7,19 @@ pub async fn run(
 ) -> (StatusCode, Json<Vec<ExecutionTaskResult>>) {
     debug!("Request: {request:?}");
 
-    // Create a sandbox for the request
-    let sandbox = match Sandbox::new() {
-        Ok(sandbox) => {
-            debug!("Successfully created sandbox: {}", sandbox.sandbox_id());
-            sandbox
+    // Create an executor with secure container sandbox
+    let executor = match Executor::new(request) {
+        Ok(executor) => {
+            debug!("Successfully created executor with secure container");
+            executor
         }
         Err(e) => {
-            error!("Failed to create sandbox: {}", e);
+            error!("Failed to create executor: {}", e);
             return (StatusCode::INTERNAL_SERVER_ERROR, Json(vec![]));
         }
     };
 
-    // Create an executor for the request
-    let executor = Executor::new(request, sandbox);
-
-    // Execute the request (executor will handle cleanup)
+    // Execute the request (executor manages container lifecycle)
     let results = executor.execute();
 
     // Return the results
