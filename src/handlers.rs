@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::docs::ApiDoc;
-use crate::executor::{ExecutionRequest, ExecutionResult, SandboxExecutor};
+use crate::executor::{ContainerExecutor, ExecutionRequest, ExecutionResult};
 use crate::middleware::{auth_middleware, timing_middleware};
 use axum::{Extension, Json, Router, http::StatusCode, middleware, routing::get, routing::post};
 use std::sync::Arc;
@@ -112,15 +112,15 @@ pub async fn run_code(
         ));
     }
 
-    // Create a new sandbox executor for this request - return 500 for server errors
-    let executor = match SandboxExecutor::new() {
+    // Create a new container executor for this request - return 500 for server errors
+    let executor = match ContainerExecutor::new() {
         Ok(executor) => executor,
         Err(e) => {
-            error!("Failed to create sandbox executor: {e}");
+            error!("Failed to create container executor: {e}");
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("Failed to create sandbox: {e}"),
+                    error: format!("Failed to create container: {e}"),
                 }),
             ));
         }

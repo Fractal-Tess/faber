@@ -11,6 +11,9 @@ use tokio::process::Command;
 use tracing::error;
 use utoipa::ToSchema;
 
+// Import our new container sandbox system
+use crate::sandbox::{ContainerSandbox, container::ContainerConfig};
+
 /// Errors that can occur during execution
 #[derive(Error, Debug)]
 pub enum ExecutorError {
@@ -446,6 +449,236 @@ impl SandboxExecutor {
         } else {
             format!("{}gb", bytes / (1024 * 1024 * 1024))
         }
+    }
+}
+
+/// Container-based executor for enhanced security and isolation
+pub struct ContainerExecutor {
+    container: ContainerSandbox,
+}
+
+impl ContainerExecutor {
+    /// Create a new container executor with default configuration
+    pub fn new() -> Result<Self, ExecutorError> {
+        let container = ContainerSandbox::default().map_err(|e| {
+            ExecutorError::CreateSandbox(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to create container sandbox: {}", e),
+            ))
+        })?;
+
+        Ok(Self { container })
+    }
+
+    /// Create a new container executor with custom configuration
+    pub fn with_config(config: ContainerConfig) -> Result<Self, ExecutorError> {
+        let container = ContainerSandbox::new(config).map_err(|e| {
+            ExecutorError::CreateSandbox(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to create container sandbox: {}", e),
+            ))
+        })?;
+
+        Ok(Self { container })
+    }
+
+    /// Create a container executor optimized for compilation tasks
+    pub fn compilation() -> Result<Self, ExecutorError> {
+        let container = ContainerSandbox::compilation().map_err(|e| {
+            ExecutorError::CreateSandbox(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to create compilation container: {}", e),
+            ))
+        })?;
+
+        Ok(Self { container })
+    }
+
+    /// Create a container executor optimized for execution tasks
+    pub fn execution() -> Result<Self, ExecutorError> {
+        let container = ContainerSandbox::execution().map_err(|e| {
+            ExecutorError::CreateSandbox(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to create execution container: {}", e),
+            ))
+        })?;
+
+        Ok(Self { container })
+    }
+
+    /// Execute all tasks in the request in order using container isolation
+    pub async fn execute(
+        &self,
+        request: &ExecutionRequest,
+    ) -> Result<ExecutionResult, ExecutorError> {
+        let mut results = HashMap::new();
+        let ordered_tasks = request.ordered_tasks();
+        let mut execution_stopped = false;
+
+        // Setup container filesystem
+        self.container.setup_filesystem().map_err(|e| {
+            ExecutorError::ExecutionFailed(format!("Container setup failed: {}", e))
+        })?;
+
+        for (task_name, task) in ordered_tasks {
+            if execution_stopped {
+                // Mark remaining tasks as not executed
+                results.insert(
+                    task_name.clone(),
+                    TaskResult {
+                        status: "not executed".to_string(),
+                        exit_status: 0,
+                        time: "0ms".to_string(),
+                        memory: "0mb".to_string(),
+                        files: HashMap::new(),
+                    },
+                );
+            } else {
+                // Execute the task in container
+                let result = match self.execute_task_in_container(task).await {
+                    Ok(task_result) => task_result,
+                    Err(e) => {
+                        error!("Container task execution error: {e}");
+                        TaskResult {
+                            status: "failure".to_string(),
+                            exit_status: 1,
+                            time: "0ms".to_string(),
+                            memory: "0mb".to_string(),
+                            files: {
+                                let mut files = HashMap::new();
+                                files.insert(
+                                    "stderr".to_string(),
+                                    format!("Container execution error: {e}"),
+                                );
+                                files
+                            },
+                        }
+                    }
+                };
+
+                let task_failed = result.status == "failure";
+                results.insert(task_name.clone(), result);
+
+                if task_failed {
+                    execution_stopped = true;
+                }
+            }
+        }
+
+        Ok(ExecutionResult { results })
+    }
+
+    /// Execute a single task in the container
+    async fn execute_task_in_container(&self, task: &Task) -> Result<TaskResult, ExecutorError> {
+        // Copy source files into container
+        for (filename, file_source) in &task.src {
+            match file_source {
+                FileSource::Content { content } => {
+                    self.container.copy_file(filename, content).map_err(|e| {
+                        ExecutorError::FileOperation(format!(
+                            "Failed to copy file '{}': {}",
+                            filename, e
+                        ))
+                    })?;
+                }
+            }
+        }
+
+        // Execute the command in container
+        let (exit_status, resource_usage, stdout, stderr) = self
+            .container
+            .execute_command(&task.args, &task.env, None)
+            .await
+            .map_err(|e| {
+                ExecutorError::ExecutionFailed(format!("Container execution failed: {}", e))
+            })?;
+
+        // Collect output files
+        let mut files = HashMap::new();
+        if !stdout.is_empty() {
+            files.insert("stdout".to_string(), stdout);
+        }
+        if !stderr.is_empty() {
+            files.insert("stderr".to_string(), stderr);
+        }
+
+        // Format resource usage
+        let time_str = Self::format_duration_nanos(resource_usage.wall_time);
+        let memory_str = Self::format_memory(resource_usage.memory);
+
+        let status = if exit_status.success() {
+            "success".to_string()
+        } else {
+            "failure".to_string()
+        };
+
+        Ok(TaskResult {
+            status,
+            exit_status: exit_status.code().unwrap_or(-1),
+            time: time_str,
+            memory: memory_str,
+            files,
+        })
+    }
+
+    /// Format duration from nanoseconds in human-readable format
+    fn format_duration_nanos(nanos: u64) -> String {
+        if nanos < 1_000 {
+            format!("{}ns", nanos)
+        } else if nanos < 1_000_000 {
+            format!("{}us", nanos / 1_000)
+        } else if nanos < 1_000_000_000 {
+            format!("{}ms", nanos / 1_000_000)
+        } else {
+            format!("{}s", nanos / 1_000_000_000)
+        }
+    }
+
+    /// Format memory in human-readable format
+    fn format_memory(bytes: u64) -> String {
+        if bytes == 0 {
+            return "0mb".to_string();
+        }
+
+        if bytes < 1024 {
+            format!("{}b", bytes)
+        } else if bytes < 1024 * 1024 {
+            format!("{}kb", bytes / 1024)
+        } else if bytes < 1024 * 1024 * 1024 {
+            format!("{}mb", bytes / (1024 * 1024))
+        } else {
+            format!("{}gb", bytes / (1024 * 1024 * 1024))
+        }
+    }
+
+    /// Get the container working directory path
+    pub fn work_path(&self) -> std::path::PathBuf {
+        self.container.work_path()
+    }
+
+    /// Copy a file into the container
+    pub fn copy_file<P: AsRef<Path>>(
+        &self,
+        filename: P,
+        content: &str,
+    ) -> Result<(), ExecutorError> {
+        self.container
+            .copy_file(filename, content)
+            .map_err(|e| ExecutorError::FileOperation(format!("Failed to copy file: {}", e)))
+    }
+
+    /// Read a file from the container
+    pub fn read_file<P: AsRef<Path>>(&self, filename: P) -> Result<String, ExecutorError> {
+        self.container
+            .read_file(filename)
+            .map_err(|e| ExecutorError::FileOperation(format!("Failed to read file: {}", e)))
+    }
+
+    /// List files in the container working directory
+    pub fn list_files(&self) -> Result<Vec<String>, ExecutorError> {
+        self.container
+            .list_files()
+            .map_err(|e| ExecutorError::FileOperation(format!("Failed to list files: {}", e)))
     }
 }
 
