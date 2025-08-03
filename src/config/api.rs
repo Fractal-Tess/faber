@@ -4,6 +4,7 @@ pub struct ApiConfig {
     pub port: u16,
     pub host: String,
     pub api_key: String,
+    pub enable_swagger: bool,
 }
 
 impl Default for ApiConfig {
@@ -21,6 +22,10 @@ impl Default for ApiConfig {
                 .unwrap(),
             host: env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
             api_key,
+            enable_swagger: env::var("ENABLE_SWAGGER")
+                .unwrap_or_else(|_| "true".to_string())
+                .parse()
+                .unwrap_or(true),
         }
     }
 }

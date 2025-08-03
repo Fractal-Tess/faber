@@ -19,16 +19,28 @@ async fn run() {
     let config = ApiConfig::new();
     info!("Configuration loaded: {}:{}", config.host, config.port);
 
-    let app = create_router(config.api_key)
-        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()));
+    let mut app = create_router(config.api_key);
+
+    // Conditionally add Swagger UI
+    if config.enable_swagger {
+        info!("Swagger UI enabled");
+        app = app
+            .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()));
+    } else {
+        info!("Swagger UI disabled");
+    }
 
     let addr = format!("{}:{}", config.host, config.port);
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     info!("Listening on {}", listener.local_addr().unwrap());
-    info!(
-        "Swagger UI available at http://{}:{}/swagger-ui/",
-        config.host, config.port
-    );
+
+    if config.enable_swagger {
+        info!(
+            "Swagger UI available at http://{}:{}/swagger-ui/",
+            config.host, config.port
+        );
+    }
+
     let shutdown_signal = async {
         tokio::signal::ctrl_c().await.ok();
     };
