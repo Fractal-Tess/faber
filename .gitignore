@@ -5,5 +5,7 @@ target
 .cursorignore
 
 *.md
+!README.md
+
 
 oldlib
