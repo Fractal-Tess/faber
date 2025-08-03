@@ -12,7 +12,7 @@ pub struct Executor {
 impl Executor {
     pub fn new(tasks: Vec<ExecutionTask>) -> Result<Self, ExecutionTaskError> {
         // Create container with default execution configuration
-        let config = ContainerConfig::execution();
+        let config = ContainerConfig::default();
         let container = ContainerSandbox::new(config)
             .map_err(|e| ExecutionTaskError::FileNotFound(e.to_string()))?;
 

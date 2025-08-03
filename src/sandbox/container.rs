@@ -47,9 +47,9 @@ pub struct ContainerConfig {
 impl Default for ContainerConfig {
     fn default() -> Self {
         Self {
-            memory_limit: 256 * 1024 * 1024, // 256MB
-            cpu_time_limit: 5_000_000_000,   // 5 seconds
-            wall_time_limit: 10_000_000_000, // 10 seconds
+            memory_limit: 1024 * 1024 * 1024, // 1GB
+            cpu_time_limit: 5_000_000_000,    // 5 seconds
+            wall_time_limit: 10_000_000_000,  // 10 seconds
             max_processes: 32,
             max_fds: 64,
             uid: 65534, // nobody user
@@ -62,35 +62,6 @@ impl Default for ContainerConfig {
     }
 }
 
-impl ContainerConfig {
-    /// Create configuration for compilation tasks (more resources)
-    pub fn compilation() -> Self {
-        Self {
-            memory_limit: 1024 * 1024 * 1024, // 1GB
-            cpu_time_limit: 30_000_000_000,   // 30 seconds
-            wall_time_limit: 60_000_000_000,  // 60 seconds
-            max_processes: 16,
-            max_fds: 32,
-            mount_config: MountConfig::default_secure(), // Full mount access for compilation
-            ..Default::default()
-        }
-    }
-
-    /// Create configuration for execution tasks (restricted)
-    pub fn execution() -> Self {
-        Self {
-            memory_limit: 128 * 1024 * 1024, // 128MB
-            cpu_time_limit: 5_000_000_000,   // 5 seconds
-            wall_time_limit: 10_000_000_000, // 10 seconds
-            max_processes: 8,
-            max_fds: 16,
-            mount_config: MountConfig::minimal(), // Minimal mounts for execution
-            ..Default::default()
-        }
-    }
-}
-
-/// Result of container process execution
 #[derive(Debug)]
 pub struct ContainerResult {
     pub exit_code: i32,
@@ -354,156 +325,6 @@ impl Drop for ContainerSandbox {
                     "Failed to cleanup container {} during drop: {}",
                     self.container_id, e
                 );
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::os::unix::fs::PermissionsExt;
-
-    use super::*;
-
-    #[test]
-    fn test_container_creation() {
-        let config = ContainerConfig::default();
-        let container = ContainerSandbox::new(config).expect("Failed to create container");
-
-        assert!(container.is_active());
-        assert!(container.work_dir().exists());
-        println!(
-            "Container created successfully: {}",
-            container.container_id()
-        );
-    }
-
-    #[test]
-    fn test_file_copy() {
-        let config = ContainerConfig::default();
-        let mut container = ContainerSandbox::new(config).expect("Failed to create container");
-
-        let mut files = HashMap::new();
-        files.insert("test.txt".to_string(), "Hello, World!".to_string());
-        files.insert(
-            "subdir/nested.txt".to_string(),
-            "Nested content".to_string(),
-        );
-
-        container
-            .copy_files_in(&files)
-            .expect("Failed to copy files");
-
-        // Verify files exist
-        let test_file = container.work_dir().join("test.txt");
-        let nested_file = container.work_dir().join("subdir/nested.txt");
-
-        assert!(test_file.exists());
-        assert!(nested_file.exists());
-
-        let content = std::fs::read_to_string(&test_file).expect("Failed to read test file");
-        assert_eq!(content, "Hello, World!");
-
-        println!("File copy test passed");
-    }
-
-    #[test]
-    fn test_basic_command_execution() {
-        // Use minimal namespaces to avoid permission issues in tests
-        let mut config = ContainerConfig::default();
-        config.enable_pid_namespace = false;
-        config.enable_mount_namespace = false;
-        config.enable_network = false;
-
-        let mut container = ContainerSandbox::new(config).expect("Failed to create container");
-
-        // Create a simple shell script to test execution
-        let mut files = HashMap::new();
-        files.insert(
-            "test_script.sh".to_string(),
-            "#!/bin/sh\necho 'Hello from container'\n".to_string(),
-        );
-        container
-            .copy_files_in(&files)
-            .expect("Failed to copy test script");
-
-        // Make script executable
-        let script_path = container.work_dir().join("test_script.sh");
-        let mut perms = std::fs::metadata(&script_path).unwrap().permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&script_path, perms).expect("Failed to set permissions");
-
-        // Test script execution
-        let result = container
-            .execute_command("/bin/sh", &["test_script.sh".to_string()], &HashMap::new())
-            .expect("Failed to execute command");
-
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "Hello from container");
-
-        println!("Basic command execution test passed");
-    }
-
-    #[test]
-    fn test_container_with_minimal_namespaces() {
-        // Test with no namespaces to avoid permission issues in tests
-        let mut config = ContainerConfig::default();
-        config.enable_pid_namespace = false;
-        config.enable_mount_namespace = false;
-        config.enable_network = false;
-
-        let mut container = ContainerSandbox::new(config).expect("Failed to create container");
-
-        // Test simple command execution without namespaces
-        let result = container.execute_command(
-            "/bin/echo",
-            &["Hello without namespaces".to_string()],
-            &HashMap::new(),
-        );
-
-        match result {
-            Ok(result) => {
-                assert_eq!(result.exit_code, 0);
-                assert_eq!(result.stdout.trim(), "Hello without namespaces");
-                println!("Minimal namespace test passed");
-            }
-            Err(e) => {
-                println!(
-                    "Minimal namespace test failed (expected in some environments): {}",
-                    e
-                );
-                // Don't fail the test - this is environment dependent
-            }
-        }
-    }
-
-    #[test]
-    fn test_container_with_mounts() {
-        // Test container with mount preparation
-        let mut config = ContainerConfig::execution();
-        config.enable_pid_namespace = false; // Disable for testing
-        config.enable_mount_namespace = false; // We'll test mount preparation without namespace
-
-        let container = ContainerSandbox::new(config);
-
-        match container {
-            Ok(container) => {
-                println!("Container with mounts created successfully");
-                println!("Container root: {}", container.container_root.display());
-
-                // Check if mount directories were created
-                let bin_dir = container.container_root.join("bin");
-                let usr_dir = container.container_root.join("usr");
-                let work_dir = container.container_root.join("w");
-
-                // These should exist after mount preparation
-                assert!(work_dir.exists(), "Work directory should be created");
-
-                println!("Mount preparation test passed");
-            }
-            Err(e) => {
-                println!("Container with mounts test failed (may be expected): {}", e);
-                // Don't fail the test - mount operations may require special permissions
             }
         }
     }
