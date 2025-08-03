@@ -5,6 +5,7 @@ pub struct ApiConfig {
     pub host: String,
     pub api_key: String,
     pub enable_swagger: bool,
+    pub open: bool,
 }
 
 impl Default for ApiConfig {
@@ -12,8 +13,18 @@ impl Default for ApiConfig {
         // Load .env file in development, ignore errors in production
         dotenvy::dotenv().ok();
 
-        // Get configuration from environment variables with defaults
-        let api_key = env::var("API_KEY").expect("API_KEY environment variable must be set");
+        // Check if OPEN mode is enabled
+        let open = env::var("OPEN")
+            .unwrap_or_else(|_| "false".to_string())
+            .parse()
+            .unwrap_or(false);
+
+        // Get API key - required only when not in OPEN mode
+        let api_key = if open {
+            "open-mode-no-auth".to_string() // Placeholder when OPEN=true
+        } else {
+            env::var("API_KEY").expect("API_KEY environment variable must be set when OPEN=false")
+        };
 
         Self {
             port: env::var("PORT")
@@ -26,6 +37,7 @@ impl Default for ApiConfig {
                 .unwrap_or_else(|_| "true".to_string())
                 .parse()
                 .unwrap_or(true),
+            open,
         }
     }
 }

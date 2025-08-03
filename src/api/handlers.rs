@@ -4,6 +4,7 @@ use tracing::{error, info};
 use utoipa::ToSchema;
 
 use crate::api::middleware::{auth_middleware, timing_middleware};
+use crate::config::ApiConfig;
 use crate::executor::{ExecutionRequest, ExecutionResult, SandboxExecutor};
 
 /// Health check response
@@ -27,14 +28,24 @@ pub struct ErrorResponse {
     error: String,
 }
 
-pub fn create_router(api_key: String) -> Router {
-    let api_key = Arc::new(api_key);
+pub fn create_router(config: &ApiConfig) -> Router {
+    let api_key = Arc::new(config.api_key.clone());
 
+    // Create routes that may need authentication
     let protected_routes = Router::new()
         .route("/protected", get(protected))
-        .route("/run", post(run_code))
-        .layer(middleware::from_fn(auth_middleware))
-        .layer(Extension(api_key.clone()));
+        .route("/run", post(run_code));
+
+    // Apply authentication middleware only if not in OPEN mode
+    let protected_routes = if config.open {
+        info!("OPEN mode enabled - all routes are publicly available");
+        protected_routes
+    } else {
+        info!("Authentication required - API key protected routes");
+        protected_routes
+            .layer(middleware::from_fn(auth_middleware))
+            .layer(Extension(api_key.clone()))
+    };
 
     let public_routes = Router::new().route("/health", get(health_check));
 
@@ -64,22 +75,22 @@ pub async fn health_check() -> Json<HealthResponse> {
 
 /// Protected endpoint
 ///
-/// Returns protected content that requires valid API key authentication
+/// Returns protected content that requires valid API key authentication (unless in OPEN mode)
 #[utoipa::path(
     get,
     path = "/protected",
-    tag = "protected",
+    tag = "protected", 
     security(
         ("api_key" = [])
     ),
     responses(
         (status = 200, description = "Protected content accessed successfully", body = ProtectedResponse),
-        (status = 401, description = "Unauthorized - Invalid or missing API key")
+        (status = 401, description = "Unauthorized - Invalid or missing API key (unless OPEN=true)")
     )
 )]
 #[axum::debug_handler]
 pub async fn protected() -> Json<ProtectedResponse> {
-    info!("Protected route accessed with valid API key");
+    info!("Protected route accessed");
     Json(ProtectedResponse {
         message: "Protected content accessed successfully".to_string(),
     })
@@ -99,7 +110,7 @@ pub async fn protected() -> Json<ProtectedResponse> {
     responses(
         (status = 200, description = "Code executed successfully", body = ExecutionResult),
         (status = 400, description = "Invalid request", body = ErrorResponse),
-        (status = 401, description = "Unauthorized - Invalid or missing API key"),
+        (status = 401, description = "Unauthorized - Invalid or missing API key (unless OPEN=true)"),
         (status = 500, description = "Execution failed", body = ErrorResponse)
     )
 )]
