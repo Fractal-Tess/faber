@@ -164,11 +164,11 @@ impl ResourceLimits {
         // Set stack size limit
         set_rlimit(libc::RLIMIT_STACK, self.stack)?;
 
-        // Set process limit
-        set_rlimit(libc::RLIMIT_NPROC, self.processes as u64)?;
+        // Set process limit - temporarily disabled
+        // set_rlimit(libc::RLIMIT_NPROC, self.processes as u64)?;
 
-        // Set file descriptor limit
-        set_rlimit(libc::RLIMIT_NOFILE, self.fds)?;
+        // Set file descriptor limit - temporarily disabled
+        // set_rlimit(libc::RLIMIT_NOFILE, self.fds)?;
 
         // Set core dump size to 0 for security
         set_rlimit(libc::RLIMIT_CORE, 0)?;

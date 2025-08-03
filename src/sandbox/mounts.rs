@@ -238,11 +238,21 @@ impl MountConfig {
     pub fn default_mounts<P: AsRef<Path>>(root_path: P) -> Self {
         let mut config = Self::new(root_path);
 
-        // Add essential filesystem mounts
+        // Add essential filesystem mounts - more conservative for Docker environments
         config = config
             .add_mount(Mount::proc("/proc"))
-            .add_mount(Mount::sysfs("/sys"))
-            .add_mount(Mount::devtmpfs("/dev"))
+            .add_mount(Mount::tmpfs("/tmp", 100)) // 100MB tmp
+            .add_mount(Mount::tmpfs("/var/tmp", 50)); // 50MB var/tmp
+
+        config
+    }
+
+    /// Create minimal mounts for Docker environments
+    pub fn minimal_mounts<P: AsRef<Path>>(root_path: P) -> Self {
+        let mut config = Self::new(root_path);
+
+        // Only essential mounts that won't conflict with Docker
+        config = config
             .add_mount(Mount::tmpfs("/tmp", 100)) // 100MB tmp
             .add_mount(Mount::tmpfs("/var/tmp", 50)); // 50MB var/tmp
 

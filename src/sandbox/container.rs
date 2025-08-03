@@ -182,9 +182,9 @@ impl ContainerSandbox {
         if let Some(ref mount_config) = self.config.mounts {
             mount_config.apply_mounts()?;
         } else {
-            // Use default mounts
-            let default_mounts = MountConfig::default_mounts(self.root_path());
-            default_mounts.apply_mounts()?;
+            // Use minimal mounts for Docker environments to avoid conflicts
+            let minimal_mounts = MountConfig::minimal_mounts(self.root_path());
+            minimal_mounts.apply_mounts()?;
         }
 
         info!("Container filesystem setup complete");
@@ -217,14 +217,15 @@ impl ContainerSandbox {
         // Apply resource limits
         self.config.limits.apply_rlimits()?;
 
-        // Change to working directory
-        let work_path = self.work_path();
-        std::env::set_current_dir(&work_path).map_err(|e| {
-            SandboxError::ExecutionFailed(format!("Failed to change directory: {}", e))
-        })?;
+        // Don't change directory - use current directory for simplicity
+        // The working directory will be handled by the command itself if needed
 
         // Create and configure command
         let mut command = Command::new(&args[0]);
+
+        // Set working directory to where files are copied
+        let work_path = self.work_path();
+        command.current_dir(&work_path);
 
         // Add arguments
         for arg in &args[1..] {
