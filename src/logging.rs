@@ -24,6 +24,4 @@ pub fn init_logging() {
             )
             .init();
     }
-
-    tracing::info!("Logging initialized");
 }

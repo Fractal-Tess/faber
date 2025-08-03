@@ -18,16 +18,13 @@ use utoipa::OpenApi;
         )
     ),
     paths(
-        crate::api::handlers::health_check,
-        crate::api::handlers::protected,
-        crate::api::handlers::run_code
+        crate::handlers::health_check,
+        crate::handlers::run_code
     ),
     components(
         schemas(
             // Response types
-            crate::api::handlers::HealthResponse,
-            crate::api::handlers::ProtectedResponse,
-            crate::api::handlers::ErrorResponse,
+            crate::handlers::HealthResponse,
             // Executor types
             crate::executor::ExecutionRequest,
             crate::executor::ExecutionResult,
@@ -41,10 +38,7 @@ use utoipa::OpenApi;
             name = "health",
             description = "Health Check Endpoints - Monitor API status and availability"
         ),
-        (
-            name = "protected", 
-            description = "Protected Demo Endpoints - Authentication examples and testing"
-        ),
+
         (
             name = "execution",
             description = "Code Execution Endpoints - Secure sandbox code execution with resource monitoring"

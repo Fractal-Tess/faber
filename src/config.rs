@@ -1,6 +1,8 @@
 use std::env;
+use std::fmt::Display;
 
-pub struct ApiConfig {
+#[derive(Debug)]
+pub struct Config {
     pub port: u16,
     pub host: String,
     pub api_key: String,
@@ -8,7 +10,7 @@ pub struct ApiConfig {
     pub open: bool,
 }
 
-impl Default for ApiConfig {
+impl Default for Config {
     fn default() -> Self {
         // Load .env file in development, ignore errors in production
         dotenvy::dotenv().ok();
@@ -42,8 +44,15 @@ impl Default for ApiConfig {
     }
 }
 
-impl ApiConfig {
+impl Config {
     pub fn new() -> Self {
         Self::default()
+    }
+}
+
+impl Display for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Dynamically print all fields of Config using Debug trait
+        writeln!(f, "{self:#?}")
     }
 }
