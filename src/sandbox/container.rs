@@ -494,10 +494,9 @@ impl ContainerSandbox {
         }
 
         // Apply namespaces to the command (but be careful not to break pipes)
-        // Temporarily disabled for testing
-        // if let Err(e) = self.namespace_manager.apply_namespaces(&mut cmd) {
-        //     warn!("Failed to apply namespaces: {}", e);
-        // }
+        if let Err(e) = self.namespace_manager.apply_namespaces(&mut cmd) {
+            warn!("Failed to apply namespaces: {}", e);
+        }
 
         // Log command details for debugging
         info!(
