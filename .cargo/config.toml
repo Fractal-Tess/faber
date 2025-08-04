@@ -3,9 +3,3 @@ rustflags = ["-C", "target-feature=+crt-static"]
 
 [build]
 target = "x86_64-unknown-linux-musl"
-
-[profile.release]
-lto = true
-codegen-units = 1
-panic = "abort"
-strip = true

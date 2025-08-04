@@ -1,16 +1,22 @@
-[package]
-name = "faber"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+resolver = "3"
+members = [
+    "crates/core",
+    "crates/config",
+    "crates/sandbox",
+    "crates/executor",
+    "crates/api",
+    "crates/cli",
+]
 
-[dependencies]
+[workspace.dependencies]
 axum = { version = "0.8.4", features = ["macros"] }
 tokio = { version = "1.47.1", features = ["full"] }
 dotenvy = "0.15"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-appender = "0.2"
-tower-http = { version = "0.5", features = ["trace"] }
+tower-http = { version = "0.6", features = ["trace"] }
 utoipa = { version = "5", features = ["axum_extras"] }
 utoipa-axum = "0.2"
 utoipa-swagger-ui = { version = "9", features = ["axum", "debug-embed"] }
@@ -19,9 +25,10 @@ serde_yaml = "0.9"
 serde_json = "1.0"
 uuid = { version = "1.0", features = ["v4", "serde"] }
 tempfile = "3.8"
-thiserror = "1.0"
+thiserror = "2.0"
+clap = { version = "4.5", features = ["derive"] }
 # Container and system dependencies
-nix = { version = "0.29", features = [
+nix = { version = "0.30", features = [
     "process",
     "mount",
     "sched",
@@ -31,12 +38,23 @@ nix = { version = "0.29", features = [
 libc = "0.2"
 caps = "0.5"
 syscallz = "0.17"
-# libseccomp = "0.1"  # Temporarily disabled due to linking issues
 
-[dev-dependencies]
+[workspace.dev-dependencies]
 tokio = { version = "1.47.1", features = ["full", "test-util"] }
 tower = "0.5"
 
-[[example]]
-name = "resource_tracking"
-path = "examples/resource_tracking.rs"
+# Examples moved to individual crates as needed
+
+[profile.release]
+# Enable maximum optimization
+opt-level = 3
+# Enable link-time optimization
+lto = true
+# Enable code generation units optimization
+codegen-units = 1
+# Enable panic abort for smaller binary size
+panic = "abort"
+# Strip debug symbols for smaller binary size
+strip = true
+# Enable overflow checks in release mode (optional, remove for maximum performance)
+overflow-checks = false
