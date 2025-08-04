@@ -6,6 +6,8 @@ use faber_cli::{Cli, Commands, init_logging, serve, show_config, validate_config
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
+    println!("cli: {:?}", cli);
+    std::process::exit(1);
 
     // Initialize logging
     init_logging(

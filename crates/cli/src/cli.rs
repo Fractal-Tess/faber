@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use tracing::Level;
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 #[command(name = "faber")]
 #[command(about = "A secure sandboxed task execution service")]
 #[command(version)]
@@ -31,6 +31,10 @@ pub struct Cli {
     #[arg(short, long)]
     pub port: Option<u16>,
 
+    /// Number of worker threads for the execution queue
+    #[arg(long)]
+    pub workers: Option<usize>,
+
     /// Log file path (if not specified, logs only to console)
     #[arg(long)]
     pub log_file: Option<String>,
@@ -39,7 +43,7 @@ pub struct Cli {
     pub command: Option<Commands>,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Start the Faber server
     Serve {
@@ -76,6 +80,7 @@ mod tests {
         assert!(!cli.open_mode);
         assert!(cli.host.is_none());
         assert!(cli.port.is_none());
+        assert!(cli.workers.is_none());
         assert!(cli.log_file.is_none());
         assert!(cli.command.is_none());
     }
@@ -94,6 +99,8 @@ mod tests {
             "127.0.0.1",
             "--port",
             "8080",
+            "--workers",
+            "4",
             "--log-file",
             "test.log",
         ];
@@ -105,7 +112,38 @@ mod tests {
         assert!(cli.open_mode);
         assert_eq!(cli.host, Some("127.0.0.1".to_string()));
         assert_eq!(cli.port, Some(8080));
+        assert_eq!(cli.workers, Some(4));
         assert_eq!(cli.log_file, Some("test.log".to_string()));
+    }
+
+    #[test]
+    fn test_cli_serve_command_creation() {
+        let cli = Cli {
+            log_level: Some(tracing::Level::INFO),
+            config: Some("test.toml".to_string()),
+            debug: false,
+            open_mode: false,
+            host: Some("127.0.0.1".to_string()),
+            port: Some(8080),
+            workers: Some(4),
+            log_file: None,
+            command: Some(Commands::Serve {
+                graceful_shutdown: true,
+            }),
+        };
+
+        assert_eq!(cli.log_level, Some(tracing::Level::INFO));
+        assert_eq!(cli.config, Some("test.toml".to_string()));
+        assert_eq!(cli.host, Some("127.0.0.1".to_string()));
+        assert_eq!(cli.port, Some(8080));
+        assert_eq!(cli.workers, Some(4));
+
+        match cli.command {
+            Some(Commands::Serve { graceful_shutdown }) => {
+                assert!(graceful_shutdown);
+            }
+            _ => panic!("Expected Serve command"),
+        }
     }
 
     #[test]

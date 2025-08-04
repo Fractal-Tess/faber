@@ -1,10 +1,9 @@
 use axum::{Json, extract::Extension, http::StatusCode};
-use faber_config::Config;
 use faber_core::{Task, TaskResult};
-use faber_executor::TaskExecutor;
+use faber_queue::QueueManager;
 use serde::Serialize;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{error, info};
 
 use super::validation::validate_tasks;
 
@@ -14,25 +13,30 @@ pub struct ExecuteResponse {
 }
 
 pub async fn execute_tasks(
-    Extension(config): Extension<Arc<Config>>,
+    Extension(queue_manager): Extension<Arc<QueueManager>>,
     Json(request): Json<Vec<Task>>,
 ) -> Result<Json<ExecuteResponse>, StatusCode> {
     info!("Received execution request with {} tasks", request.len());
 
     // Validate tasks (max 100 tasks per request)
     if let Err(validation_error) = validate_tasks(&request, 100) {
-        tracing::error!("Task validation failed: {}", validation_error);
+        error!("Task validation failed: {}", validation_error);
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    // Create task executor
-    let executor = TaskExecutor::new((*config).clone());
-
-    // Execute tasks
-    let results = executor.execute_tasks(&request).await.map_err(|e| {
-        tracing::error!("Task execution failed: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    Ok(Json(ExecuteResponse { results }))
+    // Submit job to queue and wait for results
+    match queue_manager.submit_job(request).await {
+        Ok(results) => {
+            info!("Job completed successfully with {} results", results.len());
+            Ok(Json(ExecuteResponse { results }))
+        }
+        Err(e) => {
+            error!("Job execution failed: {}", e);
+            match e {
+                faber_queue::QueueError::QueueFull => Err(StatusCode::SERVICE_UNAVAILABLE),
+                faber_queue::QueueError::JobTimeout { .. } => Err(StatusCode::REQUEST_TIMEOUT),
+                _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
+            }
+        }
+    }
 }

@@ -6,6 +6,7 @@ use std::path::Path;
 
 pub mod api;
 pub mod filesystem;
+pub mod queue;
 pub mod sandbox;
 pub mod security;
 pub mod types;
@@ -19,6 +20,7 @@ impl Config {
         host: Option<String>,
         port: Option<u16>,
         open_mode: bool,
+        workers: Option<usize>,
     ) -> Result<Self> {
         // 1. Load from config file (or default)
         let config_path = config_path.unwrap_or("config/default.toml".to_string());
@@ -36,6 +38,10 @@ impl Config {
         }
         if let Some(port) = port {
             config.api.port = port;
+        }
+        if let Some(workers) = workers {
+            config.queue.worker_count = workers;
+            config.queue.max_concurrent_sandboxes = workers;
         }
 
         Ok(config)

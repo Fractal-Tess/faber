@@ -8,17 +8,16 @@ use axum::{
     routing::{get, post},
 };
 use faber_config::Config;
+use faber_queue::QueueManager;
 use std::sync::Arc;
 
-pub fn create_router(config: &Config) -> Router {
-    let config_arc = Arc::new(config.clone());
-
+pub fn create_router(config: &Config, queue_manager: Arc<QueueManager>) -> Router {
     let public_routes =
         Router::new().route(&config.api.endpoints.health_endpoint, get(health_check));
 
     let mut protected_routes = Router::new()
         .route(&config.api.endpoints.execute_endpoint, post(execute_tasks))
-        .layer(Extension(config_arc));
+        .layer(Extension(queue_manager));
 
     protected_routes = if config.api.auth.enable.parse().unwrap_or(false) {
         protected_routes

@@ -1,5 +1,7 @@
 use faber_api::create_router;
 use faber_config::Config;
+use faber_queue::QueueManager;
+use std::sync::Arc;
 use tracing::{error, info};
 
 use crate::cli::Cli;
@@ -8,27 +10,53 @@ pub async fn serve(cli: Cli, graceful_shutdown: bool) -> Result<(), Box<dyn std:
     info!("Starting Faber...");
 
     // Load configuration with CLI overrides
-    let config = Config::load(cli.config, cli.host, cli.port, cli.open_mode)?;
+    let config = Config::load(cli.config, cli.host, cli.port, cli.open_mode, cli.workers)?;
 
     info!("Configuration loaded successfully");
     info!("{}", config);
 
-    let app = create_router(&config);
+    // Create the queue manager with workers
+    info!(
+        "Initializing queue system with {} workers",
+        config.queue.worker_count
+    );
+    let queue_manager = Arc::new(QueueManager::new(config.clone()));
+
+    let app = create_router(&config, Arc::clone(&queue_manager));
 
     let listener =
         tokio::net::TcpListener::bind(&format!("{}:{}", config.api.host, config.api.port)).await?;
     info!("🚀 Listening on {}", listener.local_addr()?);
 
     if graceful_shutdown {
-        let shutdown_signal = async {
+        let queue_manager_shutdown = Arc::clone(&queue_manager);
+        let shutdown_signal = async move {
             tokio::signal::ctrl_c().await.ok();
+            info!("Shutdown signal received, stopping server...");
+
+            // Shutdown the queue manager
+            info!("Shutting down queue system...");
+            if let Err(e) = queue_manager_shutdown.shutdown().await {
+                error!("Failed to shutdown queue manager gracefully: {}", e);
+            } else {
+                info!("Queue system shutdown complete");
+            }
         };
 
+        // Run the server with graceful shutdown
         axum::serve(listener, app)
             .with_graceful_shutdown(shutdown_signal)
             .await?;
     } else {
         axum::serve(listener, app).await?;
+
+        // Shutdown the queue manager
+        info!("Shutting down queue system...");
+        if let Err(e) = queue_manager.shutdown().await {
+            error!("Failed to shutdown queue manager: {}", e);
+        } else {
+            info!("Queue system shutdown complete");
+        }
     }
 
     info!("Shutting down...");
@@ -231,6 +259,7 @@ disallowed = []
             command: Some(Commands::Serve {
                 graceful_shutdown: true,
             }),
+            workers: Some(4),
         };
 
         assert_eq!(cli.log_level, Some(tracing::Level::INFO));
