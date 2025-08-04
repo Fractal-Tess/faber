@@ -12,7 +12,6 @@ services:
       - ../scripts:/faber/scripts:ro
       - ../tests:/faber/tests:ro
       - ../Cargo.toml:/faber/Cargo.toml:ro
-      - ../Cargo.lock:/faber/Cargo.lock:ro
 
       - cargo-cache:/usr/local/cargo/registry
       - cargo-target:/faber/target
