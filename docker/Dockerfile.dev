@@ -11,4 +11,19 @@ RUN apt update && apt install -y \
 
 WORKDIR /faber
 
-COPY docker/start.sh start.sh
+COPY <<EOF start.sh
+#!/bin/bash
+
+set -e
+
+# Start lldb-server for remote debugging in the background
+echo "Starting lldb-server for remote debugging..."
+lldb-server platform --server --listen *:12345 
+LLDB_PID=$!
+echo "LLDB server started with PID: $LLDB_PID"
+EOF
+
+RUN chmod +x start.sh
+
+ENTRYPOINT ["/faber/start.sh"]
+
