@@ -5,6 +5,9 @@ on:
   # Using a different branch name? Replace `main` with your branch's name
   push:
     branches: [main]
+    paths:
+      - 'docs/**'
+      - '.github/workflows/deploy-docs.yml'
   # Allows you to run this workflow manually from the Actions tab on GitHub.
   workflow_dispatch:
 
