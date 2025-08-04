@@ -44,3 +44,10 @@ impl From<SandboxError> for TaskResult {
         }
     }
 }
+
+// TODO: Re-enable when libseccomp is properly integrated
+// impl From<libseccomp::error::SeccompError> for SandboxError {
+//     fn from(err: libseccomp::error::SeccompError) -> Self {
+//         SandboxError::SecuritySetup(format!("Seccomp error: {}", err))
+//     }
+// }

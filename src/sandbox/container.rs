@@ -154,7 +154,7 @@ impl ContainerConfig {
             enable_mount_operations: true,
             work_dir_size_mb: 64,
             mount_config: MountConfig::default(),
-            seccomp_level: SeccompLevel::None, // Temporarily disable seccomp for testing
+            seccomp_level: SeccompLevel::None, // Temporarily disable seccomp due to being too restrictive
         }
     }
 
@@ -308,13 +308,30 @@ impl ContainerSandbox {
         let privilege_manager = PrivilegeManager::new(config.uid, config.gid);
 
         // Initialize seccomp filter
-        let seccomp_filter = SeccompFilter::new(config.seccomp_level).unwrap_or_else(|e| {
-            warn!(
-                "Failed to create seccomp filter: {}, falling back to none",
-                e
-            );
-            SeccompFilter::new(SeccompLevel::None).unwrap()
-        });
+        let seccomp_filter = if Path::new("seccomp.yaml").exists() {
+            SeccompFilter::new_with_config(config.seccomp_level, "seccomp.yaml".to_string())
+                .unwrap_or_else(|e| {
+                    warn!(
+                        "Failed to create seccomp filter with config: {}, falling back to basic",
+                        e
+                    );
+                    SeccompFilter::new(config.seccomp_level).unwrap_or_else(|e| {
+                        warn!(
+                            "Failed to create seccomp filter: {}, falling back to none",
+                            e
+                        );
+                        SeccompFilter::new(SeccompLevel::None).unwrap()
+                    })
+                })
+        } else {
+            SeccompFilter::new(config.seccomp_level).unwrap_or_else(|e| {
+                warn!(
+                    "Failed to create seccomp filter: {}, falling back to none",
+                    e
+                );
+                SeccompFilter::new(SeccompLevel::None).unwrap()
+            })
+        };
 
         info!(
             "Successfully created container sandbox: {} with root at {}",
