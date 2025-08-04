@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 use faber_api::create_router;
 use faber_config::Config;
 use tracing::{Level, error, info};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 #[derive(Parser)]
 #[command(name = "faber")]
@@ -32,6 +33,10 @@ struct Cli {
     /// Port to bind to
     #[arg(short, long)]
     port: Option<u16>,
+
+    /// Log file path (if not specified, logs only to console)
+    #[arg(long)]
+    log_file: Option<String>,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -70,7 +75,11 @@ async fn main() {
     let cli = Cli::parse();
 
     // Initialize logging
-    init_logging(cli.log_level.unwrap_or(Level::INFO), cli.debug);
+    init_logging(
+        cli.log_level.unwrap_or(Level::INFO),
+        cli.debug,
+        cli.log_file.as_deref(),
+    );
 
     if let Err(e) = run(cli).await {
         error!("Application failed: {}", e);
@@ -193,16 +202,44 @@ async fn execute_task(
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!("Executing task: {} {:?}", command, args);
 
-    // This would integrate with the executor crate
-    // For now, just show what would be executed
-    println!("Command: {command}");
-    println!("Arguments: {args:?}");
-    println!("(Task execution not yet implemented in CLI)");
+    // Load configuration
+    let config = faber_config::Config::load()?;
+
+    // Create task
+    let task = faber_core::Task {
+        command,
+        args: Some(args),
+        env: None,
+        files: None,
+    };
+
+    // Create executor and execute task
+    let executor = faber_executor::TaskExecutor::new(config);
+    let results = executor.execute_tasks(&[task]).await?;
+
+    // Display results
+    for (i, result) in results.iter().enumerate() {
+        println!("Task {}: {}", i, result.status);
+        if let Some(stdout) = &result.stdout {
+            println!("Stdout: {}", stdout);
+        }
+        if let Some(stderr) = &result.stderr {
+            println!("Stderr: {}", stderr);
+        }
+        if let Some(exit_code) = result.exit_code {
+            println!("Exit code: {}", exit_code);
+        }
+        println!(
+            "Resource usage: CPU={:.2}s, Memory={:.2}MB",
+            result.resource_usage.cpu_time().as_secs_f64(),
+            result.resource_usage.memory_peak_mb()
+        );
+    }
 
     Ok(())
 }
 
-fn init_logging(level: Level, debug: bool) {
+fn init_logging(level: Level, debug: bool, log_file: Option<&str>) {
     let env_filter = if debug {
         "debug"
     } else {
@@ -215,10 +252,42 @@ fn init_logging(level: Level, debug: bool) {
         }
     };
 
-    tracing_subscriber::fmt()
-        .with_env_filter(env_filter)
+    // Ensure the logs directory exists
+    let _ = std::fs::create_dir_all("logs");
+
+    // Create file appender based on log_file parameter
+    let file_appender = if let Some(log_path) = log_file {
+        // Use the specified log file path
+        if let Some(parent) = std::path::Path::new(log_path).parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        // For a single file, use a non-rolling appender
+        tracing_appender::rolling::never("", log_path)
+    } else {
+        // Use daily rolling log
+        tracing_appender::rolling::daily("logs", "faber.log")
+    };
+
+    // Create console layer
+    let console_layer = fmt::layer()
+        .with_target(false)
+        .with_thread_ids(false)
+        .with_thread_names(false);
+
+    // Create file layer
+    let file_layer = fmt::layer()
         .with_target(false)
         .with_thread_ids(false)
         .with_thread_names(false)
-        .init();
+        .with_writer(file_appender);
+
+    // Build the subscriber with both console and file layers
+    let subscriber = tracing_subscriber::registry()
+        .with(console_layer)
+        .with(file_layer)
+        .with(EnvFilter::new(env_filter));
+
+    // Set the global default
+    tracing::subscriber::set_global_default(subscriber)
+        .expect("Failed to set global default subscriber");
 }
