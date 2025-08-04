@@ -103,15 +103,21 @@ impl SymLink {
     }
 }
 
-/// Complete mount configuration for a container
+/// Configuration for container filesystem mounts
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MountConfig {
-    /// List of mount points to create
+    /// List of mount points
     pub mounts: Vec<MountPoint>,
-    /// Symbolic links to create
-    pub symlinks: Vec<SymLink>,
-    /// Paths to mask/hide for security
+    /// Paths to mask (block access to)
     pub masked_paths: Vec<String>,
+    /// Whether to enable proc filesystem
+    pub enable_proc: bool,
+    /// Whether to enable proc with read-write access
+    pub proc_read_write: bool,
+    /// Container hostname
+    pub hostname: String,
+    /// Container domain name
+    pub domain_name: String,
 }
 
 impl Default for MountConfig {
@@ -121,77 +127,35 @@ impl Default for MountConfig {
 }
 
 impl MountConfig {
-    /// Create default mount configuration based on go-judge
+    /// Create a secure default mount configuration
     pub fn default_secure() -> Self {
-        Self::default_secure_with_container_id("default")
-    }
-
-    /// Create default secure mount configuration with default work directory size
-    pub fn default_secure_with_container_id(_container_id: &str) -> Self {
-        Self::default_secure_with_work_size(256)
-    }
-
-    /// Create default secure mount configuration with custom work directory size
-    pub fn default_secure_with_work_size(work_size_mb: u32) -> Self {
-        let mounts = vec![
+        let mut mounts = vec![
             // Essential system directories (read-only)
             MountPoint::bind_ro("/bin", "bin"),
             MountPoint::bind_ro("/lib", "lib"),
+            MountPoint::bind_ro("/lib64", "lib64"),
             MountPoint::bind_ro("/usr", "usr"),
-            // Essential devices (read-write)
+            MountPoint::bind_ro("/etc/ld.so.cache", "etc/ld.so.cache"),
+            // Essential devices
             MountPoint::bind_rw("/dev/null", "dev/null"),
             MountPoint::bind_rw("/dev/zero", "dev/zero"),
-            MountPoint::bind_rw("/dev/urandom", "dev/urandom"),
             MountPoint::bind_rw("/dev/random", "dev/random"),
+            MountPoint::bind_rw("/dev/urandom", "dev/urandom"),
             MountPoint::bind_rw("/dev/full", "dev/full"),
-            // Proc filesystem (essential for process creation)
-            MountPoint::proc("proc"),
-            // Work directory (tmpfs) - for fast I/O performance
-            MountPoint::tmpfs("work", &format!("{work_size_mb}m,nr_inodes=4k")),
-            // Tmp directory (tmpfs) - same size as go-judge default
-            MountPoint::tmpfs("tmp", "32m,nr_inodes=4k"),
+            // Work directory (tmpfs for performance)
+            MountPoint::tmpfs("work", "256m,nr_inodes=4k"),
+            // Temporary directory
+            MountPoint::tmpfs("tmp", "128m,nr_inodes=4k"),
         ];
 
-        // // lib64 if it exists
-        // if Path::new("/lib64").exists() {
-        //     mounts.push(MountPoint::bind_ro("/lib64", "lib64"));
-        // }
+        // Add proc filesystem if enabled
+        if true {
+            // enable_proc
+            mounts.push(MountPoint::proc("proc"));
+        }
 
-        // // Essential configuration files
-        // if Path::new("/etc/ld.so.cache").exists() {
-        //     mounts.push(MountPoint::bind_ro("/etc/ld.so.cache", "etc/ld.so.cache"));
-        // }
-        // if Path::new("/etc/alternatives").exists() {
-        //     mounts.push(MountPoint::bind_ro("/etc/alternatives", "etc/alternatives"));
-        // }
-
-        // // Compiler-specific configuration files
-        // if Path::new("/etc/fpc.cfg").exists() {
-        //     mounts.push(MountPoint::bind_ro("/etc/fpc.cfg", "etc/fpc.cfg"));
-        // }
-        // if Path::new("/etc/mono").exists() {
-        //     mounts.push(MountPoint::bind_ro("/etc/mono", "etc/mono"));
-        // }
-        // if Path::new("/var/lib/ghc").exists() {
-        //     mounts.push(MountPoint::bind_ro("/var/lib/ghc", "var/lib/ghc"));
-        // }
-        // if Path::new("/etc/java-17-openjdk").exists() {
-        //     mounts.push(MountPoint::bind_ro(
-        //         "/etc/java-17-openjdk",
-        //         "etc/java-17-openjdk",
-        //     ));
-        // }
-
-        // Standard I/O symlinks
-        let symlinks = vec![
-            SymLink::new("dev/fd", "/proc/self/fd"),
-            SymLink::new("dev/stdin", "/proc/self/fd/0"),
-            SymLink::new("dev/stdout", "/proc/self/fd/1"),
-            SymLink::new("dev/stderr", "/proc/self/fd/2"),
-        ];
-
-        // Sensitive paths to mask
         let masked_paths = vec![
+            // Sensitive system paths to block
             "/sys/firmware".to_string(),
             "/sys/devices/virtual/powercap".to_string(),
             "/proc/acpi".to_string(),
@@ -205,20 +169,57 @@ impl MountConfig {
             "/proc/scsi".to_string(),
             "/usr/lib/wsl/drivers".to_string(),
             "/usr/lib/wsl/lib".to_string(),
+            "/sys/kernel/debug".to_string(),
+            "/sys/kernel/security".to_string(),
+            "/sys/fs/cgroup".to_string(),
+            "/sys/fs/fuse".to_string(),
+            "/sys/fs/pstore".to_string(),
+            "/sys/fs/selinux".to_string(),
+            "/sys/fs/tracefs".to_string(),
+            "/sys/fs/bpf".to_string(),
+            "/sys/fs/efivarfs".to_string(),
+            "/sys/fs/configfs".to_string(),
+            "/sys/fs/autofs".to_string(),
+            "/sys/fs/mqueue".to_string(),
+            "/sys/fs/hugetlbfs".to_string(),
+            "/sys/fs/ramfs".to_string(),
+            "/sys/fs/overlayfs".to_string(),
+            "/sys/fs/nsfs".to_string(),
+            "/sys/fs/cgroup2".to_string(),
+            "/sys/fs/cgroup/unified".to_string(),
+            "/sys/fs/cgroup/systemd".to_string(),
+            "/sys/fs/cgroup/cpu".to_string(),
+            "/sys/fs/cgroup/memory".to_string(),
+            "/sys/fs/cgroup/pids".to_string(),
+            "/sys/fs/cgroup/net_cls".to_string(),
+            "/sys/fs/cgroup/net_prio".to_string(),
+            "/sys/fs/cgroup/blkio".to_string(),
+            "/sys/fs/cgroup/devices".to_string(),
+            "/sys/fs/cgroup/freezer".to_string(),
+            "/sys/fs/cgroup/perf_event".to_string(),
+            "/sys/fs/cgroup/hugetlb".to_string(),
+            "/sys/fs/cgroup/rdma".to_string(),
         ];
 
         Self {
             mounts,
-            symlinks,
             masked_paths,
+            enable_proc: true,
+            proc_read_write: false,
+            hostname: "faber-container".to_string(),
+            domain_name: "local".to_string(),
         }
     }
 }
 
-/// Mount manager for handling filesystem mounts in containers
+/// Mount manager for container filesystem isolation
 pub struct MountManager {
+    /// Mount configuration
     config: MountConfig,
+    /// Container root path
     container_root: PathBuf,
+    /// Paths to mask (block access to)
+    masked_paths: Vec<String>,
 }
 
 impl MountManager {
@@ -227,14 +228,59 @@ impl MountManager {
         Self {
             config: config.clone(),
             container_root: container_root.clone(),
+            masked_paths: config.masked_paths.clone(),
         }
     }
 
     /// Apply mounts with specific mode
     pub fn apply_mounts(&self) -> Result<(), SandboxError> {
-        // Create mount points (or actual mounts if in namespace)
-        for mount in self.config.mounts.iter() {
-            self.create_mount(mount)?;
+        // Apply all mount points
+        for mount_point in &self.config.mounts {
+            if let Err(e) = self.create_mount(mount_point) {
+                return Err(SandboxError::MountFailed(format!(
+                    "Failed to create mount {}: {}",
+                    mount_point.target, e
+                )));
+            }
+        }
+
+        info!(
+            "Successfully applied {} mount points",
+            self.config.mounts.len()
+        );
+        Ok(())
+    }
+
+    /// Apply path masking by creating null mounts over sensitive paths
+    pub fn apply_path_masking(&self) -> Result<(), SandboxError> {
+        for masked_path in &self.masked_paths {
+            let target_path = self
+                .container_root
+                .join(masked_path.trim_start_matches('/'));
+
+            // Create parent directories if they don't exist
+            if let Some(parent) = target_path.parent() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    warn!(
+                        "Failed to create parent directory for masked path {}: {}",
+                        masked_path, e
+                    );
+                    continue;
+                }
+            }
+
+            // Create a null mount to mask the path
+            if let Err(e) = nix::mount::mount(
+                Some("none"),
+                &target_path,
+                Some("tmpfs"),
+                MsFlags::empty(),
+                Some("mode=0000"),
+            ) {
+                warn!("Failed to mask path {}: {}", masked_path, e);
+            } else {
+                debug!("Masked sensitive path: {}", masked_path);
+            }
         }
 
         Ok(())
@@ -478,11 +524,6 @@ impl MountManager {
         // Apply all mounts - this time within the mount namespace
         for mount in &self.config.mounts {
             self.create_mount(mount)?;
-        }
-
-        // Create symbolic links
-        for symlink in &self.config.symlinks {
-            self.create_symlink(symlink)?;
         }
 
         Ok(())

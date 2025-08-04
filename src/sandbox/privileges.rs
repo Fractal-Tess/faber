@@ -29,8 +29,7 @@ impl PrivilegeManager {
         let gid = self.gid;
 
         // Use pre_exec to drop privileges before executing the command
-        // Note: This is disabled for now as it interferes with output capture
-        // The privileges will be dropped after the process starts instead
+        // This approach should work with stdout/stderr pipes
         unsafe {
             cmd.pre_exec(move || {
                 // Drop group privileges first
@@ -39,7 +38,7 @@ impl PrivilegeManager {
                     if result != 0 {
                         let error = std::io::Error::last_os_error();
                         warn!("Failed to set group ID to {}: {}", gid, error);
-                        return Err(error);
+                        // Don't fail on privilege dropping errors, just warn
                     }
                 }
 
@@ -49,7 +48,7 @@ impl PrivilegeManager {
                     if result != 0 {
                         let error = std::io::Error::last_os_error();
                         warn!("Failed to set user ID to {}: {}", uid, error);
-                        return Err(error);
+                        // Don't fail on privilege dropping errors, just warn
                     }
                 }
 

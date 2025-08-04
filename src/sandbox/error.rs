@@ -28,6 +28,9 @@ pub enum SandboxError {
 
     #[error("File copy into container failed: {0}")]
     FileCopyFailed(String),
+
+    #[error("Security setup failed: {0}")]
+    SecuritySetup(String),
 }
 
 impl From<SandboxError> for TaskResult {

@@ -136,6 +136,14 @@ impl NamespaceManager {
                     // For now, we'll rely on the container setup done earlier
                 }
 
+                // If we have a network namespace, set up loopback interface
+                if flags & CLONE_NEWNET != 0 {
+                    // Bring up loopback interface
+                    let _ = std::process::Command::new("ip")
+                        .args(["link", "set", "dev", "lo", "up"])
+                        .output();
+                }
+
                 // If we have a PID namespace, we're now PID 1 in the new namespace
                 if flags & CLONE_NEWPID != 0 {
                     // TODO: Handle PID 1 responsibilities if needed
