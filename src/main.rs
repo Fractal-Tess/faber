@@ -1,27 +1,32 @@
 use faber::api::create_router;
 use faber::config::Config;
 use faber::logging;
-use tracing::info;
+use tracing::{error, info};
 
 #[tokio::main]
 async fn main() {
     // Initialize logging
     logging::init_logging();
 
-    run().await;
+    if let Err(e) = run().await {
+        error!("Application failed to start: {}", e);
+        std::process::exit(1);
+    }
 }
 
-async fn run() {
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting Faber...");
 
-    let config = Config::from_env();
+    // Load configuration from config.yaml or environment
+    let config = Config::load()?;
+    info!("Configuration loaded successfully");
 
     let app = create_router(&config);
 
-    let listener = tokio::net::TcpListener::bind(&format!("{}:{}", config.host, config.port))
-        .await
-        .unwrap();
-    info!("🚀 Listening on {}", listener.local_addr().unwrap());
+    let listener =
+        tokio::net::TcpListener::bind(&format!("{}:{}", config.server.host, config.server.port))
+            .await?;
+    info!("🚀 Listening on {}", listener.local_addr()?);
 
     let shutdown_signal = async {
         tokio::signal::ctrl_c().await.ok();
@@ -29,8 +34,8 @@ async fn run() {
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal)
-        .await
-        .unwrap();
+        .await?;
 
     info!("Shutting down...");
+    Ok(())
 }

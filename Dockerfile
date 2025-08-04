@@ -9,8 +9,5 @@ RUN apt update && apt install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /opt
 
-COPY start.sh /opt/start.sh
-
-ENTRYPOINT ["/opt/start.sh"] 
+ENTRYPOINT ["/start.sh"] 

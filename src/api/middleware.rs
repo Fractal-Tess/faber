@@ -16,10 +16,12 @@ pub async fn auth_middleware(
     next: Next,
 ) -> Result<Response, StatusCode> {
     let api_key = headers
-        .get("api_key")
+        .get("Authorization")
         .and_then(|value| value.to_str().ok())
+        .and_then(|auth_header| auth_header.strip_prefix("Bearer "))
+        .or_else(|| headers.get("api_key").and_then(|value| value.to_str().ok()))
         .ok_or_else(|| {
-            error!("Missing api_key header");
+            error!("Missing Authorization header or api_key header");
             StatusCode::UNAUTHORIZED
         })?;
 

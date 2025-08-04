@@ -1,0 +1,154 @@
+# Faber Configuration File
+
+server:
+  host: '0.0.0.0'
+  port: 3000
+  enable_swagger: true
+  enable_cors: false
+  request_timeout: 60
+  max_request_size: 10485760 # 10MB
+
+auth:
+  api_key: 'your-secret-api-key-here'
+  open_mode: true
+  token_expiration: 3600
+
+api:
+  health_endpoint: '/health'
+  execute_endpoint: '/execute-tasks'
+
+security:
+  default_security_level: 'standard'
+
+  seccomp:
+    enabled: true
+    level: 'basic'
+    config_file: 'seccomp.yaml'
+
+  namespaces:
+    pid: false
+    mount: true
+    network: true
+    ipc: true
+    uts: true
+    user: true
+    time: false
+    cgroup: true
+
+resource_limits:
+  default:
+    memory_limit: 536870912 # 512MB
+    cpu_time_limit: 10000000000 # 10 seconds
+    wall_time_limit: 30000000000 # 30 seconds
+    max_processes: 50
+    max_fds: 256
+    stack_limit: 4194304 # 4MB
+    data_segment_limit: 268435456 # 256MB
+    address_space_limit: 1073741824 # 1GB
+    cpu_rate_limit: 50
+    io_read_limit: 10485760 # 10MB/s
+    io_write_limit: 10485760 # 10MB/s
+
+  minimal:
+    memory_limit: 2147483648 # 2GB
+    cpu_time_limit: 30000000000 # 30 seconds
+    wall_time_limit: 60000000000 # 60 seconds
+    max_processes: 100
+    max_fds: 1024
+    stack_limit: 8388608 # 8MB
+    data_segment_limit: 1073741824 # 1GB
+    address_space_limit: 4294967296 # 4GB
+    cpu_rate_limit: null # No limit
+    io_read_limit: null # No limit
+    io_write_limit: null # No limit
+
+  maximum:
+    memory_limit: 134217728 # 128MB
+    cpu_time_limit: 5000000000 # 5 seconds
+    wall_time_limit: 15000000000 # 15 seconds
+    max_processes: 10
+    max_fds: 64
+    stack_limit: 1048576 # 1MB
+    data_segment_limit: 67108864 # 64MB
+    address_space_limit: 268435456 # 256MB
+    cpu_rate_limit: 25
+    io_read_limit: 1048576 # 1MB/s
+    io_write_limit: 1048576 # 1MB/s
+
+cgroups:
+  enabled: true
+  prefix: 'faber'
+  version: 'auto'
+  base_path: null
+  enable_cpu_rate_limit: true
+  enable_memory_limit: true
+  enable_process_limit: true
+
+container:
+  work_dir_size_mb: 256
+  enable_mount_operations: true
+  uid: 1000
+  gid: 1000
+  hostname: 'faber-container'
+  domain_name: 'faber.local'
+
+filesystem:
+  mount_config_file: 'mount.yaml'
+  read_only_root: false
+  allowed_extensions:
+    - '.cpp'
+    - '.c'
+    - '.py'
+    - '.js'
+    - '.java'
+    - '.rs'
+    - '.go'
+    - '.txt'
+    - '.md'
+  max_file_size: 1048576 # 1MB
+  max_files_per_request: 10
+
+logging:
+  level: 'info'
+  json_format: false
+  file_path: null
+  enable_request_logging: true
+  enable_performance_logging: true
+  enable_resource_logging: true
+
+validation:
+  max_tasks_per_request: 100
+  max_command_length: 10000
+  max_env_value_length: 1000
+  max_file_content_length: 10485760 # 10MB
+  enable_dangerous_command_detection: true
+  blocked_commands:
+    - 'rm -rf /'
+    - 'dd if=/dev/zero'
+    - ':(){ :|:& };:'
+    - 'mkfs'
+    - 'fdisk'
+    - 'parted'
+  blocked_env_vars:
+    - 'LD_PRELOAD'
+    - 'LD_LIBRARY_PATH'
+
+performance:
+  enable_connection_pooling: true
+  max_concurrent_connections: 1000
+  connection_timeout: 30
+  keep_alive_timeout: 5
+  enable_compression: true
+
+monitoring:
+  enable_metrics: true
+  metrics_port: 9090
+  enable_health_checks: true
+  health_check_interval: 30
+  enable_resource_monitoring: true
+
+development:
+  debug: false
+  hot_reload: false
+  detailed_errors: false
+  enable_stack_traces: false

@@ -1,7 +1,9 @@
 use super::validation::validate_tasks;
+use crate::config::Config;
 use crate::executor::{Task, TaskExecutor, TaskResult};
-use axum::{Json, http::StatusCode};
+use axum::{Extension, Json, http::StatusCode};
 use serde::Serialize;
+use std::sync::Arc;
 use tracing::{error, info};
 
 /// Response from task execution
@@ -51,6 +53,7 @@ pub struct ApiErrorResponse {
 
 /// Execute tasks in a secure sandboxed container
 pub async fn execute_tasks(
+    Extension(config): Extension<Arc<Config>>,
     Json(request): Json<Vec<Task>>,
 ) -> Result<Json<ExecuteTasksResponse>, (StatusCode, Json<ApiErrorResponse>)> {
     // Validate tasks
@@ -66,10 +69,8 @@ pub async fn execute_tasks(
 
     info!("Executing {} tasks", request.len());
 
-    // Create executor with static default configuration
-    let executor = TaskExecutor::new(request);
-
-    let executor = executor.map_err(|e| {
+    // Create executor with loaded configuration
+    let executor = TaskExecutor::new(request, &config).map_err(|e| {
         error!("❌ Failed to create executor: {e:?}");
         (
             StatusCode::INTERNAL_SERVER_ERROR,

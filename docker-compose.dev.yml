@@ -1,0 +1,31 @@
+services:
+  faber:
+    build: .
+    env_file:
+      - .env
+    volumes:
+      # Mount the built binary
+      - ./target/x86_64-unknown-linux-musl/debug:/app/faber:ro
+      # Mount configuration files
+      - ./config.yaml:/app/config.yaml:ro
+      - ./seccomp.yaml:/app/seccomp.yaml:ro
+      - ./mount.yaml:/app/mount.yaml:ro
+      # Mount logs directory
+      - ./logs:/var/log/faber
+      # Mount debug directory for core dumps
+      - ./debug:/tmp/debug
+      - ./start.sh:/start.sh
+    privileged: true
+    network_mode: 'host'
+    environment:
+      - CONFIG_FILE=/app/config.yaml
+      - RUST_LOG=debug
+      - RUST_BACKTRACE=1
+    # For debugging, we'll use a shell instead of the health check
+    # healthcheck:
+    #   test: ['CMD', 'curl', '-f', 'http://localhost:3000/health']
+    #   interval: 30s
+    #   timeout: 5s
+    #   retries: 5
+    #   start_period: 10s
+    restart: unless-stopped

@@ -9,8 +9,13 @@ services:
     volumes:
       - ./target/x86_64-unknown-linux-musl/debug:/opt/debug:ro
       - ./logs:/var/log/faber
+      - ./config.yaml:/app/config.yaml:ro
+      - ./seccomp.yaml:/app/seccomp.yaml:ro
+      - ./mount.yaml:/app/mount.yaml:ro
     privileged: true
     network_mode: 'host'
+    environment:
+      - CONFIG_FILE=/app/config.yaml
     healthcheck:
       test: ['CMD', 'curl', '-f', 'http://localhost:3000/health']
       interval: 30s

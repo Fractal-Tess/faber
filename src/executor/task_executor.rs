@@ -1,6 +1,8 @@
 use super::error::ExecutionTaskError;
 use super::task::{ResourceLimitViolations, ResourceUsage, Task, TaskResult, TaskStatus};
+use crate::config::Config;
 use crate::sandbox::ContainerSandbox;
+use crate::sandbox::container::ContainerConfig;
 use crate::sandbox::error::SandboxError;
 use tracing::{error, info, warn};
 
@@ -10,10 +12,20 @@ pub struct TaskExecutor {
 }
 
 impl TaskExecutor {
-    pub fn new(tasks: Vec<Task>) -> Result<Self, ExecutionTaskError> {
-        // Create container with static default configuration
+    pub fn new(tasks: Vec<Task>, config: &Config) -> Result<Self, ExecutionTaskError> {
+        // Create container configuration from loaded config
+        let security_level = config.get_security_level();
+        let resource_limits = config.get_resource_limits(security_level);
+        let namespace_settings = config.get_namespace_settings();
+
+        let container_config = ContainerConfig::new(security_level)
+            .with_resource_limits(resource_limits)
+            .with_namespace_settings(namespace_settings)
+            .with_user_ids(config.container.uid, config.container.gid);
+
+        // Create container with configuration
         let container =
-            ContainerSandbox::new_default().map_err(ExecutionTaskError::SandboxError)?;
+            ContainerSandbox::new(container_config).map_err(ExecutionTaskError::SandboxError)?;
 
         Ok(Self { tasks, container })
     }
