@@ -1,19 +1,32 @@
 services:
   faber:
+    container_name: faber-dev
     build:
       context: ../
       dockerfile: docker/Dockerfile.dev
     volumes:
+      - ../.cargo:/faber/.cargo:ro
       - ../config:/faber/config:ro
+      - ../crates:/faber/crates:ro
       - ../logs:/faber/logs:rw
+      - ../scripts:/faber/scripts:ro
+      - ../tests:/faber/tests:ro
+      - ../Cargo.toml:/faber/Cargo.toml:ro
+      - ../Cargo.lock:/faber/Cargo.lock:ro
+
+      - cargo-cache:/usr/local/cargo/registry
+      - cargo-target:/faber/target
     privileged: true
     network_mode: 'host'
     environment:
       - RUST_LOG=debug
       - RUST_BACKTRACE=1
+      - CARGO_HOME=/usr/local/cargo
     healthcheck:
       test: ['CMD', 'curl', '-f', 'http://localhost:3000/health']
       interval: 30s
       timeout: 5s
       retries: 5
-      start_period: 10s
+volumes:
+  cargo-cache:
+  cargo-target:

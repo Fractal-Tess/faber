@@ -7,6 +7,7 @@ members = [
     "crates/executor",
     "crates/api",
     "crates/cli",
+    "crates/integration-tests",
 ]
 
 [workspace.dependencies]
@@ -27,6 +28,8 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 tempfile = "3.8"
 thiserror = "2.0"
 clap = { version = "4.5", features = ["derive"] }
+tower = "0.5"
+hyper = { version = "1.0", features = ["full"] }
 # Container and system dependencies
 nix = { version = "0.30", features = [
     "process",
@@ -42,6 +45,7 @@ syscallz = "0.17"
 [workspace.dev-dependencies]
 tokio = { version = "1.47.1", features = ["full", "test-util"] }
 tower = "0.5"
+tempfile = "3.8"
 
 # Examples moved to individual crates as needed
 

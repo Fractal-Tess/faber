@@ -1,0 +1,66 @@
+services:
+  # Main application service
+  faber:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile.dev
+    volumes:
+      - ../config:/faber/config:ro
+      - ../logs:/faber/logs:rw
+    privileged: true
+    network_mode: 'host'
+    environment:
+      - RUST_LOG=info
+      - RUST_BACKTRACE=1
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:3000/health']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # Test service that waits for the application to be ready
+  test:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile.test
+    volumes:
+      - ../:/faber
+    environment:
+      - RUST_LOG=info
+      - RUST_BACKTRACE=1
+      - API_URL=http://localhost:3000
+    depends_on:
+      faber:
+        condition: service_healthy
+    # Run integration tests
+    command: ['/bin/sh', '-c', 'cargo test -p integration-tests']
+
+  # Unit tests service (no dependencies)
+  test-unit:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile.test
+    volumes:
+      - ../:/faber
+    environment:
+      - RUST_LOG=info
+      - RUST_BACKTRACE=1
+    # Run unit tests only
+    command: ['/bin/sh', '-c', 'cargo test --workspace --lib']
+
+  # Optional: Test with different configurations
+  test-debug:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile.test
+    volumes:
+      - ../:/faber
+    environment:
+      - RUST_LOG=debug
+      - RUST_BACKTRACE=1
+      - API_URL=http://localhost:3000
+    depends_on:
+      faber:
+        condition: service_healthy
+    command: ['/bin/sh', '-c', 'cargo test -p integration-tests -- --nocapture']

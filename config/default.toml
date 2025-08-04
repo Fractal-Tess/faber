@@ -1,0 +1,225 @@
+# Faber Configuration File
+
+[api]
+host = "0.0.0.0" # The host address for the API server (string)
+port = 3000 # The port number for the API server (number)
+
+[api.cors]
+enable_cors = false # Enable or disable CORS support (true/false)
+cors_allowed_origins = "*" # Allowed origins for CORS requests (string)
+cors_allowed_methods = "GET,POST,OPTIONS" # Allowed HTTP methods for CORS (string)
+cors_allowed_headers = "*" # Allowed headers for CORS (string)
+cors_allow_credentials = false # Allow credentials in CORS requests (true/false)
+
+[api.request]
+max_request_size_kb = 10240 # 10MB
+
+[api.auth]
+enable = "env:FABER_AUTH_ENABLE|false" # Enable or disable authentication (true/false), can be set via FABER_AUTH_ENABLE env variable
+secret_key = "env:FABER_AUTH_SECRET_KEY" # Secret key for authentication, must be set if auth is enabled (via FABER_AUTH_SECRET_KEY env variable)
+
+[api.endpoints]
+health_endpoint = "/health" # The health check endpoint path (string)
+execute_endpoint = "/execute-tasks" # The endpoint path for executing tasks (string)
+
+[sandbox.resource_limits]
+memory_limit_kb = 524288 # 512MB
+cpu_time_limit_ms = 10000 # 10 seconds
+max_cpu_cores = 1 # 1 core
+wall_time_limit_ms = 30000 # 30 seconds
+max_processes = 50 # 50 processes
+max_fds = 256 # 256 file descriptors
+stack_limit_kb = 4 # 4MB
+data_segment_limit_kb = 256 # 256MB
+address_space_limit_kb = 1024 # 1GB
+cpu_rate_limit_percent = 50 # 50%
+io_read_limit_kb_s = 10 # 10MB/s
+io_write_limit_kb_s = 10 # 10MB/s
+
+[sandbox.cgroups]
+enabled = true # Enable or disable cgroups support
+prefix = "faber" # Not configurable for now
+version = "v2" # Not configurable for now
+enable_cpu_rate_limit = true # Enable or disable CPU rate limiting (true/false)
+enable_memory_limit = true # Enable or disable memory limiting (true/false)
+enable_process_limit = true # Enable or disable process limiting (true/false)
+
+
+
+# Format: `mount_name` = ['host_path', 'sandbox_path']
+[sandbox.filesystem.mounts.readable]
+# System binaries and libraries
+bin = ["/bin", "/bin"]
+lib = ["/lib", "/lib"]
+lib64 = ["/lib64", "/lib64"]
+usr = ["/usr", "/usr"]
+# etc_ld_so_cache = ["/etc/ld.so.cache", "/etc/ld.so.cache"]
+# etc_alternatives = ["/etc/alternatives", "/etc/alternatives"]
+# etc_fpc_cfg = ["/etc/fpc.cfg", "/etc/fpc.cfg"]
+# etc_mono = ["/etc/mono", "/etc/mono"]
+# var_lib_ghc = ["/var/lib/ghc", "/var/lib/ghc"]
+# etc_java_17_openjdk = ["/etc/java-17-openjdk", "/etc/java-17-openjdk"]
+
+# Device files 
+dev_null = ["/dev/null", "/dev/null"]
+dev_random = ["/dev/random", "/dev/random"]
+dev_urandom = ["/dev/urandom", "/dev/urandom"]
+dev_zero = ["/dev/zero", "/dev/zero"]
+dev_full = ["/dev/full", "/dev/full"]
+
+# [sandbox.filesystem.mounts.writable]
+# # Working directory for user code
+# work_dir = ["/tmp/faber/work", "/work"]
+# # Temporary directory
+# tmp_dir = ["/tmp/faber/tmp", "/tmp"]
+
+# Format 'mount_name' = ['host_path', 'options']
+[sandbox.filesystem.mounts.tmpfs]
+work_tmpfs = ["/work", "size=256m,nr_inodes=4k"]
+tmp_tmpfs = ["/tmp", "size=128m,nr_inodes=4k"]
+
+[sandbox.security]
+default_security_level = "standard" # Not configurable for now
+
+[sandbox.security.namespaces]
+pid = false      # Enable PID namespace isolation (can override with FABER_SANDBOX_PID_NAMESPACE_ENABLED)
+mount = true     # Enable mount namespace isolation
+network = true   # Enable network namespace isolation
+ipc = true       # Enable IPC namespace isolation
+uts = true       # Enable UTS (hostname) namespace isolation
+user = true      # Enable user namespace isolation
+time = false     # Enable time namespace isolation
+cgroup = true    # Enable cgroup namespace isolation
+
+
+[sandbox.security.seccomp]
+enabled = true
+# Default action for syscalls not explicitly allowed
+default_action = "SCMP_ACT_ERRNO"
+
+# Architectures to support
+architectures = [
+    "SCMP_ARCH_X86_64",
+    "SCMP_ARCH_X86", 
+    "SCMP_ARCH_AARCH64"
+]
+
+[sandbox.security.seccomp.syscalls]
+allowed = [
+    # Basic file operations
+    "read", "write", "open", "close", "fstat", "stat", "lstat", "lseek",
+
+    # Memory management
+    "mmap", "mprotect", "munmap", "brk", "mremap", "msync", "mincore", "madvise",
+
+    # Process control
+    "clone", "fork", "vfork", "execve", "exit", "exit_group", "wait4", "waitid",
+
+    # Signal handling
+    "rt_sigaction", "rt_sigprocmask", "rt_sigreturn", "sigaltstack", "rt_sigsuspend",
+
+    # I/O operations
+    "ioctl", "pread64", "pwrite64", "readv", "writev", "sendfile",
+
+    # File system operations
+    "access", "pipe", "dup", "dup2", "dup3", "fcntl", "flock", "fsync", "fdatasync",
+
+    # Directory operations
+    "getdents", "getdents64", "getcwd", "chdir", "fchdir",
+
+    # File creation and modification
+    "creat", "link", "unlink", "symlink", "readlink", "chmod", "fchmod",
+    "chown", "fchown", "lchown",
+
+    # Time and scheduling
+    "gettimeofday", "nanosleep", "clock_gettime", "clock_getres", "clock_nanosleep",
+
+    # Process information
+    "getpid", "getppid", "getuid", "geteuid", "getgid", "getegid", "gettid",
+
+    # Resource limits
+    "getrlimit", "setrlimit", "getrusage", "prlimit64",
+
+    # System information
+    "uname", "sysinfo", "times", "syslog",
+
+    # Network operations (basic)
+    "socket", "connect", "accept", "bind", "listen", "getsockname", "getpeername",
+
+    # Network I/O
+    "sendto", "recvfrom", "sendmsg", "recvmsg", "shutdown", "setsockopt", "getsockopt",
+
+    # Process groups and sessions
+    "setpgid", "getpgid", "getpgrp", "setsid", "getsid",
+
+    # User and group management
+    "setuid", "setgid", "setreuid", "setregid", "setresuid", "getresuid",
+    "setresgid", "getresgid",
+
+    # Supplementary groups
+    "getgroups", "setgroups",
+
+    # File system attributes
+    "umask", "statfs", "fstatfs",
+
+    # Advanced file operations
+    "truncate", "ftruncate", "rename", "mkdir", "rmdir",
+
+    # Memory locking
+    "mlock", "munlock", "mlockall", "munlockall",
+
+    # Modern features
+    "getrandom", "memfd_create", "eventfd", "eventfd2", "timerfd_create",
+    "timerfd_settime", "timerfd_gettime",
+
+    # Epoll for I/O multiplexing
+    "epoll_create", "epoll_create1", "epoll_ctl", "epoll_wait", "epoll_pwait",
+
+    # Futex for synchronization
+    "futex", "set_robust_list", "get_robust_list",
+
+    # Scheduler operations
+    "sched_yield", "sched_setparam", "sched_getparam", "sched_setscheduler", "sched_getscheduler",
+
+    # Priority operations
+    "getpriority", "setpriority", "ioprio_set", "ioprio_get",
+
+    # Advanced I/O
+    "io_setup", "io_destroy", "io_getevents", "io_submit", "io_cancel",
+
+    # File descriptor operations
+    "close_range", "pidfd_open", "pidfd_getfd",
+
+    # Modern file operations
+    "openat", "mkdirat", "mknodat", "fchownat", "futimesat", "newfstatat",
+    "unlinkat", "renameat", "linkat", "symlinkat", "readlinkat", "fchmodat",
+    "faccessat", "faccessat2",
+
+    # Extended attributes
+    "setxattr", "lsetxattr", "fsetxattr", "getxattr", "lgetxattr", "fgetxattr",
+    "listxattr", "llistxattr", "flistxattr", "removexattr", "lremovexattr", "fremovexattr",
+
+    # Process memory operations
+    "process_vm_readv", "process_vm_writev", "process_madvise", "process_mrelease",
+
+    # Modern system calls
+    "statx", "copy_file_range", "preadv2", "pwritev2", "pkey_mprotect",
+    "pkey_alloc", "pkey_free",
+
+    # Restart syscall (for signal handling)
+    "restart_syscall"
+]
+
+# Example: Disallowed syscalls (add any explicitly denied syscalls here)
+disallowed = [
+    # "ptrace",
+    # "mount",
+    # "umount2",
+    # "reboot",
+    # "kexec_load",
+    # "swapon",
+    # "swapoff",
+    # "delete_module",
+    # "init_module",
+    # "finit_module"
+]

@@ -1,4 +1,6 @@
-FROM debian:latest
+FROM rust:1.88
+
+RUN rustup target add x86_64-unknown-linux-musl
 
 # Install g++ compiler, LLDB, and debugging tools
 RUN apt update && apt install -y \
@@ -9,21 +11,10 @@ RUN apt update && apt install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
+RUN cargo install cargo-watch
+
 WORKDIR /faber
 
-COPY <<EOF start.sh
-#!/bin/bash
 
-set -e
-
-# Start lldb-server for remote debugging in the background
-echo "Starting lldb-server for remote debugging..."
-lldb-server platform --server --listen *:12345 
-LLDB_PID=$!
-echo "LLDB server started with PID: $LLDB_PID"
-EOF
-
-RUN chmod +x start.sh
-
-ENTRYPOINT ["/faber/start.sh"]
+ENTRYPOINT [ "/faber/scripts/lldb-start.sh" ]
 
