@@ -1,0 +1,18 @@
+[package]
+name = "faber-sandbox"
+version = "0.1.0"
+edition = "2024"
+
+
+[dependencies]
+faber-core = { path = "../core" }
+faber-config = { path = "../config" }
+nix = { workspace = true }
+libc = { workspace = true }
+caps = { workspace = true }
+syscallz = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+tempfile = { workspace = true }
+tracing = { workspace = true }
