@@ -4,23 +4,41 @@ use std::fmt::Display;
 use std::fs;
 use std::path::Path;
 
+pub mod api;
+pub mod filesystem;
+pub mod sandbox;
+pub mod security;
 pub mod types;
 
 pub use types::*;
 
 impl Config {
-    /// Load configuration from default.toml or environment variables
-    pub fn load() -> Result<Self> {
-        // Load .env file if it exists
-        dotenvy::dotenv().ok();
+    /// Load configuration with CLI overrides
+    pub fn load(
+        config_path: Option<String>,
+        host: Option<String>,
+        port: Option<u16>,
+        open_mode: bool,
+    ) -> Result<Self> {
+        // 1. Load from config file (or default)
+        let config_path = config_path.unwrap_or("config/default.toml".to_string());
+        let mut config = Self::from_file(config_path)?;
 
-        // Try to load from config file first
-        if let Ok(config) = Self::from_file("config/default.toml") {
-            return Ok(config);
+        // 2. Override with environment variables
+        config.override_from_env();
+
+        // 3. Override with CLI options (highest priority)
+        if open_mode {
+            config.api.auth.enable = "true".to_string();
+        }
+        if let Some(host) = host {
+            config.api.host = host;
+        }
+        if let Some(port) = port {
+            config.api.port = port;
         }
 
-        // Fall back to environment variables
-        Self::from_env()
+        Ok(config)
     }
 
     /// Load configuration from a specific file

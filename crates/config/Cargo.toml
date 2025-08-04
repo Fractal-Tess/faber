@@ -8,5 +8,4 @@ edition = "2024"
 faber-core = { path = "../core" }
 serde = { workspace = true }
 toml = "0.9.4"
-dotenvy = { workspace = true }
 thiserror = { workspace = true }

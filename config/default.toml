@@ -1,5 +1,8 @@
 # Faber Configuration File
 
+## Some of the commands can be set via the cli flags.
+## Run faber --help to see the available commands and flags.
+
 [api]
 host = "0.0.0.0" # The host address for the API server (string)
 port = 3000 # The port number for the API server (number)
@@ -16,7 +19,7 @@ max_request_size_kb = 10240 # 10MB
 
 [api.auth]
 enable = "env:FABER_AUTH_ENABLE|false" # Enable or disable authentication (true/false), can be set via FABER_AUTH_ENABLE env variable
-secret_key = "env:FABER_AUTH_SECRET_KEY" # Secret key for authentication, must be set if auth is enabled (via FABER_AUTH_SECRET_KEY env variable)
+secret_key = "env:FABER_AUTH_SECRET_KEY" # Secret key for authentication, must be set via FABER_AUTH_SECRET_KEY env variable (no fallback for security)
 
 [api.endpoints]
 health_endpoint = "/health" # The health check endpoint path (string)
