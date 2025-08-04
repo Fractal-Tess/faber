@@ -10,14 +10,16 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use tracing::{error, info};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::executor::{task::TaskResult, task::TaskStatus};
 
+use super::cgroups::CgroupManager;
 use super::error::SandboxError;
 use super::mounts::{MountConfig, MountManager};
 use super::namespaces::{NamespaceConfig, NamespaceManager};
+use super::privileges::PrivilegeManager;
 
 /// Security level presets for container isolation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -51,8 +53,8 @@ impl NamespaceSettings {
                 uts: false,
             },
             SecurityLevel::Standard => Self {
-                pid: false, // Disable PID namespace to avoid process spawning issues
-                mount: true,
+                pid: false,   // Disable PID namespace to avoid process spawning issues
+                mount: false, // Disable mount namespace to avoid stdout/stderr issues
                 network: false,
                 ipc: true,
                 uts: true,
@@ -98,7 +100,7 @@ impl ResourceLimits {
                 cpu_time_limit: 5_000_000_000,    // 5 seconds
                 wall_time_limit: 10_000_000_000,  // 10 seconds
                 max_processes: 32,
-                max_fds: 64,
+                max_fds: 128, // Increased from 64 to ensure enough FDs for pipes
             },
             SecurityLevel::Maximum => Self {
                 memory_limit: 512 * 1024 * 1024, // 512MB
@@ -185,12 +187,14 @@ pub struct ContainerSandbox {
     container_root: PathBuf,
     /// Whether container is active
     is_active: bool,
-    /// Cgroup path for resource management
-    cgroup_path: Option<PathBuf>,
+    /// Cgroup manager for resource management
+    cgroup_manager: Option<CgroupManager>,
     /// Namespace manager for managing namespaces
     namespace_manager: NamespaceManager,
     /// Mount manager for managing filesystem mounts
     mount_manager: MountManager,
+    /// Privilege manager for dropping privileges
+    privilege_manager: PrivilegeManager,
 }
 
 impl ContainerSandbox {
@@ -254,6 +258,26 @@ impl ContainerSandbox {
             return Err(SandboxError::MountFailed(error_context));
         }
 
+        // Initialize cgroup manager for resource limits
+        let cgroup_manager = match CgroupManager::new(&container_id) {
+            Ok(manager) => {
+                // Apply resource limits
+                if let Err(e) = manager.apply_limits(&config.resource_limits) {
+                    warn!("Failed to apply resource limits: {}", e);
+                    None
+                } else {
+                    Some(manager)
+                }
+            }
+            Err(e) => {
+                warn!("Failed to create cgroup manager: {}", e);
+                None
+            }
+        };
+
+        // Initialize privilege manager
+        let privilege_manager = PrivilegeManager::new(config.uid, config.gid);
+
         info!(
             "Successfully created container sandbox: {} with root at {}",
             container_id,
@@ -266,9 +290,10 @@ impl ContainerSandbox {
             work_dir,
             container_root,
             is_active: true,
-            cgroup_path: None,
+            cgroup_manager,
             namespace_manager,
             mount_manager,
+            privilege_manager,
         })
     }
 
@@ -405,17 +430,15 @@ impl ContainerSandbox {
         // Check if container is active
         self.is_active_or_err()?;
 
-        // Set up namespaces
-        // TODO: Phase 1.2 - Set up cgroups
-        // TODO: Phase 1.3 - Drop privileges
-
         // Construct command
         let mut cmd = Command::new(command);
         cmd.args(args);
         cmd.current_dir(&self.work_dir);
 
-        // Apply namespaces to the command
-        self.namespace_manager.apply_namespaces(&mut cmd)?;
+        // IMPORTANT: Set up stdout/stderr capture BEFORE applying namespaces
+        // This ensures the pipes are established before any namespace changes
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
 
         // Build standard environment variables
         cmd = self.build_std_env(cmd);
@@ -423,6 +446,11 @@ impl ContainerSandbox {
         // Apply custom environment variables
         for (key, value) in env {
             cmd.env(key, value);
+        }
+
+        // Apply namespaces to the command (but be careful not to break pipes)
+        if let Err(e) = self.namespace_manager.apply_namespaces(&mut cmd) {
+            warn!("Failed to apply namespaces: {}", e);
         }
 
         // Log command details for debugging
@@ -434,52 +462,110 @@ impl ContainerSandbox {
             self.work_dir.display()
         );
 
-        // Execute and capture result
-        match cmd.output() {
-            Ok(output) => {
-                let exit_code = output.status.code().unwrap_or(-1);
-                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        // Debug: Check if the command exists
+        let command_path = if command.starts_with('/') {
+            command.to_string()
+        } else {
+            // Try to find the command in PATH
+            let path_dirs = [
+                self.container_root.join("usr/local/bin"),
+                self.container_root.join("usr/bin"),
+                self.container_root.join("bin"),
+            ];
 
-                if exit_code != 0 {
-                    let debug_info = self.get_debug_info();
-                    let error_context = format!(
-                        "Command '{}' failed with exit code {} in container {}. Working directory: {}. Command args: {:?}. Stdout: '{}'. Stderr: '{}'. Debug info: {}",
-                        command,
-                        exit_code,
-                        self.container_id,
-                        self.work_dir.display(),
-                        args,
-                        stdout,
-                        stderr,
-                        debug_info
-                    );
-                    return Err(SandboxError::ExecutionFailed(error_context));
+            let mut found_path = None;
+            for dir in &path_dirs {
+                let test_path = dir.join(command);
+                if test_path.exists() {
+                    found_path = Some(test_path);
+                    break;
                 }
-
-                Ok(TaskResult {
-                    status: TaskStatus::Success,
-                    error: None,
-                    exit_code: Some(exit_code),
-                    stdout: Some(stdout),
-                    stderr: Some(stderr),
-                })
             }
-            Err(e) => {
-                let debug_info = self.get_debug_info();
-                let error_context = format!(
-                    "Command '{}' execution failed in container {}. Working directory: {}. Command args: {:?}. Error: {}. Error kind: {:?}. Debug info: {}",
-                    command,
-                    self.container_id,
-                    self.work_dir.display(),
-                    args,
-                    e,
-                    e.kind(),
-                    debug_info
-                );
-                Err(SandboxError::ExecutionFailed(error_context))
+
+            found_path
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| command.to_string())
+        };
+
+        debug!("Command path resolved to: {}", command_path);
+
+        // Check if command file exists
+        if !std::path::Path::new(&command_path).exists() {
+            warn!("Command file does not exist: {}", command_path);
+        }
+
+        // Execute and capture result
+        let child = cmd.spawn().map_err(|e| {
+            let debug_info = self.get_debug_info();
+            let error_context = format!(
+                "Command '{}' execution failed in container {}. Working directory: {}. Command args: {:?}. Error: {}. Error kind: {:?}. Debug info: {}",
+                command,
+                self.container_id,
+                self.work_dir.display(),
+                args,
+                e,
+                e.kind(),
+                debug_info
+            );
+            SandboxError::ExecutionFailed(error_context)
+        })?;
+
+        // Add process to cgroup (if cgroup manager exists)
+        if let Some(ref cgroup_manager) = self.cgroup_manager {
+            if let Err(e) = cgroup_manager.add_process(child.id() as u32) {
+                warn!("Failed to add process to cgroup: {}", e);
             }
         }
+
+        // Wait for the process to complete
+        let output = child.wait_with_output().map_err(|e| {
+            let debug_info = self.get_debug_info();
+            let error_context = format!(
+                "Command '{}' execution failed in container {}. Working directory: {}. Command args: {:?}. Error: {}. Error kind: {:?}. Debug info: {}",
+                command,
+                self.container_id,
+                self.work_dir.display(),
+                args,
+                e,
+                e.kind(),
+                debug_info
+            );
+            SandboxError::ExecutionFailed(error_context)
+        })?;
+
+        let exit_code = output.status.code().unwrap_or(-1);
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+        // Log the captured output for debugging
+        debug!(
+            "Command '{}' completed with exit code {}. Stdout: '{}', Stderr: '{}'",
+            command, exit_code, stdout, stderr
+        );
+
+        if exit_code != 0 {
+            let debug_info = self.get_debug_info();
+            let error_context = format!(
+                "Command '{}' failed with exit code {} in container {}. Working directory: {}. Command args: {:?}. Stdout: '{}'. Stderr: '{}'. Debug info: {}",
+                command,
+                exit_code,
+                self.container_id,
+                self.work_dir.display(),
+                args,
+                stdout,
+                stderr,
+                debug_info
+            );
+            return Err(SandboxError::ExecutionFailed(error_context));
+        }
+
+        Ok(TaskResult {
+            status: TaskStatus::Success,
+            error: None,
+            exit_code: Some(exit_code),
+            stdout: Some(stdout),
+            stderr: Some(stderr),
+        })
     }
 
     /// Clean up the container
@@ -490,7 +576,12 @@ impl ContainerSandbox {
 
         info!("Cleaning up container {}", self.container_id);
 
-        // TODO: Clean up cgroups
+        // Clean up cgroups
+        if let Some(ref mut cgroup_manager) = self.cgroup_manager {
+            if let Err(e) = cgroup_manager.cleanup() {
+                warn!("Failed to cleanup cgroups: {}", e);
+            }
+        }
 
         // Unmount all filesystems first to prevent "Resource busy" errors
         if let Err(e) = self.mount_manager.unmount_all() {
