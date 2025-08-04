@@ -42,6 +42,7 @@ pub struct NamespaceSettings {
     pub network: bool,
     pub ipc: bool,
     pub uts: bool,
+    pub user: bool,
 }
 
 impl NamespaceSettings {
@@ -53,6 +54,7 @@ impl NamespaceSettings {
                 network: true,
                 ipc: false,
                 uts: false,
+                user: false,
             },
             SecurityLevel::Standard => Self {
                 pid: false,    // Disable PID namespace to avoid process spawning issues
@@ -60,6 +62,7 @@ impl NamespaceSettings {
                 network: true, // Enable network namespace for isolation
                 ipc: true,
                 uts: true,
+                user: true, // Enable user namespace for secure privilege dropping
             },
             SecurityLevel::Maximum => Self {
                 pid: true,
@@ -67,6 +70,7 @@ impl NamespaceSettings {
                 network: false,
                 ipc: true,
                 uts: true,
+                user: true,
             },
         }
     }
@@ -145,8 +149,8 @@ impl ContainerConfig {
             security_level,
             resource_limits: ResourceLimits::from_security_level(security_level),
             namespace_settings: NamespaceSettings::from_security_level(security_level),
-            uid: 65534, // nobody user
-            gid: 65534, // nobody group
+            uid: 65534, // nobody user - will work with user namespace
+            gid: 65534, // nobody group - will work with user namespace
             enable_mount_operations: true,
             work_dir_size_mb: 64,
             mount_config: MountConfig::default(),
@@ -239,7 +243,8 @@ impl ContainerSandbox {
         if let Err(e) = std::fs::create_dir_all(&work_dir) {
             warn!("Failed to create work directory: {}", e);
         }
-        if let Err(e) = std::fs::set_permissions(&work_dir, std::fs::Permissions::from_mode(0o755))
+        // Set permissions to be writable by the nobody user (65534)
+        if let Err(e) = std::fs::set_permissions(&work_dir, std::fs::Permissions::from_mode(0o777))
         {
             warn!("Failed to set work directory permissions: {}", e);
         }
@@ -251,7 +256,7 @@ impl ContainerSandbox {
             network: config.namespace_settings.network,
             ipc: config.namespace_settings.ipc,
             uts: config.namespace_settings.uts,
-            user: false, // Keep user namespace disabled for now
+            user: true, // Enable user namespace for secure privilege dropping
         };
 
         let namespace_manager = NamespaceManager::new(namespace_config);
@@ -480,10 +485,9 @@ impl ContainerSandbox {
         }
 
         // Apply privilege dropping
-        // Temporarily disabled for testing
-        // if let Err(e) = self.privilege_manager.apply_privileges(&mut cmd) {
-        //     warn!("Failed to apply privilege dropping: {}", e);
-        // }
+        if let Err(e) = self.privilege_manager.apply_privileges(&mut cmd) {
+            warn!("Failed to apply privilege dropping: {}", e);
+        }
 
         // Build standard environment variables
         cmd = self.build_std_env(cmd);
