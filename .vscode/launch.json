@@ -6,18 +6,19 @@
       "request": "launch",
       "name": "Remote Debug (Docker Container)",
       "program": "${workspaceFolder}/target/x86_64-unknown-linux-musl/debug/faber",
+      "args": ["--config", "/faber/config/config.yaml", "serve"],
       "initCommands": [
         "platform select remote-linux",
         "platform connect connect://localhost:12345",
         "settings set target.inherit-env false"
       ],
-      "terminal": "external",
-      "console": "externalTerminal",
-      "env": {
-        "OPEN": "true"
-      },
+      "preRunCommands": [
+        "platform shell mkdir -p /tmp/debug",
+        "platform put-file ${workspaceFolder}/target/x86_64-unknown-linux-musl/debug/faber /tmp/debug/faber",
+        "platform shell chmod +x /tmp/debug/faber"
+      ],
       "cargo": {
-        "args": ["build", "--target", "x86_64-unknown-linux-musl"]
+        "args": ["build"]
       }
     }
   ]
