@@ -1,0 +1,21 @@
+services:
+  faber:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile.dev
+    volumes:
+      # Mount configuration files
+      - ../config:/faber/config:ro
+    entrypoint: ['/faber/start.sh']
+    privileged: true
+    network_mode: 'host'
+    environment:
+      - RUST_LOG=debug
+      - RUST_BACKTRACE=1
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:3000/health']
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped

@@ -1,0 +1,14 @@
+FROM debian:latest
+
+# Install g++ compiler, LLDB, and debugging tools
+RUN apt update && apt install -y \
+    curl \
+    g++ \
+    lldb \
+    gdb \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /faber
+
+COPY docker/start.sh start.sh

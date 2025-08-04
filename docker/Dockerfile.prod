@@ -1,0 +1,23 @@
+FROM rust:1.88 AS builder
+
+WORKDIR /faber
+
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+
+RUN cargo build --release -p faber-cli
+
+FROM debian:bookworm-slim AS runtime
+
+WORKDIR /faber
+
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /faber/target/release/faber /usr/local/bin/faber
+COPY --chown=root:root config/config.yaml /faber/config/default-config.yaml
+
+USER root
+
+EXPOSE 3000/tcp
+
+ENTRYPOINT ["/usr/local/bin/faber", "--config", "/faber/config/default-config.yaml", "serve"] 
