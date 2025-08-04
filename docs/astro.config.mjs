@@ -10,7 +10,7 @@ import tailwindcss from '@tailwindcss/vite';
 // https://astro.build/config
 export default defineConfig({
   site: 'https://fractal-tess.github.io',
-  base: '/faber/',
+  base: '/faber',
 
   vite: {
     server: {
