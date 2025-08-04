@@ -1,0 +1,12 @@
+[package]
+name = "faber-config"
+version = "0.1.0"
+edition = "2024"
+
+
+[dependencies]
+faber-core = { path = "../core" }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+dotenvy = { workspace = true }
+thiserror = { workspace = true }
