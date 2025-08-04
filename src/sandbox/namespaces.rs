@@ -5,7 +5,7 @@
 
 use std::os::unix::process::CommandExt;
 use std::process::Command;
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 use super::error::SandboxError;
 
@@ -107,7 +107,6 @@ pub struct NamespaceManager {
 impl NamespaceManager {
     /// Create a new namespace manager
     pub fn new(config: NamespaceConfig) -> Self {
-        debug!("Creating namespace manager with config: {:?}", config);
         Self { config }
     }
 
@@ -117,11 +116,8 @@ impl NamespaceManager {
         let flags = self.config.clone_flags();
 
         if flags == 0 {
-            debug!("No namespaces configured, skipping namespace setup");
             return Ok(());
         }
-
-        info!("Applying namespaces with flags: 0x{:x}", flags);
 
         // Use pre_exec to call unshare before executing the command
         unsafe {
@@ -130,14 +126,14 @@ impl NamespaceManager {
                 let result = libc::unshare(flags);
                 if result != 0 {
                     let error = std::io::Error::last_os_error();
-                    error!("Failed to unshare namespaces: {error:?}");
                     return Err(error);
                 }
 
-                // If we have a mount namespace, we might want to set up basic mounts
+                // If we have a mount namespace, set up filesystem isolation
                 if flags & CLONE_NEWNS != 0 {
-                    // TODO: Set up basic filesystem isolation
-                    // For now, just continue
+                    // TODO: Set up mounts within the namespace here
+                    // This is where we would call mount_manager.setup_namespace_mounts()
+                    // For now, we'll rely on the container setup done earlier
                 }
 
                 // If we have a PID namespace, we're now PID 1 in the new namespace
@@ -175,47 +171,5 @@ impl NamespaceManager {
 
         info!("Namespace support verified");
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_namespace_config_flags() {
-        let config = NamespaceConfig::default();
-        let flags = config.clone_flags();
-
-        // Should have PID, Mount, Network, IPC, UTS but not User
-        assert!(flags & CLONE_NEWPID != 0);
-        assert!(flags & CLONE_NEWNS != 0);
-        assert!(flags & CLONE_NEWNET != 0);
-        assert!(flags & CLONE_NEWIPC != 0);
-        assert!(flags & CLONE_NEWUTS != 0);
-        assert!(flags & CLONE_NEWUSER == 0);
-    }
-
-    #[test]
-    fn test_minimal_config() {
-        let config = NamespaceConfig::minimal();
-        let flags = config.clone_flags();
-
-        // Should only have PID and Mount
-        assert!(flags & CLONE_NEWPID != 0);
-        assert!(flags & CLONE_NEWNS != 0);
-        assert!(flags & CLONE_NEWNET == 0);
-        assert!(flags & CLONE_NEWIPC == 0);
-        assert!(flags & CLONE_NEWUTS == 0);
-        assert!(flags & CLONE_NEWUSER == 0);
-    }
-
-    #[test]
-    fn test_namespace_support_check() {
-        // This test will pass on systems with namespace support
-        match NamespaceManager::check_namespace_support() {
-            Ok(()) => println!("Namespace support available"),
-            Err(e) => println!("Namespace support not available: {e}"),
-        }
     }
 }

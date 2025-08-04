@@ -1,6 +1,9 @@
+use serde::Serialize;
 use thiserror::Error;
 
-#[derive(Error, Debug)]
+use crate::executor::{TaskResult, error::ExecutionTaskError, task::TaskStatus};
+
+#[derive(Error, Debug, Clone, Serialize)]
 pub enum SandboxError {
     #[error("Container creation failed: {0}")]
     ContainerCreation(String),
@@ -19,4 +22,22 @@ pub enum SandboxError {
 
     #[error("Sandbox cleanup failed: {0}")]
     CleanupFailed(String),
+
+    #[error("Container is not active")]
+    ContainerNotActive,
+
+    #[error("File copy into container failed: {0}")]
+    FileCopyFailed(String),
+}
+
+impl From<SandboxError> for TaskResult {
+    fn from(error: SandboxError) -> Self {
+        TaskResult {
+            status: TaskStatus::Failure,
+            error: Some(ExecutionTaskError::SandboxError(error.clone())),
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+        }
+    }
 }

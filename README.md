@@ -79,6 +79,44 @@ A secure sandbox API for executing code in isolated environments. Submit source 
      }'
    ```
 
+## Debugging
+
+Faber supports remote debugging using Docker containers with LLDB. This allows you to debug the application while it runs in an isolated environment.
+
+### Quick Debug Setup
+
+```bash
+# Automated setup (recommended)
+./dev-scripts/debug.sh
+
+# Manual setup
+cargo build
+docker-compose up -d
+docker-compose exec faber lldb-server platform --server --listen *:12345
+```
+
+### Debug Configurations
+
+1. **Remote Debug (Docker Container)** - Launch and debug in container
+2. **Attach to Running Process (Docker)** - Attach to existing process
+3. **Local Debug (Development)** - Debug locally without Docker
+
+### Using VSCode Debugger
+
+1. Open VSCode in the project directory
+2. Go to Run and Debug panel (Ctrl+Shift+D)
+3. Select your preferred debug configuration
+4. Press F5 to start debugging
+
+### Cleanup
+
+```bash
+# Stop debugging environment
+./dev-scripts/cleanup-debug.sh
+```
+
+For detailed debugging instructions, see [DEBUGGING.md](DEBUGGING.md).
+
 ## Configuration
 
 | Environment Variable | Default    | Description                                                  |

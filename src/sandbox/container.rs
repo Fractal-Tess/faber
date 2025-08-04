@@ -10,16 +10,67 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 use uuid::Uuid;
+
+use crate::executor::{task::TaskResult, task::TaskStatus};
 
 use super::error::SandboxError;
 use super::mounts::{MountConfig, MountManager};
 use super::namespaces::{NamespaceConfig, NamespaceManager};
 
-/// Configuration for container security settings
-#[derive(Debug, Clone)]
-pub struct ContainerConfig {
+/// Security level presets for container isolation
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum SecurityLevel {
+    /// Minimal isolation - for trusted code
+    Minimal,
+    /// Standard isolation - for most use cases
+    Standard,
+    /// Maximum isolation - for untrusted code
+    Maximum,
+}
+
+/// Namespace isolation configuration
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NamespaceSettings {
+    pub pid: bool,
+    pub mount: bool,
+    pub network: bool,
+    pub ipc: bool,
+    pub uts: bool,
+}
+
+impl NamespaceSettings {
+    pub fn from_security_level(level: SecurityLevel) -> Self {
+        match level {
+            SecurityLevel::Minimal => Self {
+                pid: false,
+                mount: false,
+                network: true,
+                ipc: false,
+                uts: false,
+            },
+            SecurityLevel::Standard => Self {
+                pid: false, // Disable PID namespace to avoid process spawning issues
+                mount: true,
+                network: false,
+                ipc: true,
+                uts: true,
+            },
+            SecurityLevel::Maximum => Self {
+                pid: true,
+                mount: true,
+                network: false,
+                ipc: true,
+                uts: true,
+            },
+        }
+    }
+}
+
+/// Resource limits for container execution
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ResourceLimits {
     /// Memory limit in bytes
     pub memory_limit: u64,
     /// CPU time limit in nanoseconds  
@@ -30,48 +81,96 @@ pub struct ContainerConfig {
     pub max_processes: u32,
     /// Maximum number of file descriptors
     pub max_fds: u64,
-    /// User ID to run processes as
-    pub uid: u32,
-    /// Group ID to run processes as  
-    pub gid: u32,
-    /// Whether to enable network access
-    pub enable_network: bool,
-    /// Whether to enable PID namespace
-    pub enable_pid_namespace: bool,
-    /// Whether to enable mount namespace
-    pub enable_mount_namespace: bool,
-    /// Mount configuration for filesystem access
-    pub mount_config: MountConfig,
 }
 
-impl Default for ContainerConfig {
-    fn default() -> Self {
-        Self {
-            memory_limit: 1024 * 1024 * 1024, // 1GB
-            cpu_time_limit: 5_000_000_000,    // 5 seconds
-            wall_time_limit: 10_000_000_000,  // 10 seconds
-            max_processes: 32,
-            max_fds: 64,
-            uid: 65534, // nobody user
-            gid: 65534, // nobody group
-            enable_network: false,
-            enable_pid_namespace: true,
-            enable_mount_namespace: true,
-            mount_config: MountConfig::default(),
+impl ResourceLimits {
+    pub fn from_security_level(level: SecurityLevel) -> Self {
+        match level {
+            SecurityLevel::Minimal => Self {
+                memory_limit: 2 * 1024 * 1024 * 1024, // 2GB
+                cpu_time_limit: 30_000_000_000,       // 30 seconds
+                wall_time_limit: 60_000_000_000,      // 60 seconds
+                max_processes: 128,
+                max_fds: 256,
+            },
+            SecurityLevel::Standard => Self {
+                memory_limit: 1024 * 1024 * 1024, // 1GB
+                cpu_time_limit: 5_000_000_000,    // 5 seconds
+                wall_time_limit: 10_000_000_000,  // 10 seconds
+                max_processes: 32,
+                max_fds: 64,
+            },
+            SecurityLevel::Maximum => Self {
+                memory_limit: 512 * 1024 * 1024, // 512MB
+                cpu_time_limit: 2_000_000_000,   // 2 seconds
+                wall_time_limit: 5_000_000_000,  // 5 seconds
+                max_processes: 16,
+                max_fds: 32,
+            },
         }
     }
 }
 
-#[derive(Debug)]
-pub struct ContainerResult {
-    pub exit_code: i32,
-    pub stdout: String,
-    pub stderr: String,
-    pub cpu_time_used: u64,
-    pub memory_used: u64,
-    pub wall_time_used: u64,
-    pub was_killed: bool,
-    pub kill_reason: Option<String>,
+/// Configuration for container security settings
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ContainerConfig {
+    /// Security level preset
+    pub security_level: SecurityLevel,
+    /// Resource limits for execution
+    pub resource_limits: ResourceLimits,
+    /// Namespace isolation settings
+    pub namespace_settings: NamespaceSettings,
+    /// User ID to run processes as
+    pub uid: u32,
+    /// Group ID to run processes as  
+    pub gid: u32,
+    /// Whether to attempt mount operations (requires privileges)
+    pub enable_mount_operations: bool,
+    /// Size of RAM-based work directory in MB (default: 256)
+    pub work_dir_size_mb: u32,
+    /// Mount configuration for filesystem access
+    pub mount_config: MountConfig,
+}
+
+impl ContainerConfig {
+    /// Create a new configuration with the specified security level
+    pub fn new(security_level: SecurityLevel) -> Self {
+        Self {
+            security_level,
+            resource_limits: ResourceLimits::from_security_level(security_level),
+            namespace_settings: NamespaceSettings::from_security_level(security_level),
+            uid: 65534, // nobody user
+            gid: 65534, // nobody group
+            enable_mount_operations: true,
+            work_dir_size_mb: 64,
+            mount_config: MountConfig::default(),
+        }
+    }
+
+    /// Builder method to customize resource limits
+    pub fn with_resource_limits(mut self, limits: ResourceLimits) -> Self {
+        self.resource_limits = limits;
+        self
+    }
+
+    /// Builder method to customize namespace settings
+    pub fn with_namespace_settings(mut self, settings: NamespaceSettings) -> Self {
+        self.namespace_settings = settings;
+        self
+    }
+
+    /// Builder method to set user/group IDs
+    pub fn with_user_ids(mut self, uid: u32, gid: u32) -> Self {
+        self.uid = uid;
+        self.gid = gid;
+        self
+    }
+}
+
+impl Default for ContainerConfig {
+    fn default() -> Self {
+        Self::new(SecurityLevel::Standard)
+    }
 }
 
 /// Secure container sandbox for process execution
@@ -95,6 +194,13 @@ pub struct ContainerSandbox {
 }
 
 impl ContainerSandbox {
+    /// Create a new container sandbox with static default configuration
+    pub fn new_default() -> Result<Self, SandboxError> {
+        // Static configuration - cannot be controlled by API
+        let config = ContainerConfig::new(SecurityLevel::Standard);
+        Self::new(config)
+    }
+
     /// Create a new container sandbox
     pub fn new(config: ContainerConfig) -> Result<Self, SandboxError> {
         let container_id = Uuid::new_v4().to_string();
@@ -105,46 +211,54 @@ impl ContainerSandbox {
             .join("faber_container")
             .join(&container_id);
 
-        fs::create_dir_all(&container_root).map_err(|e| {
-            SandboxError::ContainerCreation(format!(
-                "Failed to create container root {}: {}",
+        if let Err(e) = fs::create_dir_all(&container_root) {
+            let error_context = format!(
+                "Failed to create container root directory {} for container {}. Error: {}",
                 container_root.display(),
+                container_id,
                 e
-            ))
-        })?;
+            );
+            return Err(SandboxError::ContainerCreation(error_context));
+        }
 
-        // Create working directory inside container
+        // Work directory will be created as a tmpfs mount for fast I/O performance
         let work_dir = container_root.join("work");
-        fs::create_dir_all(&work_dir).map_err(|e| {
-            SandboxError::ContainerCreation(format!(
-                "Failed to create work directory {}: {}",
-                work_dir.display(),
-                e
-            ))
-        })?;
-
-        debug!(
-            "Container {} created with root: {}",
-            container_id,
-            container_root.display()
-        );
 
         // Initialize namespace manager
         let namespace_config = NamespaceConfig {
-            pid: config.enable_pid_namespace,
-            mount: config.enable_mount_namespace,
-            network: config.enable_network,
-            ipc: true,   // Enable IPC namespace by default
-            uts: true,   // Enable UTS namespace by default
+            pid: config.namespace_settings.pid,
+            mount: config.namespace_settings.mount,
+            network: config.namespace_settings.network,
+            ipc: config.namespace_settings.ipc,
+            uts: config.namespace_settings.uts,
             user: false, // Keep user namespace disabled for now
         };
+
         let namespace_manager = NamespaceManager::new(namespace_config);
 
-        // Initialize mount manager
-        let mount_manager = MountManager::new(&config.mount_config, &container_root);
+        // Initialize mount manager with container-specific configuration
+        let mount_config = if config.mount_config.mounts.is_empty() {
+            // Use default config with custom work directory size
+            MountConfig::default_secure_with_work_size(config.work_dir_size_mb)
+        } else {
+            config.mount_config.clone()
+        };
+        let mount_manager = MountManager::new(&mount_config, &container_root);
 
-        // Apply mounts to prepare the container filesystem
-        mount_manager.apply_mounts()?;
+        // Create directory structure first (outside namespace)
+        if let Err(e) = mount_manager.apply_mounts() {
+            let error_context = format!(
+                "Failed to apply mounts for container {}. Mount config: {:?}. Error: {}",
+                container_id, mount_config, e
+            );
+            return Err(SandboxError::MountFailed(error_context));
+        }
+
+        info!(
+            "Successfully created container sandbox: {} with root at {}",
+            container_id,
+            container_root.display()
+        );
 
         Ok(Self {
             container_id,
@@ -164,8 +278,21 @@ impl ContainerSandbox {
     }
 
     /// Get the working directory
+    ///
+    /// The work directory is mounted as a tmpfs (RAM-based filesystem)
+    /// for maximum I/O performance. This is particularly beneficial for:
+    /// - Compilation workloads with many temporary files
+    /// - File-intensive operations
+    /// - Applications that create many small files
     pub fn work_dir(&self) -> &Path {
         &self.work_dir
+    }
+
+    /// Get the work directory path
+    ///
+    /// Returns the path to the tmpfs-mounted work directory
+    pub fn work_dir_path(&self) -> PathBuf {
+        self.work_dir.clone()
     }
 
     /// Check if container is active
@@ -181,7 +308,7 @@ impl ContainerSandbox {
             ));
         }
 
-        debug!(
+        info!(
             "Copying {} files into container {}",
             files.len(),
             self.container_id
@@ -192,28 +319,80 @@ impl ContainerSandbox {
 
             // Create parent directories
             if let Some(parent) = full_path.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| {
-                    SandboxError::ExecutionFailed(format!(
-                        "Failed to create directory {}: {}",
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    let error_context = format!(
+                        "Failed to create directory {} in container {}. Error: {}",
                         parent.display(),
+                        self.container_id,
                         e
-                    ))
-                })?;
+                    );
+                    return Err(SandboxError::ExecutionFailed(error_context));
+                }
             }
 
             // Write file
-            std::fs::write(&full_path, content).map_err(|e| {
-                SandboxError::ExecutionFailed(format!(
-                    "Failed to write file {}: {}",
+            if let Err(e) = std::fs::write(&full_path, content) {
+                let error_context = format!(
+                    "Failed to write file {} in container {}. Content length: {} bytes. Error: {}",
                     full_path.display(),
+                    self.container_id,
+                    content.len(),
                     e
-                ))
-            })?;
+                );
+                return Err(SandboxError::ExecutionFailed(error_context));
+            }
+        }
 
-            debug!("Copied file: {}", file_path);
+        info!(
+            "Successfully copied {} files into container {}",
+            files.len(),
+            self.container_id
+        );
+        Ok(())
+    }
+
+    fn is_active_or_err(&self) -> Result<(), SandboxError> {
+        if !self.is_active {
+            error!("❌ Container is not active");
+            return Err(SandboxError::ContainerNotActive);
         }
 
         Ok(())
+    }
+
+    fn build_std_env(&self, mut cmd: Command) -> Command {
+        // Build PATH pointing to mounted directories within container
+        let bin_path = self.container_root.join("bin");
+        let usr_bin_path = self.container_root.join("usr/bin");
+        let usr_local_bin_path = self.container_root.join("usr/local/bin");
+
+        let path = format!(
+            "{}:{}:{}",
+            usr_local_bin_path.to_string_lossy(),
+            usr_bin_path.to_string_lossy(),
+            bin_path.to_string_lossy()
+        );
+        // Set environment variables
+        cmd.env_clear();
+        cmd.env("PATH", path);
+        cmd.env("PWD", self.work_dir.to_string_lossy().to_string());
+        cmd.env("HOME", self.work_dir.to_string_lossy().to_string());
+
+        // Set library path for dynamic linking
+        let lib_path = self.container_root.join("lib");
+        let usr_lib_path = self.container_root.join("usr/lib");
+        let lib64_path = self.container_root.join("lib64");
+
+        let ld_library_path = format!(
+            "{}:{}:{}",
+            lib_path.to_string_lossy(),
+            usr_lib_path.to_string_lossy(),
+            lib64_path.to_string_lossy()
+        );
+
+        cmd.env("LD_LIBRARY_PATH", ld_library_path);
+
+        cmd
     }
 
     /// Execute a command in the container with full isolation
@@ -222,39 +401,38 @@ impl ContainerSandbox {
         command: &str,
         args: &[String],
         env: &HashMap<String, String>,
-    ) -> Result<ContainerResult, SandboxError> {
-        if !self.is_active {
-            return Err(SandboxError::ExecutionFailed(
-                "Cannot execute command in inactive container".to_string(),
-            ));
-        }
-
-        info!(
-            "Executing command in container {}: {} {:?}",
-            self.container_id, command, args
-        );
+    ) -> Result<TaskResult, SandboxError> {
+        // Check if container is active
+        self.is_active_or_err()?;
 
         // Set up namespaces
         // TODO: Phase 1.2 - Set up cgroups
         // TODO: Phase 1.3 - Drop privileges
 
-        // For now, basic execution with working directory isolation
+        // Construct command
         let mut cmd = Command::new(command);
         cmd.args(args);
         cmd.current_dir(&self.work_dir);
 
-        // Apply namespace isolation
+        // Apply namespaces to the command
         self.namespace_manager.apply_namespaces(&mut cmd)?;
 
-        // Set environment variables
-        cmd.env_clear();
-        cmd.env("PATH", "/usr/local/bin:/usr/bin:/bin");
-        cmd.env("PWD", self.work_dir.to_string_lossy().to_string());
-        cmd.env("HOME", self.work_dir.to_string_lossy().to_string());
+        // Build standard environment variables
+        cmd = self.build_std_env(cmd);
 
+        // Apply custom environment variables
         for (key, value) in env {
             cmd.env(key, value);
         }
+
+        // Log command details for debugging
+        info!(
+            "Executing command in container {}: '{}' with args {:?} in dir {}",
+            self.container_id,
+            command,
+            args,
+            self.work_dir.display()
+        );
 
         // Execute and capture result
         match cmd.output() {
@@ -263,28 +441,43 @@ impl ContainerSandbox {
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                 let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
-                debug!("Command completed with exit code: {}", exit_code);
+                if exit_code != 0 {
+                    let debug_info = self.get_debug_info();
+                    let error_context = format!(
+                        "Command '{}' failed with exit code {} in container {}. Working directory: {}. Command args: {:?}. Stdout: '{}'. Stderr: '{}'. Debug info: {}",
+                        command,
+                        exit_code,
+                        self.container_id,
+                        self.work_dir.display(),
+                        args,
+                        stdout,
+                        stderr,
+                        debug_info
+                    );
+                    return Err(SandboxError::ExecutionFailed(error_context));
+                }
 
-                Ok(ContainerResult {
-                    exit_code,
-                    stdout,
-                    stderr,
-                    cpu_time_used: 0,  // TODO: Implement resource tracking
-                    memory_used: 0,    // TODO: Implement resource tracking
-                    wall_time_used: 0, // TODO: Implement resource tracking
-                    was_killed: false, // TODO: Implement timeout handling
-                    kill_reason: None, // TODO: Implement kill reason tracking
+                Ok(TaskResult {
+                    status: TaskStatus::Success,
+                    error: None,
+                    exit_code: Some(exit_code),
+                    stdout: Some(stdout),
+                    stderr: Some(stderr),
                 })
             }
             Err(e) => {
-                error!(
-                    "Failed to execute command in container {}: {}",
-                    self.container_id, e
+                let debug_info = self.get_debug_info();
+                let error_context = format!(
+                    "Command '{}' execution failed in container {}. Working directory: {}. Command args: {:?}. Error: {}. Error kind: {:?}. Debug info: {}",
+                    command,
+                    self.container_id,
+                    self.work_dir.display(),
+                    args,
+                    e,
+                    e.kind(),
+                    debug_info
                 );
-                Err(SandboxError::ExecutionFailed(format!(
-                    "Command execution failed: {}",
-                    e
-                )))
+                Err(SandboxError::ExecutionFailed(error_context))
             }
         }
     }
@@ -292,13 +485,18 @@ impl ContainerSandbox {
     /// Clean up the container
     pub fn cleanup(&mut self) -> Result<(), SandboxError> {
         if !self.is_active {
-            debug!("Container {} already cleaned up", self.container_id);
             return Ok(());
         }
 
         info!("Cleaning up container {}", self.container_id);
 
         // TODO: Clean up cgroups
+
+        // Unmount all filesystems first to prevent "Resource busy" errors
+        if let Err(e) = self.mount_manager.unmount_all() {
+            // Log the error but don't fail cleanup - we'll try to remove anyway
+            error!("Failed to unmount filesystems during cleanup: {}", e);
+        }
 
         // Remove container root directory
         if self.container_root.exists() {
@@ -309,11 +507,81 @@ impl ContainerSandbox {
                     e
                 ))
             })?;
-            debug!("Removed container root: {}", self.container_root.display());
         }
 
         self.is_active = false;
         Ok(())
+    }
+
+    /// Get debugging information about the container state
+    fn get_debug_info(&self) -> String {
+        let mut info = Vec::new();
+
+        info.push(format!("Container ID: {}", self.container_id));
+        info.push(format!("Working directory: {}", self.work_dir.display()));
+        info.push(format!("Container root: {}", self.container_root.display()));
+        info.push(format!("Is active: {}", self.is_active));
+
+        // Check if common binaries exist
+        let common_bins = [
+            "/bin/sh",
+            "/bin/ls",
+            "/usr/bin/gcc",
+            "/usr/bin/python3",
+            "/bin/echo",
+            "/usr/bin/which",
+        ];
+        let mut available_bins = Vec::new();
+        let mut missing_bins = Vec::new();
+
+        for bin in &common_bins {
+            let bin_path = self.container_root.join(bin.trim_start_matches('/'));
+            if bin_path.exists() {
+                available_bins.push(bin);
+            } else {
+                missing_bins.push(bin);
+            }
+        }
+
+        info.push(format!("Available binaries: {:?}", available_bins));
+        info.push(format!("Missing binaries: {:?}", missing_bins));
+
+        // Check PATH directories
+        let path_dirs = [
+            self.container_root.join("usr/local/bin"),
+            self.container_root.join("usr/bin"),
+            self.container_root.join("bin"),
+        ];
+
+        let mut existing_path_dirs = Vec::new();
+        let mut missing_path_dirs = Vec::new();
+
+        for dir in &path_dirs {
+            if dir.exists() {
+                existing_path_dirs.push(dir.display().to_string());
+            } else {
+                missing_path_dirs.push(dir.display().to_string());
+            }
+        }
+
+        info.push(format!(
+            "Existing PATH directories: {:?}",
+            existing_path_dirs
+        ));
+        info.push(format!("Missing PATH directories: {:?}", missing_path_dirs));
+
+        // Check working directory contents
+        if let Ok(entries) = std::fs::read_dir(&self.work_dir) {
+            let files: Vec<String> = entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .collect();
+            info.push(format!("Work directory contents: {:?}", files));
+        } else {
+            info.push("Work directory not accessible".to_string());
+        }
+
+        info.join(", ")
     }
 }
 

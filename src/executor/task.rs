@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExecutionTask {
+pub struct Task {
     pub command: String,
     pub args: Option<Vec<String>>,
     pub env: Option<HashMap<String, String>>,
@@ -11,27 +11,32 @@ pub struct ExecutionTask {
 }
 
 #[derive(Debug, Serialize)]
-pub struct ExecutionTaskResult {
-    pub status: ExecutionTaskStatus,
+pub struct TaskResult {
+    pub status: TaskStatus,
     pub error: Option<ExecutionTaskError>,
-    pub exit_code: i32,
-    pub stdout: String,
-    pub stderr: String,
+    pub exit_code: Option<i32>,
+    pub stdout: Option<String>,
+    pub stderr: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub enum ExecutionTaskStatus {
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub enum TaskStatus {
     Success,
     Failure,
     NotExecuted,
 }
 
-impl fmt::Display for ExecutionTaskStatus {
+impl fmt::Display for TaskStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ExecutionTaskStatus::Success => write!(f, "success"),
-            ExecutionTaskStatus::Failure => write!(f, "failure"),
-            ExecutionTaskStatus::NotExecuted => write!(f, "executed"),
+            TaskStatus::Success => write!(f, "success"),
+            TaskStatus::Failure => write!(f, "failure"),
+            TaskStatus::NotExecuted => write!(f, "not_executed"),
         }
     }
 }
+
+// Backward compatibility aliases
+pub type ExecutionTask = Task;
+pub type ExecutionTaskResult = TaskResult;
+pub type ExecutionTaskStatus = TaskStatus;

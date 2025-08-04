@@ -1,0 +1,24 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Remote Debug (Docker Container)",
+      "program": "${workspaceFolder}/target/x86_64-unknown-linux-musl/debug/faber",
+      "initCommands": [
+        "platform select remote-linux",
+        "platform connect connect://localhost:12345",
+        "settings set target.inherit-env false"
+      ],
+      "terminal": "external",
+      "console": "externalTerminal",
+      "env": {
+        "OPEN": "true"
+      },
+      "cargo": {
+        "args": ["build", "--target", "x86_64-unknown-linux-musl"]
+      }
+    }
+  ]
+}

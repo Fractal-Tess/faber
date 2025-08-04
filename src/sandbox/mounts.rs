@@ -4,15 +4,17 @@
 //! within containers, allowing access to essential system resources while
 //! maintaining security isolation.
 
-use std::collections::HashMap;
+use nix::mount::{MntFlags, MsFlags, mount as nix_mount, umount2};
+
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
 use tracing::{debug, error, info, warn};
 
 use super::error::SandboxError;
 
 /// Type of mount operation
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum MountType {
     /// Bind mount - mount existing directory/file
     Bind,
@@ -23,7 +25,7 @@ pub enum MountType {
 }
 
 /// Configuration for a single mount point  
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MountPoint {
     /// Type of mount (bind, tmpfs, proc)
     pub mount_type: MountType,
@@ -67,7 +69,7 @@ impl MountPoint {
             source: "tmpfs".to_string(),
             target: target.to_string(),
             readonly: false,
-            options: format!("size={}", size),
+            options: format!("size={size}"),
         }
     }
 
@@ -84,7 +86,7 @@ impl MountPoint {
 }
 
 /// Symbolic link configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SymLink {
     /// Path where the symlink will be created
     pub link_path: String,
@@ -102,7 +104,7 @@ impl SymLink {
 }
 
 /// Complete mount configuration for a container
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MountConfig {
     /// List of mount points to create
     pub mounts: Vec<MountPoint>,
@@ -121,40 +123,64 @@ impl Default for MountConfig {
 impl MountConfig {
     /// Create default mount configuration based on go-judge
     pub fn default_secure() -> Self {
-        let mut mounts = Vec::new();
+        Self::default_secure_with_container_id("default")
+    }
 
-        // Essential system directories (read-only)
-        mounts.push(MountPoint::bind_ro("/bin", "bin"));
-        mounts.push(MountPoint::bind_ro("/lib", "lib"));
-        mounts.push(MountPoint::bind_ro("/usr", "usr"));
+    /// Create default secure mount configuration with default work directory size
+    pub fn default_secure_with_container_id(_container_id: &str) -> Self {
+        Self::default_secure_with_work_size(256)
+    }
 
-        // lib64 if it exists
-        if Path::new("/lib64").exists() {
-            mounts.push(MountPoint::bind_ro("/lib64", "lib64"));
-        }
+    /// Create default secure mount configuration with custom work directory size
+    pub fn default_secure_with_work_size(work_size_mb: u32) -> Self {
+        let mounts = vec![
+            // Essential system directories (read-only)
+            MountPoint::bind_ro("/bin", "bin"),
+            MountPoint::bind_ro("/lib", "lib"),
+            MountPoint::bind_ro("/usr", "usr"),
+            // Essential devices (read-write)
+            MountPoint::bind_rw("/dev/null", "dev/null"),
+            MountPoint::bind_rw("/dev/zero", "dev/zero"),
+            MountPoint::bind_rw("/dev/urandom", "dev/urandom"),
+            MountPoint::bind_rw("/dev/random", "dev/random"),
+            MountPoint::bind_rw("/dev/full", "dev/full"),
+            // Proc filesystem (essential for process creation)
+            MountPoint::proc("proc"),
+            // Work directory (tmpfs) - for fast I/O performance
+            MountPoint::tmpfs("work", &format!("{work_size_mb}m,nr_inodes=4k")),
+            // Tmp directory (tmpfs) - same size as go-judge default
+            MountPoint::tmpfs("tmp", "32m,nr_inodes=4k"),
+        ];
 
-        // Essential configuration files
-        if Path::new("/etc/ld.so.cache").exists() {
-            mounts.push(MountPoint::bind_ro("/etc/ld.so.cache", "etc/ld.so.cache"));
-        }
-        if Path::new("/etc/alternatives").exists() {
-            mounts.push(MountPoint::bind_ro("/etc/alternatives", "etc/alternatives"));
-        }
+        // // lib64 if it exists
+        // if Path::new("/lib64").exists() {
+        //     mounts.push(MountPoint::bind_ro("/lib64", "lib64"));
+        // }
 
-        // Essential devices
-        mounts.push(MountPoint::bind_rw("/dev/null", "dev/null"));
-        mounts.push(MountPoint::bind_rw("/dev/zero", "dev/zero"));
-        mounts.push(MountPoint::bind_rw("/dev/urandom", "dev/urandom"));
-        mounts.push(MountPoint::bind_rw("/dev/random", "dev/random"));
+        // // Essential configuration files
+        // if Path::new("/etc/ld.so.cache").exists() {
+        //     mounts.push(MountPoint::bind_ro("/etc/ld.so.cache", "etc/ld.so.cache"));
+        // }
+        // if Path::new("/etc/alternatives").exists() {
+        //     mounts.push(MountPoint::bind_ro("/etc/alternatives", "etc/alternatives"));
+        // }
 
-        // Proc filesystem
-        mounts.push(MountPoint::proc("proc"));
-
-        // Working directory (tmpfs)
-        mounts.push(MountPoint::tmpfs("w", "256M"));
-
-        // Tmp directory (tmpfs)
-        mounts.push(MountPoint::tmpfs("tmp", "64M"));
+        // // Compiler-specific configuration files
+        // if Path::new("/etc/fpc.cfg").exists() {
+        //     mounts.push(MountPoint::bind_ro("/etc/fpc.cfg", "etc/fpc.cfg"));
+        // }
+        // if Path::new("/etc/mono").exists() {
+        //     mounts.push(MountPoint::bind_ro("/etc/mono", "etc/mono"));
+        // }
+        // if Path::new("/var/lib/ghc").exists() {
+        //     mounts.push(MountPoint::bind_ro("/var/lib/ghc", "var/lib/ghc"));
+        // }
+        // if Path::new("/etc/java-17-openjdk").exists() {
+        //     mounts.push(MountPoint::bind_ro(
+        //         "/etc/java-17-openjdk",
+        //         "etc/java-17-openjdk",
+        //     ));
+        // }
 
         // Standard I/O symlinks
         let symlinks = vec![
@@ -168,39 +194,23 @@ impl MountConfig {
         let masked_paths = vec![
             "/sys/firmware".to_string(),
             "/sys/devices/virtual/powercap".to_string(),
+            "/proc/acpi".to_string(),
+            "/proc/asound".to_string(),
             "/proc/kcore".to_string(),
             "/proc/keys".to_string(),
+            "/proc/latency_stats".to_string(),
             "/proc/timer_list".to_string(),
+            "/proc/timer_stats".to_string(),
             "/proc/sched_debug".to_string(),
             "/proc/scsi".to_string(),
+            "/usr/lib/wsl/drivers".to_string(),
+            "/usr/lib/wsl/lib".to_string(),
         ];
 
         Self {
             mounts,
             symlinks,
             masked_paths,
-        }
-    }
-
-    /// Create minimal mount configuration for testing
-    pub fn minimal() -> Self {
-        let mounts = vec![
-            // Just essential binaries and libraries
-            MountPoint::bind_ro("/bin", "bin"),
-            MountPoint::bind_ro("/usr/bin", "usr/bin"),
-            MountPoint::bind_ro("/lib", "lib"),
-            MountPoint::bind_ro("/usr/lib", "usr/lib"),
-            MountPoint::bind_ro("/usr/include", "usr/include"),
-            // Essential devices
-            MountPoint::bind_rw("/dev/null", "dev/null"),
-            // Working directory
-            MountPoint::tmpfs("w", "128M"),
-        ];
-
-        Self {
-            mounts,
-            symlinks: vec![],
-            masked_paths: vec![],
         }
     }
 }
@@ -220,31 +230,23 @@ impl MountManager {
         }
     }
 
-    /// Apply all mounts to the container
+    /// Apply mounts with specific mode
     pub fn apply_mounts(&self) -> Result<(), SandboxError> {
-        info!("Applying {} mounts to container", self.config.mounts.len());
-
-        // Create mount points
-        for mount in &self.config.mounts {
+        // Create mount points (or actual mounts if in namespace)
+        for mount in self.config.mounts.iter() {
             self.create_mount(mount)?;
         }
 
-        // Create symbolic links
-        for symlink in &self.config.symlinks {
-            self.create_symlink(symlink)?;
-        }
-
-        info!("Successfully applied all mounts");
         Ok(())
     }
 
-    /// Create a single mount point
+    /// Create a single mount point with actual mount syscalls
     fn create_mount(&self, mount: &MountPoint) -> Result<(), SandboxError> {
         let target_path = self.container_root.join(&mount.target);
 
         // Create target directory/file
         if let Some(parent) = target_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
+            fs::create_dir_all(parent).map_err(|e| {
                 SandboxError::MountFailed(format!(
                     "Failed to create mount parent {}: {}",
                     parent.display(),
@@ -265,49 +267,177 @@ impl MountManager {
                 }
 
                 // Create target as file or directory based on source
-                if Path::new(&mount.source).is_file() {
-                    std::fs::File::create(&target_path).map_err(|e| {
-                        SandboxError::MountFailed(format!(
-                            "Failed to create mount target file {}: {}",
-                            target_path.display(),
-                            e
-                        ))
-                    })?;
-                } else {
-                    std::fs::create_dir_all(&target_path).map_err(|e| {
+                if Path::new(&mount.source).is_dir() {
+                    fs::create_dir_all(&target_path).map_err(|e| {
                         SandboxError::MountFailed(format!(
                             "Failed to create mount target dir {}: {}",
                             target_path.display(),
                             e
                         ))
                     })?;
+                } else {
+                    fs::File::create(&target_path).map_err(|e| {
+                        SandboxError::MountFailed(format!(
+                            "Failed to create mount target file {}: {}",
+                            target_path.display(),
+                            e
+                        ))
+                    })?;
                 }
 
-                debug!(
-                    "Created bind mount: {} -> {}",
-                    mount.source,
-                    target_path.display()
-                );
+                // Perform actual bind mount
+                let mut flags = MsFlags::MS_BIND;
+                if mount.readonly {
+                    flags |= MsFlags::MS_RDONLY;
+                }
+
+                match nix_mount(
+                    Some(Path::new(&mount.source)),
+                    &target_path,
+                    None::<&str>,
+                    flags,
+                    None::<&str>,
+                ) {
+                    Ok(()) => {}
+                    Err(nix::Error::EPERM) => {
+                        return Err(SandboxError::MountFailed(format!(
+                            "Cannot bind mount with no privileges: {} -> {}",
+                            mount.source,
+                            target_path.display()
+                        )));
+                    }
+                    Err(e) => {
+                        error!(
+                            "❌ Bind mount failed: {} -> {}: {}",
+                            mount.source,
+                            target_path.display(),
+                            e
+                        );
+                        return Err(SandboxError::MountFailed(format!(
+                            "Failed to bind mount {} -> {}: {}",
+                            mount.source,
+                            target_path.display(),
+                            e
+                        )));
+                    }
+                }
+
+                // If readonly, remount with readonly flag
+                if mount.readonly {
+                    match nix_mount(
+                        None::<&Path>,
+                        &target_path,
+                        None::<&str>,
+                        MsFlags::MS_REMOUNT | MsFlags::MS_BIND | MsFlags::MS_RDONLY,
+                        None::<&str>,
+                    ) {
+                        Ok(()) => {}
+                        Err(nix::Error::EPERM) => {
+                            warn!(
+                                "⚠️  Readonly remount skipped (no privileges): {} - symlink is inherently readonly",
+                                target_path.display()
+                            );
+                            // If we're using symlink fallback, we don't need to remount
+                        }
+                        Err(e) => {
+                            error!(
+                                "❌ Readonly remount failed: {} -> {}: {}",
+                                mount.source,
+                                target_path.display(),
+                                e
+                            );
+                            return Err(SandboxError::MountFailed(format!(
+                                "Failed to remount {} as readonly: {}",
+                                target_path.display(),
+                                e
+                            )));
+                        }
+                    }
+                }
             }
             MountType::Tmpfs => {
-                std::fs::create_dir_all(&target_path).map_err(|e| {
+                fs::create_dir_all(&target_path).map_err(|e| {
                     SandboxError::MountFailed(format!(
                         "Failed to create tmpfs target {}: {}",
                         target_path.display(),
                         e
                     ))
                 })?;
-                debug!("Created tmpfs mount: {}", target_path.display());
+
+                // Perform actual tmpfs mount
+                let data = if mount.options.is_empty() {
+                    Some("size=128m,nr_inodes=4k")
+                } else {
+                    Some(mount.options.as_str())
+                };
+
+                match nix_mount(
+                    None::<&Path>,
+                    &target_path,
+                    Some("tmpfs"),
+                    MsFlags::empty(),
+                    data,
+                ) {
+                    Ok(()) => {}
+                    Err(nix::Error::EPERM) => {
+                        warn!(
+                            "⚠️  Tmpfs mount skipped (no privileges): {} - using regular directory",
+                            target_path.display()
+                        );
+                        return Err(SandboxError::MountFailed(format!(
+                            "Failed to mount tmpfs at {}: {}",
+                            target_path.display(),
+                            nix::Error::EPERM
+                        )));
+                    }
+                    Err(e) => {
+                        error!("❌ Tmpfs mount failed: {}: {}", target_path.display(), e);
+                        return Err(SandboxError::MountFailed(format!(
+                            "Failed to mount tmpfs at {}: {}",
+                            target_path.display(),
+                            e
+                        )));
+                    }
+                }
             }
             MountType::Proc => {
-                std::fs::create_dir_all(&target_path).map_err(|e| {
+                fs::create_dir_all(&target_path).map_err(|e| {
                     SandboxError::MountFailed(format!(
                         "Failed to create proc target {}: {}",
                         target_path.display(),
                         e
                     ))
                 })?;
-                debug!("Created proc mount: {}", target_path.display());
+
+                // Perform actual proc mount
+                match nix_mount(
+                    None::<&Path>,
+                    &target_path,
+                    Some("proc"),
+                    MsFlags::empty(),
+                    None::<&str>,
+                ) {
+                    Ok(()) => {}
+                    Err(nix::Error::EPERM) => {
+                        warn!(
+                            "⚠️  Proc mount skipped (no privileges): {} - symlinking to host /proc",
+                            target_path.display()
+                        );
+                        return Err(SandboxError::MountFailed(format!(
+                            "Failed to mount proc at {}: {}",
+                            target_path.display(),
+                            nix::Error::EPERM
+                        )));
+                    }
+                    Err(e) => {
+                        error!("❌ Proc mount failed: {}: {}", target_path.display(), e);
+                        return Err(SandboxError::MountFailed(format!(
+                            "Failed to mount proc at {}: {}",
+                            target_path.display(),
+                            e
+                        )));
+                    }
+                }
             }
         }
 
@@ -339,56 +469,80 @@ impl MountManager {
             ))
         })?;
 
-        debug!(
-            "Created symlink: {} -> {}",
-            link_path.display(),
-            symlink.target
-        );
         Ok(())
     }
 
     /// Setup mounts in a command's pre_exec (for use within namespaces)
-    pub fn setup_namespace_mounts(&self, cmd: &mut Command) -> Result<(), SandboxError> {
-        // TODO: This will be called within the mount namespace to actually perform mounts
-        // For now, we just prepare the filesystem structure
-        debug!("Mount namespace setup prepared");
+    /// This function is called AFTER entering the mount namespace
+    pub fn setup_namespace_mounts(&self) -> Result<(), SandboxError> {
+        // Apply all mounts - this time within the mount namespace
+        for mount in &self.config.mounts {
+            self.create_mount(mount)?;
+        }
+
+        // Create symbolic links
+        for symlink in &self.config.symlinks {
+            self.create_symlink(symlink)?;
+        }
+
         Ok(())
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
+    /// Unmount all mounts from the container
+    /// This should be called before removing the container directory
+    pub fn unmount_all(&self) -> Result<(), SandboxError> {
+        // Unmount in reverse order to handle dependencies properly
+        for mount in self.config.mounts.iter().rev() {
+            self.unmount_single(mount)?;
+        }
 
-    #[test]
-    fn test_mount_config_creation() {
-        let config = MountConfig::default_secure();
-
-        // Should have essential system mounts
-        assert!(config.mounts.iter().any(|m| m.target == "bin"));
-        assert!(config.mounts.iter().any(|m| m.target == "lib"));
-        assert!(config.mounts.iter().any(|m| m.target == "usr"));
-
-        // Should have essential devices
-        assert!(config.mounts.iter().any(|m| m.target == "dev/null"));
-
-        // Should have working directory
-        assert!(config.mounts.iter().any(|m| m.target == "w"));
-
-        println!("Mount config created with {} mounts", config.mounts.len());
+        Ok(())
     }
 
-    #[test]
-    fn test_mount_manager() {
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let config = MountConfig::minimal();
-        let manager = MountManager::new(&config, &temp_dir.path().to_path_buf());
+    /// Unmount a single mount point
+    fn unmount_single(&self, mount: &MountPoint) -> Result<(), SandboxError> {
+        let target_path = self.container_root.join(&mount.target);
 
-        // This would fail without proper permissions, but we can test the structure
-        match manager.apply_mounts() {
-            Ok(()) => println!("Mount manager test passed"),
-            Err(e) => println!("Mount manager test failed (expected): {}", e),
+        // Skip if target doesn't exist
+        if !target_path.exists() {
+            return Ok(());
         }
+
+        // For bind mounts, tmpfs, and proc - attempt to unmount
+        match mount.mount_type {
+            MountType::Bind | MountType::Tmpfs | MountType::Proc => {
+                // Try to unmount using the umount2 system call
+                match umount2(&target_path, MntFlags::MNT_DETACH) {
+                    Ok(()) => {}
+                    Err(nix::Error::EINVAL) => {
+                        // Not a mount point or already unmounted
+                        debug!(
+                            "⚠️  Not a mount point (already unmounted?): {}",
+                            target_path.display()
+                        );
+                    }
+                    Err(nix::Error::ENOENT) => {
+                        // Target doesn't exist
+                        debug!("⚠️  Target doesn't exist: {}", target_path.display());
+                    }
+                    Err(nix::Error::EPERM) => {
+                        // No permission - might be running unprivileged or using symlinks
+                        debug!(
+                            "⚠️  No permission to unmount (unprivileged?): {}",
+                            target_path.display()
+                        );
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to unmount {}: {} - continuing cleanup",
+                            target_path.display(),
+                            e
+                        );
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 }

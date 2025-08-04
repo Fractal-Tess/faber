@@ -1,16 +1,16 @@
 FROM debian:latest
 
-# Install g++ compiler
-RUN apt update && apt install -y curl g++ && rm -rf /var/lib/apt/lists/*
+# Install g++ compiler, LLDB, and debugging tools
+RUN apt update && apt install -y \
+    curl \
+    g++ \
+    lldb \
+    gdb \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
-# Create app directory
 WORKDIR /opt
 
-# Copy the compiled binary
-# COPY target/x86_64-unknown-linux-musl/debug/faber /opt/faber
+COPY start.sh /opt/start.sh
 
-# Expose port
-EXPOSE 3000/tcp
-
-# Run the application
-ENTRYPOINT ["tail", "-f", "/dev/null"] 
+ENTRYPOINT ["/opt/start.sh"] 

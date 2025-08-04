@@ -1,6 +1,6 @@
+use super::execution::execute_tasks;
 use super::health::health_check;
 use super::middleware::{auth_middleware, timing_middleware};
-use super::run::run;
 
 use crate::config::Config;
 use axum::middleware;
@@ -8,14 +8,11 @@ use axum::{
     Router,
     routing::{get, post},
 };
-use tracing::debug;
 
 pub fn create_router(config: &Config) -> Router {
-    debug!("Configuration loaded: {config}");
-
     let public_routes = Router::new().route("/health", get(health_check));
 
-    let mut protected_routes = Router::new().route("/run", post(run));
+    let mut protected_routes = Router::new().route("/execute-tasks", post(execute_tasks));
 
     protected_routes = if config.open {
         protected_routes

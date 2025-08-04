@@ -1,15 +1,16 @@
+version: '3.8'
+
 services:
   faber:
     build: .
     env_file:
       - .env
-    ports:
-      - '3000:3000'
-
+    shm_size: 256m
     volumes:
-      - ./target/x86_64-unknown-linux-musl/debug:/opt/faber:ro
+      - ./target/x86_64-unknown-linux-musl/debug:/opt/debug:ro
       - ./logs:/var/log/faber
     privileged: true
+    network_mode: 'host'
     healthcheck:
       test: ['CMD', 'curl', '-f', 'http://localhost:3000/health']
       interval: 30s

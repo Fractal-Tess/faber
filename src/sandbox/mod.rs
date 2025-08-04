@@ -8,7 +8,7 @@ pub mod error;
 pub mod mounts;
 pub mod namespaces;
 
-pub use container::{ContainerConfig, ContainerResult, ContainerSandbox};
+pub use container::ContainerSandbox;
 pub use mounts::{MountConfig, MountManager, MountPoint, MountType, SymLink};
 pub use namespaces::{NamespaceConfig, NamespaceManager};
 

@@ -1,8 +1,9 @@
-use serde::{Deserialize, Serialize};
+use crate::sandbox::error::SandboxError;
+use serde::Serialize;
 use std::time::Duration;
 use thiserror::Error;
 
-#[derive(Error, Debug, Serialize, Deserialize)]
+#[derive(Error, Debug, Clone, Serialize)]
 pub enum ExecutionTaskError {
     #[error("Memory limit exceeded. Max allowed memory: {0:?}")]
     MemoryLimitExceeded(u64),
@@ -18,4 +19,10 @@ pub enum ExecutionTaskError {
 
     #[error("File not found: {0}")]
     FileNotFound(String),
+
+    #[error("Sandbox error: {0}")]
+    SandboxError(SandboxError),
+
+    #[error("Task validation failed: {0}")]
+    ValidationError(String),
 }
