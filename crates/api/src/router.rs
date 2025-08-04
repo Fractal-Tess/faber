@@ -13,17 +13,18 @@ use std::sync::Arc;
 pub fn create_router(config: &Config) -> Router {
     let config_arc = Arc::new(config.clone());
 
-    let public_routes = Router::new().route(&config.api.health_endpoint, get(health_check));
+    let public_routes =
+        Router::new().route(&config.api.endpoints.health_endpoint, get(health_check));
 
     let mut protected_routes = Router::new()
-        .route(&config.api.execute_endpoint, post(execute_tasks))
+        .route(&config.api.endpoints.execute_endpoint, post(execute_tasks))
         .layer(Extension(config_arc));
 
-    protected_routes = if config.auth.open_mode {
+    protected_routes = if config.api.auth.enable.parse().unwrap_or(false) {
         protected_routes
     } else {
         protected_routes
-            .layer(Extension(Arc::new(config.auth.api_key.clone())))
+            .layer(Extension(Arc::new(config.api.auth.secret_key.clone())))
             .layer(middleware::from_fn(auth_middleware))
     };
 

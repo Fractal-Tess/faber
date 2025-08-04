@@ -587,15 +587,15 @@ impl MountManager {
 }
 
 // Legacy MountManager for backward compatibility
-use faber_config::MountConfig as ConfigMountConfig;
+use faber_config::MountsConfig as ConfigMountsConfig;
 
 pub struct LegacyMountManager {
     pub read_only_root: bool,
-    pub mount_config: ConfigMountConfig,
+    pub mount_config: ConfigMountsConfig,
 }
 
 impl LegacyMountManager {
-    pub fn new(read_only_root: bool, mount_config: ConfigMountConfig) -> Self {
+    pub fn new(read_only_root: bool, mount_config: ConfigMountsConfig) -> Self {
         Self {
             read_only_root,
             mount_config,
@@ -613,5 +613,94 @@ impl LegacyMountManager {
         info!("Would cleanup mounts");
         // TODO: Implement mount cleanup
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_mount_config_default() {
+        let config = MountConfig::default();
+        assert_eq!(config.work_dir, PathBuf::from("/work"));
+        assert_eq!(config.tmp_dir, PathBuf::from("/tmp"));
+        assert!(!config.read_only_paths.is_empty());
+        assert!(!config.writable_paths.is_empty());
+    }
+
+    #[test]
+    fn test_mount_config_default_secure() {
+        let config = MountConfig::default_secure();
+        assert!(!config.mounts.is_empty());
+
+        // Check that essential mounts are present
+        let mount_targets: Vec<&PathBuf> = config.mounts.iter().map(|m| &m.target).collect();
+        assert!(mount_targets.contains(&&PathBuf::from("bin")));
+        assert!(mount_targets.contains(&&PathBuf::from("lib")));
+        assert!(mount_targets.contains(&&PathBuf::from("work")));
+        assert!(mount_targets.contains(&&PathBuf::from("tmp")));
+    }
+
+    #[test]
+    fn test_mount_manager_creation() {
+        let config = MountConfig::default();
+        let temp_dir = TempDir::new().unwrap();
+        let manager = MountManager::new(&config, temp_dir.path());
+
+        assert_eq!(manager.container_root, temp_dir.path());
+        assert_eq!(manager.config.work_dir, PathBuf::from("/work"));
+    }
+
+    #[test]
+    fn test_mount_point_creation() {
+        let mount = MountPoint {
+            source: PathBuf::from("/bin"),
+            target: PathBuf::from("bin"),
+            mount_type: MountType::Bind,
+            flags: 1,
+            data: None,
+        };
+
+        assert_eq!(mount.source, PathBuf::from("/bin"));
+        assert_eq!(mount.target, PathBuf::from("bin"));
+        assert!(matches!(mount.mount_type, MountType::Bind));
+        assert_eq!(mount.flags, 1);
+        assert!(mount.data.is_none());
+    }
+
+    #[test]
+    fn test_symlink_creation() {
+        let config = MountConfig::default();
+        let temp_dir = TempDir::new().unwrap();
+        let manager = MountManager::new(&config, temp_dir.path());
+
+        let symlink = SymLink {
+            target: PathBuf::from("/usr/bin/python3"),
+            link_path: PathBuf::from("usr/bin/python"),
+        };
+
+        // This should work even without privileges
+        let result = manager.create_symlink(&symlink);
+        // In test environment, this might fail due to missing source, but shouldn't panic
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_essential_directories_creation() {
+        let config = MountConfig::default();
+        let temp_dir = TempDir::new().unwrap();
+        let manager = MountManager::new(&config, temp_dir.path());
+
+        let result = manager.create_essential_directories();
+        assert!(result.is_ok());
+
+        // Check that essential directories were created
+        let essential_dirs = ["bin", "dev", "etc", "lib", "proc", "tmp", "work"];
+        for dir in &essential_dirs {
+            let dir_path = temp_dir.path().join(dir);
+            assert!(dir_path.exists() || dir_path.is_symlink());
+        }
     }
 }

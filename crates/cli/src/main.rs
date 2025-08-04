@@ -15,7 +15,7 @@ struct Cli {
     log_level: Option<Level>,
 
     /// Configuration file path
-    #[arg(short, long, default_value = "config/config.yaml")]
+    #[arg(short, long, default_value = "config/default.toml")]
     config: Option<String>,
 
     /// Enable debug mode
@@ -117,19 +117,19 @@ async fn serve(cli: Cli, graceful_shutdown: bool) -> Result<(), Box<dyn std::err
     info!("Starting Faber...");
 
     // Load configuration
-    let config_path = cli.config.unwrap_or("config/config.yaml".to_owned());
+    let config_path = cli.config.unwrap_or("config/default.toml".to_owned());
     info!("Loading configuration from {}", config_path);
     let mut config = Config::from_file(config_path)?;
 
     // Override with CLI options
     if cli.open_mode {
-        config.auth.open_mode = true;
+        config.api.auth.enable = "true".to_string();
     }
     if let Some(host) = cli.host {
-        config.server.host = host;
+        config.api.host = host;
     }
     if let Some(port) = cli.port {
-        config.server.port = port;
+        config.api.port = port;
     }
 
     info!("Configuration loaded successfully");
@@ -138,8 +138,7 @@ async fn serve(cli: Cli, graceful_shutdown: bool) -> Result<(), Box<dyn std::err
     let app = create_router(&config);
 
     let listener =
-        tokio::net::TcpListener::bind(&format!("{}:{}", config.server.host, config.server.port))
-            .await?;
+        tokio::net::TcpListener::bind(&format!("{}:{}", config.api.host, config.api.port)).await?;
     info!("🚀 Listening on {}", listener.local_addr()?);
 
     if graceful_shutdown {
@@ -182,7 +181,7 @@ fn show_config(
         let config = Config::default();
         println!("{}", serde_json::to_string_pretty(&config)?);
     } else {
-        let path = config_path.as_deref().unwrap_or("config/config.yaml");
+        let path = config_path.as_deref().unwrap_or("config/default.toml");
         match Config::from_file(path) {
             Ok(config) => {
                 println!("{}", serde_json::to_string_pretty(&config)?);

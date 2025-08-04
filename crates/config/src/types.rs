@@ -1,58 +1,98 @@
 use serde::{Deserialize, Serialize};
 
-/// Main configuration structure loaded from config.yaml
+/// Main configuration structure loaded from default.toml
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
-    pub server: ServerConfig,
-    pub auth: AuthConfig,
     pub api: ApiConfig,
-    pub security: SecurityConfig,
-    pub resource_limits: ResourceLimitsConfig,
-    pub cgroups: CgroupsConfig,
-    pub container: ContainerConfig,
-    pub filesystem: FilesystemConfig,
-    pub logging: LoggingConfig,
-    pub validation: ValidationConfig,
-    pub performance: PerformanceConfig,
-    pub monitoring: MonitoringConfig,
-    pub development: DevelopmentConfig,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServerConfig {
-    pub host: String,
-    pub port: u16,
-    pub enable_swagger: bool,
-    pub enable_cors: bool,
-    pub request_timeout: u64,
-    pub max_request_size: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuthConfig {
-    pub api_key: String,
-    pub open_mode: bool,
-    pub token_expiration: u64,
+    pub sandbox: SandboxConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiConfig {
+    pub host: String,
+    pub port: u16,
+    pub cors: CorsConfig,
+    pub request: RequestConfig,
+    pub auth: AuthConfig,
+    pub endpoints: EndpointsConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CorsConfig {
+    pub enable_cors: bool,
+    pub cors_allowed_origins: String,
+    pub cors_allowed_methods: String,
+    pub cors_allowed_headers: String,
+    pub cors_allow_credentials: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestConfig {
+    pub max_request_size_kb: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthConfig {
+    pub enable: String,     // Can be "env:FABER_AUTH_ENABLE|false" format
+    pub secret_key: String, // Can be "env:FABER_AUTH_SECRET_KEY" format
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EndpointsConfig {
     pub health_endpoint: String,
     pub execute_endpoint: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SecurityConfig {
-    pub default_security_level: String,
-    pub seccomp: SeccompConfig,
-    pub namespaces: NamespaceConfig,
+pub struct SandboxConfig {
+    pub resource_limits: ResourceLimitsConfig,
+    pub cgroups: CgroupsConfig,
+    pub filesystem: FilesystemConfig,
+    pub security: SecurityConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SeccompConfig {
+pub struct ResourceLimitsConfig {
+    pub memory_limit_kb: u32,
+    pub cpu_time_limit_ms: u32,
+    pub max_cpu_cores: u32,
+    pub wall_time_limit_ms: u32,
+    pub max_processes: u32,
+    pub max_fds: u32,
+    pub stack_limit_kb: u32,
+    pub data_segment_limit_kb: u32,
+    pub address_space_limit_kb: u32,
+    pub cpu_rate_limit_percent: u32,
+    pub io_read_limit_kb_s: u32,
+    pub io_write_limit_kb_s: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CgroupsConfig {
     pub enabled: bool,
-    pub level: String,
-    pub config_file: String,
+    pub prefix: String,
+    pub version: String,
+    pub enable_cpu_rate_limit: bool,
+    pub enable_memory_limit: bool,
+    pub enable_process_limit: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FilesystemConfig {
+    pub mounts: MountsConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MountsConfig {
+    pub readable: std::collections::HashMap<String, Vec<String>>,
+    pub tmpfs: std::collections::HashMap<String, Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecurityConfig {
+    pub default_security_level: String,
+    pub namespaces: NamespaceConfig,
+    pub seccomp: SeccompConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,121 +108,48 @@ pub struct NamespaceConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResourceLimitsConfig {
-    pub default: ResourceLimitSet,
-    pub minimal: ResourceLimitSet,
-    pub maximum: ResourceLimitSet,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResourceLimitSet {
-    pub memory_limit: u64,
-    pub cpu_time_limit: u64,
-    pub wall_time_limit: u64,
-    pub max_processes: u32,
-    pub max_fds: u64,
-    pub stack_limit: u64,
-    pub data_segment_limit: u64,
-    pub address_space_limit: u64,
-    pub cpu_rate_limit: Option<u32>,
-    pub io_read_limit: Option<u64>,
-    pub io_write_limit: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CgroupsConfig {
+pub struct SeccompConfig {
     pub enabled: bool,
-    pub prefix: String,
-    pub base_path: Option<String>,
-    pub enable_cpu_rate_limit: bool,
-    pub enable_memory_limit: bool,
-    pub enable_process_limit: bool,
+    pub default_action: String,
+    pub architectures: Vec<String>,
+    pub syscalls: SyscallsConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContainerConfig {
-    pub work_dir_size_mb: u32,
-    pub enable_mount_operations: bool,
-    pub uid: u32,
-    pub gid: u32,
-    pub hostname: String,
-    pub domain_name: String,
+pub struct SyscallsConfig {
+    pub allowed: Vec<String>,
+    pub disallowed: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FilesystemConfig {
-    pub read_only_root: bool,
-    pub allowed_extensions: Vec<String>,
-    pub max_file_size: usize,
-    pub max_files_per_request: usize,
-    pub mounts: MountConfig,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MountConfig {
-    pub work_dir: String,
-    pub tmp_dir: String,
-    pub read_only_paths: Vec<String>,
-    pub writable_paths: Vec<String>,
-    pub tmpfs_size: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LoggingConfig {
-    pub level: String,
-    pub json_format: bool,
-    pub file_path: Option<String>,
-    pub enable_request_logging: bool,
-    pub enable_performance_logging: bool,
-    pub enable_resource_logging: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ValidationConfig {
-    pub max_tasks_per_request: usize,
-    pub max_command_length: usize,
-    pub max_env_value_length: usize,
-    pub max_file_content_length: usize,
-    pub enable_dangerous_command_detection: bool,
-    pub blocked_commands: Vec<String>,
-    pub blocked_env_vars: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PerformanceConfig {
-    pub enable_connection_pooling: bool,
-    pub max_concurrent_connections: usize,
-    pub connection_timeout: u64,
-    pub keep_alive_timeout: u64,
-    pub enable_compression: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MonitoringConfig {
-    pub enable_metrics: bool,
-    pub metrics_port: u16,
-    pub enable_health_checks: bool,
-    pub health_check_interval: u64,
-    pub enable_resource_monitoring: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DevelopmentConfig {
-    pub debug: bool,
-    pub hot_reload: bool,
-    pub detailed_errors: bool,
-    pub enable_stack_traces: bool,
-}
-
-impl Default for ServerConfig {
+impl Default for ApiConfig {
     fn default() -> Self {
         Self {
-            host: "127.0.0.1".to_string(),
-            port: 8080,
-            enable_swagger: true,
-            enable_cors: true,
-            request_timeout: 30,
-            max_request_size: 1024 * 1024, // 1MB
+            host: "0.0.0.0".to_string(),
+            port: 3000,
+            cors: CorsConfig::default(),
+            request: RequestConfig::default(),
+            auth: AuthConfig::default(),
+            endpoints: EndpointsConfig::default(),
+        }
+    }
+}
+
+impl Default for CorsConfig {
+    fn default() -> Self {
+        Self {
+            enable_cors: false,
+            cors_allowed_origins: "*".to_string(),
+            cors_allowed_methods: "GET,POST,OPTIONS".to_string(),
+            cors_allowed_headers: "*".to_string(),
+            cors_allow_credentials: false,
+        }
+    }
+}
+
+impl Default for RequestConfig {
+    fn default() -> Self {
+        Self {
+            max_request_size_kb: 10240, // 10MB
         }
     }
 }
@@ -190,53 +157,28 @@ impl Default for ServerConfig {
 impl Default for AuthConfig {
     fn default() -> Self {
         Self {
-            api_key: "default-api-key".to_string(),
-            open_mode: false,
-            token_expiration: 3600,
+            enable: "env:FABER_AUTH_ENABLE|false".to_string(),
+            secret_key: "env:FABER_AUTH_SECRET_KEY".to_string(),
         }
     }
 }
 
-impl Default for ApiConfig {
+impl Default for EndpointsConfig {
     fn default() -> Self {
         Self {
             health_endpoint: "/health".to_string(),
-            execute_endpoint: "/execute".to_string(),
+            execute_endpoint: "/execute-tasks".to_string(),
         }
     }
 }
 
-impl Default for SecurityConfig {
+impl Default for SandboxConfig {
     fn default() -> Self {
         Self {
-            default_security_level: "medium".to_string(),
-            seccomp: SeccompConfig::default(),
-            namespaces: NamespaceConfig::default(),
-        }
-    }
-}
-
-impl Default for SeccompConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            level: "medium".to_string(),
-            config_file: "seccomp.yaml".to_string(),
-        }
-    }
-}
-
-impl Default for NamespaceConfig {
-    fn default() -> Self {
-        Self {
-            pid: true,
-            mount: true,
-            network: true,
-            ipc: true,
-            uts: true,
-            user: true,
-            time: true,
-            cgroup: true,
+            resource_limits: ResourceLimitsConfig::default(),
+            cgroups: CgroupsConfig::default(),
+            filesystem: FilesystemConfig::default(),
+            security: SecurityConfig::default(),
         }
     }
 }
@@ -244,61 +186,18 @@ impl Default for NamespaceConfig {
 impl Default for ResourceLimitsConfig {
     fn default() -> Self {
         Self {
-            default: ResourceLimitSet::default(),
-            minimal: ResourceLimitSet::minimal(),
-            maximum: ResourceLimitSet::maximum(),
-        }
-    }
-}
-
-impl Default for ResourceLimitSet {
-    fn default() -> Self {
-        Self {
-            memory_limit: 512 * 1024 * 1024,     // 512MB
-            cpu_time_limit: 30 * 1_000_000_000,  // 30 seconds
-            wall_time_limit: 60 * 1_000_000_000, // 60 seconds
-            max_processes: 10,
-            max_fds: 100,
-            stack_limit: 8 * 1024 * 1024,                // 8MB
-            data_segment_limit: 256 * 1024 * 1024,       // 256MB
-            address_space_limit: 1 * 1024 * 1024 * 1024, // 1GB
-            cpu_rate_limit: Some(100),
-            io_read_limit: Some(100 * 1024 * 1024),  // 100MB
-            io_write_limit: Some(100 * 1024 * 1024), // 100MB
-        }
-    }
-}
-
-impl ResourceLimitSet {
-    pub fn minimal() -> Self {
-        Self {
-            memory_limit: 64 * 1024 * 1024,      // 64MB
-            cpu_time_limit: 5 * 1_000_000_000,   // 5 seconds
-            wall_time_limit: 10 * 1_000_000_000, // 10 seconds
-            max_processes: 5,
-            max_fds: 50,
-            stack_limit: 1 * 1024 * 1024,           // 1MB
-            data_segment_limit: 32 * 1024 * 1024,   // 32MB
-            address_space_limit: 128 * 1024 * 1024, // 128MB
-            cpu_rate_limit: Some(50),
-            io_read_limit: Some(10 * 1024 * 1024),  // 10MB
-            io_write_limit: Some(10 * 1024 * 1024), // 10MB
-        }
-    }
-
-    pub fn maximum() -> Self {
-        Self {
-            memory_limit: 2 * 1024 * 1024 * 1024, // 2GB
-            cpu_time_limit: 300 * 1_000_000_000,  // 5 minutes
-            wall_time_limit: 600 * 1_000_000_000, // 10 minutes
+            memory_limit_kb: 524288,  // 512MB
+            cpu_time_limit_ms: 10000, // 10 seconds
+            max_cpu_cores: 1,
+            wall_time_limit_ms: 30000, // 30 seconds
             max_processes: 50,
-            max_fds: 1000,
-            stack_limit: 32 * 1024 * 1024,               // 32MB
-            data_segment_limit: 1 * 1024 * 1024 * 1024,  // 1GB
-            address_space_limit: 4 * 1024 * 1024 * 1024, // 4GB
-            cpu_rate_limit: Some(200),
-            io_read_limit: Some(1 * 1024 * 1024 * 1024), // 1GB
-            io_write_limit: Some(1 * 1024 * 1024 * 1024), // 1GB
+            max_fds: 256,
+            stack_limit_kb: 4,            // 4MB
+            data_segment_limit_kb: 256,   // 256MB
+            address_space_limit_kb: 1024, // 1GB
+            cpu_rate_limit_percent: 50,
+            io_read_limit_kb_s: 10,  // 10MB/s
+            io_write_limit_kb_s: 10, // 10MB/s
         }
     }
 }
@@ -308,7 +207,7 @@ impl Default for CgroupsConfig {
         Self {
             enabled: true,
             prefix: "faber".to_string(),
-            base_path: None,
+            version: "v2".to_string(),
             enable_cpu_rate_limit: true,
             enable_memory_limit: true,
             enable_process_limit: true,
@@ -316,101 +215,336 @@ impl Default for CgroupsConfig {
     }
 }
 
-impl Default for ContainerConfig {
-    fn default() -> Self {
-        Self {
-            work_dir_size_mb: 100,
-            enable_mount_operations: false,
-            uid: 1000,
-            gid: 1000,
-            hostname: "faber-container".to_string(),
-            domain_name: "faber.local".to_string(),
-        }
-    }
-}
-
 impl Default for FilesystemConfig {
     fn default() -> Self {
         Self {
-            read_only_root: true,
-            allowed_extensions: vec!["txt".to_string(), "py".to_string(), "js".to_string()],
-            max_file_size: 1024 * 1024, // 1MB
-            max_files_per_request: 10,
-            mounts: MountConfig::default(),
+            mounts: MountsConfig::default(),
         }
     }
 }
 
-impl Default for MountConfig {
+impl Default for MountsConfig {
+    fn default() -> Self {
+        let mut readable = std::collections::HashMap::new();
+        readable.insert(
+            "bin".to_string(),
+            vec!["/bin".to_string(), "/bin".to_string()],
+        );
+        readable.insert(
+            "lib".to_string(),
+            vec!["/lib".to_string(), "/lib".to_string()],
+        );
+        readable.insert(
+            "lib64".to_string(),
+            vec!["/lib64".to_string(), "/lib64".to_string()],
+        );
+        readable.insert(
+            "usr".to_string(),
+            vec!["/usr".to_string(), "/usr".to_string()],
+        );
+        readable.insert(
+            "dev_null".to_string(),
+            vec!["/dev/null".to_string(), "/dev/null".to_string()],
+        );
+        readable.insert(
+            "dev_random".to_string(),
+            vec!["/dev/random".to_string(), "/dev/random".to_string()],
+        );
+        readable.insert(
+            "dev_urandom".to_string(),
+            vec!["/dev/urandom".to_string(), "/dev/urandom".to_string()],
+        );
+        readable.insert(
+            "dev_zero".to_string(),
+            vec!["/dev/zero".to_string(), "/dev/zero".to_string()],
+        );
+        readable.insert(
+            "dev_full".to_string(),
+            vec!["/dev/full".to_string(), "/dev/full".to_string()],
+        );
+
+        let mut tmpfs = std::collections::HashMap::new();
+        tmpfs.insert(
+            "work_tmpfs".to_string(),
+            vec!["/work".to_string(), "size=256m,nr_inodes=4k".to_string()],
+        );
+        tmpfs.insert(
+            "tmp_tmpfs".to_string(),
+            vec!["/tmp".to_string(), "size=128m,nr_inodes=4k".to_string()],
+        );
+
+        Self { readable, tmpfs }
+    }
+}
+
+impl Default for SecurityConfig {
     fn default() -> Self {
         Self {
-            work_dir: "/work".to_string(),
-            tmp_dir: "/tmp".to_string(),
-            read_only_paths: vec!["/etc".to_string(), "/usr/bin".to_string()],
-            writable_paths: vec!["/tmp".to_string()],
-            tmpfs_size: "100M".to_string(),
+            default_security_level: "standard".to_string(),
+            namespaces: NamespaceConfig::default(),
+            seccomp: SeccompConfig::default(),
         }
     }
 }
 
-impl Default for LoggingConfig {
+impl Default for NamespaceConfig {
     fn default() -> Self {
         Self {
-            level: "info".to_string(),
-            json_format: false,
-            file_path: None,
-            enable_request_logging: true,
-            enable_performance_logging: false,
-            enable_resource_logging: true,
+            pid: false,
+            mount: true,
+            network: true,
+            ipc: true,
+            uts: true,
+            user: true,
+            time: false,
+            cgroup: true,
         }
     }
 }
 
-impl Default for ValidationConfig {
+impl Default for SeccompConfig {
     fn default() -> Self {
         Self {
-            max_tasks_per_request: 10,
-            max_command_length: 1024,
-            max_env_value_length: 4096,
-            max_file_content_length: 1024 * 1024, // 1MB
-            enable_dangerous_command_detection: true,
-            blocked_commands: vec!["rm".to_string(), "dd".to_string(), "mkfs".to_string()],
-            blocked_env_vars: vec!["PATH".to_string(), "LD_LIBRARY_PATH".to_string()],
+            enabled: true,
+            default_action: "SCMP_ACT_ERRNO".to_string(),
+            architectures: vec![
+                "SCMP_ARCH_X86_64".to_string(),
+                "SCMP_ARCH_X86".to_string(),
+                "SCMP_ARCH_AARCH64".to_string(),
+            ],
+            syscalls: SyscallsConfig::default(),
         }
     }
 }
 
-impl Default for PerformanceConfig {
+impl Default for SyscallsConfig {
     fn default() -> Self {
         Self {
-            enable_connection_pooling: true,
-            max_concurrent_connections: 1000,
-            connection_timeout: 30,
-            keep_alive_timeout: 60,
-            enable_compression: true,
-        }
-    }
-}
-
-impl Default for MonitoringConfig {
-    fn default() -> Self {
-        Self {
-            enable_metrics: false,
-            metrics_port: 9090,
-            enable_health_checks: true,
-            health_check_interval: 30,
-            enable_resource_monitoring: true,
-        }
-    }
-}
-
-impl Default for DevelopmentConfig {
-    fn default() -> Self {
-        Self {
-            debug: false,
-            hot_reload: false,
-            detailed_errors: false,
-            enable_stack_traces: false,
+            allowed: vec![
+                // Basic file operations
+                "read".to_string(),
+                "write".to_string(),
+                "open".to_string(),
+                "close".to_string(),
+                "fstat".to_string(),
+                "stat".to_string(),
+                "lstat".to_string(),
+                "lseek".to_string(),
+                // Memory management
+                "mmap".to_string(),
+                "mprotect".to_string(),
+                "munmap".to_string(),
+                "brk".to_string(),
+                "mremap".to_string(),
+                "msync".to_string(),
+                "mincore".to_string(),
+                "madvise".to_string(),
+                // Process control
+                "clone".to_string(),
+                "fork".to_string(),
+                "vfork".to_string(),
+                "execve".to_string(),
+                "exit".to_string(),
+                "exit_group".to_string(),
+                "wait4".to_string(),
+                "waitid".to_string(),
+                // Signal handling
+                "rt_sigaction".to_string(),
+                "rt_sigprocmask".to_string(),
+                "rt_sigreturn".to_string(),
+                "sigaltstack".to_string(),
+                "rt_sigsuspend".to_string(),
+                // I/O operations
+                "ioctl".to_string(),
+                "pread64".to_string(),
+                "pwrite64".to_string(),
+                "readv".to_string(),
+                "writev".to_string(),
+                "sendfile".to_string(),
+                // File system operations
+                "access".to_string(),
+                "pipe".to_string(),
+                "dup".to_string(),
+                "dup2".to_string(),
+                "dup3".to_string(),
+                "fcntl".to_string(),
+                "flock".to_string(),
+                "fsync".to_string(),
+                "fdatasync".to_string(),
+                // Directory operations
+                "getdents".to_string(),
+                "getdents64".to_string(),
+                "getcwd".to_string(),
+                "chdir".to_string(),
+                "fchdir".to_string(),
+                // File creation and modification
+                "creat".to_string(),
+                "link".to_string(),
+                "unlink".to_string(),
+                "symlink".to_string(),
+                "readlink".to_string(),
+                "chmod".to_string(),
+                "fchmod".to_string(),
+                "chown".to_string(),
+                "fchown".to_string(),
+                "lchown".to_string(),
+                // Time and scheduling
+                "gettimeofday".to_string(),
+                "nanosleep".to_string(),
+                "clock_gettime".to_string(),
+                "clock_getres".to_string(),
+                "clock_nanosleep".to_string(),
+                // Process information
+                "getpid".to_string(),
+                "getppid".to_string(),
+                "getuid".to_string(),
+                "geteuid".to_string(),
+                "getgid".to_string(),
+                "getegid".to_string(),
+                "gettid".to_string(),
+                // Resource limits
+                "getrlimit".to_string(),
+                "setrlimit".to_string(),
+                "getrusage".to_string(),
+                "prlimit64".to_string(),
+                // System information
+                "uname".to_string(),
+                "sysinfo".to_string(),
+                "times".to_string(),
+                "syslog".to_string(),
+                // Network operations (basic)
+                "socket".to_string(),
+                "connect".to_string(),
+                "accept".to_string(),
+                "bind".to_string(),
+                "listen".to_string(),
+                "getsockname".to_string(),
+                "getpeername".to_string(),
+                // Network I/O
+                "sendto".to_string(),
+                "recvfrom".to_string(),
+                "sendmsg".to_string(),
+                "recvmsg".to_string(),
+                "shutdown".to_string(),
+                "setsockopt".to_string(),
+                "getsockopt".to_string(),
+                // Process groups and sessions
+                "setpgid".to_string(),
+                "getpgid".to_string(),
+                "getpgrp".to_string(),
+                "setsid".to_string(),
+                "getsid".to_string(),
+                // User and group management
+                "setuid".to_string(),
+                "setgid".to_string(),
+                "setreuid".to_string(),
+                "setregid".to_string(),
+                "setresuid".to_string(),
+                "getresuid".to_string(),
+                "setresgid".to_string(),
+                "getresgid".to_string(),
+                // Supplementary groups
+                "getgroups".to_string(),
+                "setgroups".to_string(),
+                // File system attributes
+                "umask".to_string(),
+                "statfs".to_string(),
+                "fstatfs".to_string(),
+                // Advanced file operations
+                "truncate".to_string(),
+                "ftruncate".to_string(),
+                "rename".to_string(),
+                "mkdir".to_string(),
+                "rmdir".to_string(),
+                // Memory locking
+                "mlock".to_string(),
+                "munlock".to_string(),
+                "mlockall".to_string(),
+                "munlockall".to_string(),
+                // Modern features
+                "getrandom".to_string(),
+                "memfd_create".to_string(),
+                "eventfd".to_string(),
+                "eventfd2".to_string(),
+                "timerfd_create".to_string(),
+                "timerfd_settime".to_string(),
+                "timerfd_gettime".to_string(),
+                // Epoll for I/O multiplexing
+                "epoll_create".to_string(),
+                "epoll_create1".to_string(),
+                "epoll_ctl".to_string(),
+                "epoll_wait".to_string(),
+                "epoll_pwait".to_string(),
+                // Futex for synchronization
+                "futex".to_string(),
+                "set_robust_list".to_string(),
+                "get_robust_list".to_string(),
+                // Scheduler operations
+                "sched_yield".to_string(),
+                "sched_setparam".to_string(),
+                "sched_getparam".to_string(),
+                "sched_setscheduler".to_string(),
+                "sched_getscheduler".to_string(),
+                // Priority operations
+                "getpriority".to_string(),
+                "setpriority".to_string(),
+                "ioprio_set".to_string(),
+                "ioprio_get".to_string(),
+                // Advanced I/O
+                "io_setup".to_string(),
+                "io_destroy".to_string(),
+                "io_getevents".to_string(),
+                "io_submit".to_string(),
+                "io_cancel".to_string(),
+                // File descriptor operations
+                "close_range".to_string(),
+                "pidfd_open".to_string(),
+                "pidfd_getfd".to_string(),
+                // Modern file operations
+                "openat".to_string(),
+                "mkdirat".to_string(),
+                "mknodat".to_string(),
+                "fchownat".to_string(),
+                "futimesat".to_string(),
+                "newfstatat".to_string(),
+                "unlinkat".to_string(),
+                "renameat".to_string(),
+                "linkat".to_string(),
+                "symlinkat".to_string(),
+                "readlinkat".to_string(),
+                "fchmodat".to_string(),
+                "faccessat".to_string(),
+                "faccessat2".to_string(),
+                // Extended attributes
+                "setxattr".to_string(),
+                "lsetxattr".to_string(),
+                "fsetxattr".to_string(),
+                "getxattr".to_string(),
+                "lgetxattr".to_string(),
+                "fgetxattr".to_string(),
+                "listxattr".to_string(),
+                "llistxattr".to_string(),
+                "flistxattr".to_string(),
+                "removexattr".to_string(),
+                "lremovexattr".to_string(),
+                "fremovexattr".to_string(),
+                // Process memory operations
+                "process_vm_readv".to_string(),
+                "process_vm_writev".to_string(),
+                "process_madvise".to_string(),
+                "process_mrelease".to_string(),
+                // Modern system calls
+                "statx".to_string(),
+                "copy_file_range".to_string(),
+                "preadv2".to_string(),
+                "pwritev2".to_string(),
+                "pkey_mprotect".to_string(),
+                "pkey_alloc".to_string(),
+                "pkey_free".to_string(),
+                // Restart syscall (for signal handling)
+                "restart_syscall".to_string(),
+            ],
+            disallowed: vec![],
         }
     }
 }

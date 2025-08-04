@@ -34,8 +34,8 @@ pub struct ResourceUsage {
     pub user_time_ns: u64,
 }
 
-impl ResourceUsage {
-    pub fn new() -> Self {
+impl Default for ResourceUsage {
+    fn default() -> Self {
         Self {
             cpu_time_ns: 0,
             wall_time_ns: 0,
@@ -48,6 +48,12 @@ impl ResourceUsage {
             system_time_ns: 0,
             user_time_ns: 0,
         }
+    }
+}
+
+impl ResourceUsage {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Get CPU time as Duration
@@ -104,8 +110,8 @@ pub struct ResourceLimitViolations {
     pub output_limit_exceeded: bool,
 }
 
-impl ResourceLimitViolations {
-    pub fn new() -> Self {
+impl Default for ResourceLimitViolations {
+    fn default() -> Self {
         Self {
             cpu_time_limit_exceeded: false,
             wall_time_limit_exceeded: false,
@@ -113,6 +119,12 @@ impl ResourceLimitViolations {
             file_descriptor_limit_exceeded: false,
             output_limit_exceeded: false,
         }
+    }
+}
+
+impl ResourceLimitViolations {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn any_exceeded(&self) -> bool {

@@ -19,9 +19,8 @@ pub async fn execute_tasks(
 ) -> Result<Json<ExecuteResponse>, StatusCode> {
     info!("Received execution request with {} tasks", request.len());
 
-    // Validate tasks
-    if let Err(validation_error) = validate_tasks(&request, config.validation.max_tasks_per_request)
-    {
+    // Validate tasks (max 100 tasks per request)
+    if let Err(validation_error) = validate_tasks(&request, 100) {
         tracing::error!("Task validation failed: {}", validation_error);
         return Err(StatusCode::BAD_REQUEST);
     }
