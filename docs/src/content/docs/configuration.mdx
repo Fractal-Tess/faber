@@ -1,0 +1,756 @@
+---
+title: 'Configuration Crate'
+description: 'Documentation for the faber-config crate'
+---
+
+# Configuration Crate
+
+The `faber-config` crate provides configuration management for Faber, handling loading, validation, and merging of configuration from multiple sources including files, environment variables, and command-line arguments.
+
+## Overview
+
+The config crate is responsible for:
+
+- **Configuration Loading**: Load configuration from YAML files
+- **Environment Variables**: Parse configuration from environment variables
+- **Validation**: Validate configuration values and constraints
+- **Merging**: Merge configuration from multiple sources
+- **Type Safety**: Provide strongly-typed configuration structures
+- **Default Values**: Supply sensible default configurations
+
+## Architecture
+
+The config crate follows a hierarchical configuration system:
+
+```
+config/
+├── lib.rs          # Main library entry point
+├── types.rs        # Configuration type definitions
+├── filesystem.rs   # File-based configuration loading
+├── api.rs          # API configuration
+├── sandbox.rs      # Sandbox configuration
+├── security.rs     # Security configuration
+└── validation.rs   # Configuration validation
+```
+
+## Key Components
+
+### Main Configuration Structure
+
+The main `Config` struct contains all configuration:
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Config {
+    pub server: ServerConfig,
+    pub auth: AuthConfig,
+    pub security: SecurityConfig,
+    pub resource_limits: ResourceLimitsConfig,
+    pub logging: LoggingConfig,
+    pub sandbox: SandboxConfig,
+    pub executor: ExecutorConfig,
+}
+```
+
+### Server Configuration
+
+HTTP server configuration:
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerConfig {
+    pub host: String,
+    pub port: u16,
+    pub enable_swagger: bool,
+    pub graceful_shutdown: bool,
+    pub max_request_size: usize,
+    pub rate_limit: RateLimitConfig,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            host: "127.0.0.1".to_string(),
+            port: 8080,
+            enable_swagger: true,
+            graceful_shutdown: false,
+            max_request_size: 10 * 1024 * 1024, // 10MB
+            rate_limit: RateLimitConfig::default(),
+        }
+    }
+}
+```
+
+### Authentication Configuration
+
+API authentication settings:
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthConfig {
+    pub api_key: Option<String>,
+    pub open_mode: bool,
+    pub required: bool,
+    pub key_rotation: KeyRotationConfig,
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            open_mode: false,
+            required: true,
+            key_rotation: KeyRotationConfig::default(),
+        }
+    }
+}
+```
+
+### Security Configuration
+
+Security and sandboxing settings:
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecurityConfig {
+    pub default_security_level: SecurityLevel,
+    pub seccomp: SeccompConfig,
+    pub capabilities: CapabilityConfig,
+    pub command_validation: CommandValidationConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SecurityLevel {
+    Low,
+    Medium,
+    High,
+}
+
+impl Default for SecurityLevel {
+    fn default() -> Self {
+        SecurityLevel::Medium
+    }
+}
+```
+
+### Resource Limits Configuration
+
+Default resource limits for tasks:
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceLimitsConfig {
+    pub default: ResourceLimits,
+    pub profiles: HashMap<String, ResourceLimits>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceLimits {
+    pub memory_limit: u64,
+    pub cpu_time_limit: u64,
+    pub wall_time_limit: u64,
+    pub max_processes: u32,
+    pub max_file_descriptors: u32,
+    pub max_output_size: u64,
+}
+
+impl Default for ResourceLimits {
+    fn default() -> Self {
+        Self {
+            memory_limit: 536870912,        // 512MB
+            cpu_time_limit: 30000000000,    // 30 seconds
+            wall_time_limit: 60000000000,   // 60 seconds
+            max_processes: 10,
+            max_file_descriptors: 100,
+            max_output_size: 1048576,       // 1MB
+        }
+    }
+}
+```
+
+## Configuration Loading
+
+### File-Based Configuration
+
+Loading configuration from YAML files:
+
+```rust
+pub fn load_config_from_file(path: &Path) -> Result<Config, ConfigError> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| ConfigError::IoError(e))?;
+
+    let config: Config = serde_yaml::from_str(&content)
+        .map_err(|e| ConfigError::ParseError(e))?;
+
+    Ok(config)
+}
+
+pub fn load_config_from_default_locations() -> Result<Config, ConfigError> {
+    let default_paths = [
+        PathBuf::from("config/config.yaml"),
+        PathBuf::from("config.yaml"),
+        PathBuf::from("/etc/faber/config.yaml"),
+        PathBuf::from("~/.config/faber/config.yaml"),
+    ];
+
+    for path in &default_paths {
+        if path.exists() {
+            return load_config_from_file(path);
+        }
+    }
+
+    // Return default configuration if no file found
+    Ok(Config::default())
+}
+```
+
+### Environment Variable Loading
+
+Loading configuration from environment variables:
+
+```rust
+pub fn load_config_from_env() -> Result<Config, ConfigError> {
+    let mut config = Config::default();
+
+    // Server configuration
+    if let Ok(host) = std::env::var("FABER_SERVER_HOST") {
+        config.server.host = host;
+    }
+
+    if let Ok(port) = std::env::var("FABER_SERVER_PORT") {
+        config.server.port = port.parse()
+            .map_err(|_| ConfigError::InvalidPort(0))?;
+    }
+
+    if let Ok(enable_swagger) = std::env::var("FABER_SERVER_ENABLE_SWAGGER") {
+        config.server.enable_swagger = enable_swagger.parse()
+            .map_err(|_| ConfigError::InvalidBoolean)?;
+    }
+
+    // Authentication configuration
+    if let Ok(api_key) = std::env::var("FABER_AUTH_API_KEY") {
+        config.auth.api_key = Some(api_key);
+    }
+
+    if let Ok(open_mode) = std::env::var("FABER_AUTH_OPEN_MODE") {
+        config.auth.open_mode = open_mode.parse()
+            .map_err(|_| ConfigError::InvalidBoolean)?;
+    }
+
+    // Security configuration
+    if let Ok(security_level) = std::env::var("FABER_SECURITY_DEFAULT_SECURITY_LEVEL") {
+        config.security.default_security_level = match security_level.as_str() {
+            "low" => SecurityLevel::Low,
+            "medium" => SecurityLevel::Medium,
+            "high" => SecurityLevel::High,
+            _ => return Err(ConfigError::InvalidSecurityLevel),
+        };
+    }
+
+    // Resource limits
+    if let Ok(memory_limit) = std::env::var("FABER_RESOURCE_LIMITS_DEFAULT_MEMORY_LIMIT") {
+        config.resource_limits.default.memory_limit = memory_limit.parse()
+            .map_err(|_| ConfigError::InvalidResourceLimit)?;
+    }
+
+    if let Ok(cpu_limit) = std::env::var("FABER_RESOURCE_LIMITS_DEFAULT_CPU_TIME_LIMIT") {
+        config.resource_limits.default.cpu_time_limit = cpu_limit.parse()
+            .map_err(|_| ConfigError::InvalidResourceLimit)?;
+    }
+
+    Ok(config)
+}
+```
+
+### Configuration Merging
+
+Merging configuration from multiple sources:
+
+```rust
+pub fn merge_configs(
+    base: Config,
+    overrides: Vec<Config>,
+) -> Result<Config, ConfigError> {
+    let mut merged = base;
+
+    for override_config in overrides {
+        merged = merge_config(&merged, &override_config)?;
+    }
+
+    Ok(merged)
+}
+
+fn merge_config(base: &Config, override_config: &Config) -> Result<Config, ConfigError> {
+    let mut merged = base.clone();
+
+    // Merge server config
+    if override_config.server.host != base.server.host {
+        merged.server.host = override_config.server.host.clone();
+    }
+    if override_config.server.port != base.server.port {
+        merged.server.port = override_config.server.port;
+    }
+    if override_config.server.enable_swagger != base.server.enable_swagger {
+        merged.server.enable_swagger = override_config.server.enable_swagger;
+    }
+
+    // Merge auth config
+    if override_config.auth.api_key.is_some() {
+        merged.auth.api_key = override_config.auth.api_key.clone();
+    }
+    if override_config.auth.open_mode != base.auth.open_mode {
+        merged.auth.open_mode = override_config.auth.open_mode;
+    }
+
+    // Merge security config
+    if override_config.security.default_security_level != base.security.default_security_level {
+        merged.security.default_security_level = override_config.security.default_security_level.clone();
+    }
+
+    // Merge resource limits
+    if override_config.resource_limits.default.memory_limit != base.resource_limits.default.memory_limit {
+        merged.resource_limits.default.memory_limit = override_config.resource_limits.default.memory_limit;
+    }
+    if override_config.resource_limits.default.cpu_time_limit != base.resource_limits.default.cpu_time_limit {
+        merged.resource_limits.default.cpu_time_limit = override_config.resource_limits.default.cpu_time_limit;
+    }
+
+    Ok(merged)
+}
+```
+
+## Configuration Validation
+
+### Validation Rules
+
+Comprehensive configuration validation:
+
+```rust
+pub fn validate_config(config: &Config) -> Result<(), ConfigError> {
+    // Validate server configuration
+    validate_server_config(&config.server)?;
+
+    // Validate authentication configuration
+    validate_auth_config(&config.auth)?;
+
+    // Validate security configuration
+    validate_security_config(&config.security)?;
+
+    // Validate resource limits
+    validate_resource_limits(&config.resource_limits)?;
+
+    // Validate sandbox configuration
+    validate_sandbox_config(&config.sandbox)?;
+
+    // Validate logging configuration
+    validate_logging_config(&config.logging)?;
+
+    Ok(())
+}
+
+fn validate_server_config(config: &ServerConfig) -> Result<(), ConfigError> {
+    // Validate port range
+    if config.port == 0 || config.port > 65535 {
+        return Err(ConfigError::InvalidPort(config.port));
+    }
+
+    // Validate host
+    if config.host.is_empty() {
+        return Err(ConfigError::InvalidHost("Host cannot be empty".into()));
+    }
+
+    // Validate request size
+    if config.max_request_size == 0 {
+        return Err(ConfigError::InvalidRequestSize);
+    }
+
+    Ok(())
+}
+
+fn validate_auth_config(config: &AuthConfig) -> Result<(), ConfigError> {
+    // Check API key requirements
+    if config.required && !config.open_mode && config.api_key.is_none() {
+        return Err(ConfigError::MissingApiKey);
+    }
+
+    // Validate API key format if present
+    if let Some(ref api_key) = config.api_key {
+        if api_key.len() < 16 {
+            return Err(ConfigError::WeakApiKey);
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_security_config(config: &SecurityConfig) -> Result<(), ConfigError> {
+    // Validate seccomp configuration
+    if config.seccomp.enabled {
+        match config.seccomp.level {
+            SeccompLevel::Low | SeccompLevel::Medium | SeccompLevel::High => {},
+            _ => return Err(ConfigError::InvalidSeccompLevel),
+        }
+    }
+
+    // Validate capability configuration
+    if config.capabilities.drop_all && !config.capabilities.allowed.is_empty() {
+        return Err(ConfigError::ConflictingCapabilities);
+    }
+
+    Ok(())
+}
+
+fn validate_resource_limits(config: &ResourceLimitsConfig) -> Result<(), ConfigError> {
+    let limits = &config.default;
+
+    // Validate memory limit
+    if limits.memory_limit == 0 {
+        return Err(ConfigError::InvalidMemoryLimit);
+    }
+
+    // Validate CPU time limit
+    if limits.cpu_time_limit == 0 {
+        return Err(ConfigError::InvalidCpuLimit);
+    }
+
+    // Validate wall time limit
+    if limits.wall_time_limit == 0 {
+        return Err(ConfigError::InvalidWallTimeLimit);
+    }
+
+    // Validate process limit
+    if limits.max_processes == 0 {
+        return Err(ConfigError::InvalidProcessLimit);
+    }
+
+    // Validate file descriptor limit
+    if limits.max_file_descriptors == 0 {
+        return Err(ConfigError::InvalidFileDescriptorLimit);
+    }
+
+    // Validate output size limit
+    if limits.max_output_size == 0 {
+        return Err(ConfigError::InvalidOutputSizeLimit);
+    }
+
+    Ok(())
+}
+```
+
+## Configuration Profiles
+
+### Profile Management
+
+Managing different configuration profiles:
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigProfiles {
+    pub profiles: HashMap<String, Config>,
+    pub active_profile: String,
+}
+
+impl ConfigProfiles {
+    pub fn new() -> Self {
+        Self {
+            profiles: HashMap::new(),
+            active_profile: "default".to_string(),
+        }
+    }
+
+    pub fn add_profile(&mut self, name: String, config: Config) {
+        self.profiles.insert(name, config);
+    }
+
+    pub fn get_active_config(&self) -> Option<&Config> {
+        self.profiles.get(&self.active_profile)
+    }
+
+    pub fn set_active_profile(&mut self, name: String) -> Result<(), ConfigError> {
+        if self.profiles.contains_key(&name) {
+            self.active_profile = name;
+            Ok(())
+        } else {
+            Err(ConfigError::ProfileNotFound(name))
+        }
+    }
+
+    pub fn load_profiles_from_directory(&mut self, dir: &Path) -> Result<(), ConfigError> {
+        if !dir.exists() || !dir.is_dir() {
+            return Err(ConfigError::DirectoryNotFound(dir.to_path_buf()));
+        }
+
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+
+            if path.extension().and_then(|s| s.to_str()) == Some("yaml") {
+                let name = path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .ok_or(ConfigError::InvalidFileName)?;
+
+                let config = load_config_from_file(&path)?;
+                self.add_profile(name.to_string(), config);
+            }
+        }
+
+        Ok(())
+    }
+}
+```
+
+## Configuration Examples
+
+### Development Configuration
+
+```yaml
+server:
+  host: '127.0.0.1'
+  port: 8080
+  enable_swagger: true
+  graceful_shutdown: false
+
+auth:
+  open_mode: true
+  required: false
+
+security:
+  default_security_level: 'low'
+  seccomp:
+    enabled: true
+    level: 'low'
+
+resource_limits:
+  default:
+    memory_limit: 1073741824 # 1GB
+    cpu_time_limit: 60000000000 # 60 seconds
+    wall_time_limit: 120000000000 # 120 seconds
+    max_processes: 20
+    max_file_descriptors: 200
+    max_output_size: 2097152 # 2MB
+
+logging:
+  level: 'debug'
+  format: 'text'
+  file: null
+  debug: true
+
+sandbox:
+  namespaces:
+    pid: true
+    mount: true
+    network: false # Allow network for development
+    ipc: true
+    uts: true
+    user: false # Run as root for development
+    time: true
+    cgroup: true
+```
+
+### Production Configuration
+
+```yaml
+server:
+  host: '0.0.0.0'
+  port: 8080
+  enable_swagger: false
+  graceful_shutdown: true
+
+auth:
+  api_key: 'your-production-api-key'
+  open_mode: false
+  required: true
+
+security:
+  default_security_level: 'high'
+  seccomp:
+    enabled: true
+    level: 'high'
+  capabilities:
+    drop_all: true
+    allowed: []
+
+resource_limits:
+  default:
+    memory_limit: 268435456 # 256MB
+    cpu_time_limit: 30000000000 # 30 seconds
+    wall_time_limit: 60000000000 # 60 seconds
+    max_processes: 5
+    max_file_descriptors: 50
+    max_output_size: 524288 # 512KB
+
+logging:
+  level: 'info'
+  format: 'json'
+  file: '/var/log/faber.log'
+  debug: false
+
+sandbox:
+  namespaces:
+    pid: true
+    mount: true
+    network: false # No network access
+    ipc: true
+    uts: true
+    user: true # Run as unprivileged user
+    time: true
+    cgroup: true
+```
+
+## Error Handling
+
+### Configuration Error Types
+
+```rust
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigError {
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
+
+    #[error("Parse error: {0}")]
+    ParseError(#[from] serde_yaml::Error),
+
+    #[error("File not found: {0}")]
+    FileNotFound(PathBuf),
+
+    #[error("Directory not found: {0}")]
+    DirectoryNotFound(PathBuf),
+
+    #[error("Invalid file name")]
+    InvalidFileName,
+
+    #[error("Invalid port: {0}")]
+    InvalidPort(u16),
+
+    #[error("Invalid host: {0}")]
+    InvalidHost(String),
+
+    #[error("Invalid boolean value")]
+    InvalidBoolean,
+
+    #[error("Invalid security level")]
+    InvalidSecurityLevel,
+
+    #[error("Invalid seccomp level")]
+    InvalidSeccompLevel,
+
+    #[error("Invalid resource limit")]
+    InvalidResourceLimit,
+
+    #[error("Invalid memory limit")]
+    InvalidMemoryLimit,
+
+    #[error("Invalid CPU limit")]
+    InvalidCpuLimit,
+
+    #[error("Invalid wall time limit")]
+    InvalidWallTimeLimit,
+
+    #[error("Invalid process limit")]
+    InvalidProcessLimit,
+
+    #[error("Invalid file descriptor limit")]
+    InvalidFileDescriptorLimit,
+
+    #[error("Invalid output size limit")]
+    InvalidOutputSizeLimit,
+
+    #[error("Invalid request size")]
+    InvalidRequestSize,
+
+    #[error("Missing API key")]
+    MissingApiKey,
+
+    #[error("Weak API key")]
+    WeakApiKey,
+
+    #[error("Conflicting capabilities")]
+    ConflictingCapabilities,
+
+    #[error("Profile not found: {0}")]
+    ProfileNotFound(String),
+}
+```
+
+## Testing
+
+The config crate includes comprehensive tests:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_config() {
+        let config = Config::default();
+        assert_eq!(config.server.port, 8080);
+        assert_eq!(config.server.host, "127.0.0.1");
+        assert!(config.server.enable_swagger);
+    }
+
+    #[test]
+    fn test_config_validation() {
+        let config = Config::default();
+        assert!(validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn test_invalid_port() {
+        let mut config = Config::default();
+        config.server.port = 70000;
+
+        let result = validate_config(&config);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ConfigError::InvalidPort(70000)));
+    }
+
+    #[test]
+    fn test_config_merging() {
+        let base = Config::default();
+        let mut override_config = Config::default();
+        override_config.server.port = 9000;
+
+        let merged = merge_config(&base, &override_config).unwrap();
+        assert_eq!(merged.server.port, 9000);
+        assert_eq!(merged.server.host, base.server.host);
+    }
+
+    #[test]
+    fn test_environment_loading() {
+        std::env::set_var("FABER_SERVER_PORT", "9000");
+        std::env::set_var("FABER_AUTH_OPEN_MODE", "true");
+
+        let config = load_config_from_env().unwrap();
+        assert_eq!(config.server.port, 9000);
+        assert!(config.auth.open_mode);
+
+        // Clean up
+        std::env::remove_var("FABER_SERVER_PORT");
+        std::env::remove_var("FABER_AUTH_OPEN_MODE");
+    }
+}
+```
+
+## Dependencies
+
+The config crate uses the following dependencies:
+
+```toml
+[dependencies]
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+thiserror = { workspace = true }
+faber-core = { path = "../core" }
+```
+
+## Best Practices
+
+1. **Use strong validation**: Always validate configuration values
+2. **Provide sensible defaults**: Include reasonable default values
+3. **Support multiple sources**: Allow configuration from files, env vars, and CLI
+4. **Use type safety**: Leverage Rust's type system for configuration
+5. **Document configuration**: Provide clear documentation for all options
+6. **Handle errors gracefully**: Provide clear error messages for invalid config
+7. **Support profiles**: Allow different configurations for different environments
+8. **Validate security**: Ensure security-related configuration is properly validated

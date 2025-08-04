@@ -1,0 +1,404 @@
+---
+title: 'API Reference'
+description: "Complete API reference for Faber's HTTP interface"
+---
+
+# API Reference
+
+Faber provides a RESTful HTTP API for task execution and management. The API is built with Axum and includes automatic OpenAPI/Swagger documentation.
+
+## Base URL
+
+```
+http://localhost:8080
+```
+
+## Authentication
+
+Most endpoints require authentication via API key. Include the key in the `Authorization` header:
+
+```
+Authorization: Bearer your-api-key-here
+```
+
+If `open_mode` is enabled in configuration, authentication is optional.
+
+## Endpoints
+
+### Health Check
+
+#### `GET /health`
+
+Check if the Faber service is running.
+
+**Response:**
+
+```json
+{
+  "status": "healthy",
+  "timestamp": "2024-01-01T12:00:00Z",
+  "version": "0.1.0"
+}
+```
+
+### Task Execution
+
+#### `POST /execute`
+
+Execute one or more tasks in isolated sandboxes.
+
+**Request Body:**
+
+```json
+{
+  "tasks": [
+    {
+      "command": "echo",
+      "args": ["hello", "world"],
+      "env": {
+        "CUSTOM_VAR": "value"
+      },
+      "files": {
+        "script.py": "print('Hello from Python')"
+      },
+      "resource_limits": {
+        "memory_limit": 536870912,
+        "cpu_time_limit": 30000000000,
+        "wall_time_limit": 60000000000,
+        "max_processes": 10,
+        "max_file_descriptors": 100,
+        "max_output_size": 1048576
+      }
+    }
+  ]
+}
+```
+
+**Response:**
+
+```json
+{
+  "results": [
+    {
+      "status": "Success",
+      "exit_code": 0,
+      "stdout": "hello world\n",
+      "stderr": null,
+      "error": null,
+      "resource_usage": {
+        "cpu_time_ns": 1000000,
+        "wall_time_ns": 5000000,
+        "memory_peak_bytes": 1048576,
+        "memory_current_bytes": 524288,
+        "process_count": 1,
+        "file_descriptors": 3,
+        "io_read_bytes": 0,
+        "io_write_bytes": 12,
+        "system_time_ns": 500000,
+        "user_time_ns": 500000
+      },
+      "resource_limits_exceeded": {
+        "cpu_time_limit_exceeded": false,
+        "wall_time_limit_exceeded": false,
+        "process_limit_exceeded": false,
+        "file_descriptor_limit_exceeded": false,
+        "output_limit_exceeded": false
+      }
+    }
+  ]
+}
+```
+
+### Task Types
+
+#### Basic Command Execution
+
+```json
+{
+  "command": "ls",
+  "args": ["-la"]
+}
+```
+
+#### Script Execution
+
+```json
+{
+  "command": "python",
+  "args": ["script.py"],
+  "files": {
+    "script.py": "print('Hello from Python')\nimport sys\nprint(f'Python version: {sys.version}')"
+  }
+}
+```
+
+#### Environment Variables
+
+```json
+{
+  "command": "env",
+  "env": {
+    "CUSTOM_VAR": "custom_value",
+    "DEBUG": "true"
+  }
+}
+```
+
+### Resource Limits
+
+Configure resource limits for task execution:
+
+```json
+{
+  "resource_limits": {
+    "memory_limit": 536870912, // 512MB in bytes
+    "cpu_time_limit": 30000000000, // 30 seconds in nanoseconds
+    "wall_time_limit": 60000000000, // 60 seconds in nanoseconds
+    "max_processes": 10, // Maximum processes
+    "max_file_descriptors": 100, // Maximum file descriptors
+    "max_output_size": 1048576 // 1MB output limit
+  }
+}
+```
+
+### Task Status Values
+
+- `Success`: Task completed successfully
+- `Failure`: Task failed with non-zero exit code
+- `NotExecuted`: Task was not executed due to validation errors
+- `ResourceLimitExceeded`: Task exceeded resource limits
+- `Timeout`: Task was killed due to timeout
+- `MemoryLimitExceeded`: Task exceeded memory limit
+- `CpuLimitExceeded`: Task exceeded CPU limit
+
+### Error Responses
+
+#### 400 Bad Request
+
+```json
+{
+  "error": "Validation error",
+  "details": "Invalid command: command cannot be empty"
+}
+```
+
+#### 401 Unauthorized
+
+```json
+{
+  "error": "Authentication required",
+  "details": "API key is required for this endpoint"
+}
+```
+
+#### 403 Forbidden
+
+```json
+{
+  "error": "Access denied",
+  "details": "Invalid API key"
+}
+```
+
+#### 413 Payload Too Large
+
+```json
+{
+  "error": "Request too large",
+  "details": "Request body exceeds maximum size limit"
+}
+```
+
+#### 429 Too Many Requests
+
+```json
+{
+  "error": "Rate limit exceeded",
+  "details": "Too many requests, please try again later"
+}
+```
+
+#### 500 Internal Server Error
+
+```json
+{
+  "error": "Internal server error",
+  "details": "Failed to execute task"
+}
+```
+
+## Examples
+
+### Simple Command Execution
+
+```bash
+curl -X POST http://localhost:8080/execute \
+  -H "Authorization: Bearer your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tasks": [
+      {
+        "command": "echo",
+        "args": ["Hello, Faber!"]
+      }
+    ]
+  }'
+```
+
+### Python Script Execution
+
+```bash
+curl -X POST http://localhost:8080/execute \
+  -H "Authorization: Bearer your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tasks": [
+      {
+        "command": "python",
+        "args": ["script.py"],
+        "files": {
+          "script.py": "import sys\nprint(f\"Python {sys.version}\")\nprint(\"Hello from sandbox!\")"
+        },
+        "env": {
+          "PYTHONPATH": "/tmp"
+        }
+      }
+    ]
+  }'
+```
+
+### Multiple Tasks
+
+```bash
+curl -X POST http://localhost:8080/execute \
+  -H "Authorization: Bearer your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tasks": [
+      {
+        "command": "echo",
+        "args": ["Task 1"]
+      },
+      {
+        "command": "python",
+        "args": ["-c", "print(\"Task 2\")"]
+      },
+      {
+        "command": "bash",
+        "args": ["-c", "echo \"Task 3\""]
+      }
+    ]
+  }'
+```
+
+### Resource-Constrained Task
+
+```bash
+curl -X POST http://localhost:8080/execute \
+  -H "Authorization: Bearer your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tasks": [
+      {
+        "command": "python",
+        "args": ["-c", "import time; time.sleep(10)"],
+        "resource_limits": {
+          "memory_limit": 268435456,
+          "cpu_time_limit": 5000000000,
+          "wall_time_limit": 10000000000,
+          "max_processes": 5
+        }
+      }
+    ]
+  }'
+```
+
+## Rate Limiting
+
+The API implements rate limiting to prevent abuse. Limits are configurable and typically allow:
+
+- 100 requests per minute per IP address
+- 1000 requests per hour per API key
+
+Rate limit headers are included in responses:
+
+```
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 95
+X-RateLimit-Reset: 1640995200
+```
+
+## OpenAPI Documentation
+
+When Swagger is enabled, you can access the interactive API documentation at:
+
+```
+http://localhost:8080/swagger-ui
+```
+
+This provides a complete reference with examples and allows you to test endpoints directly from the browser.
+
+## SDKs and Libraries
+
+### Python
+
+```python
+import requests
+
+def execute_task(command, args=None, env=None):
+    url = "http://localhost:8080/execute"
+    headers = {
+        "Authorization": "Bearer your-api-key",
+        "Content-Type": "application/json"
+    }
+
+    data = {
+        "tasks": [{
+            "command": command,
+            "args": args or [],
+            "env": env or {}
+        }]
+    }
+
+    response = requests.post(url, json=data, headers=headers)
+    return response.json()
+```
+
+### JavaScript/Node.js
+
+```javascript
+async function executeTask(command, args = [], env = {}) {
+  const url = 'http://localhost:8080/execute';
+  const headers = {
+    Authorization: 'Bearer your-api-key',
+    'Content-Type': 'application/json',
+  };
+
+  const data = {
+    tasks: [
+      {
+        command,
+        args,
+        env,
+      },
+    ],
+  };
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(data),
+  });
+
+  return response.json();
+}
+```
+
+## Best Practices
+
+1. **Always validate responses**: Check for errors and handle them appropriately
+2. **Use appropriate resource limits**: Set limits based on your use case
+3. **Handle timeouts**: Implement proper timeout handling for long-running tasks
+4. **Secure API keys**: Store API keys securely and rotate them regularly
+5. **Monitor usage**: Track API usage and resource consumption
+6. **Error handling**: Implement robust error handling for failed tasks

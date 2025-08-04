@@ -1,0 +1,608 @@
+---
+title: 'Sandbox Crate'
+description: 'Documentation for the faber-sandbox crate'
+---
+
+# Sandbox Crate
+
+The `faber-sandbox` crate provides the core sandboxing functionality for Faber, implementing Linux namespaces, cgroups, and seccomp to create secure, isolated execution environments for untrusted code.
+
+## Overview
+
+The sandbox crate is responsible for:
+
+- **Container Creation**: Linux namespace setup and management
+- **Resource Control**: cgroups configuration and monitoring
+- **Security Filtering**: seccomp system call filtering
+- **Filesystem Isolation**: Mount namespace and filesystem restrictions
+- **Process Management**: PID namespace and process isolation
+- **Capability Management**: Linux capability dropping and control
+
+## Architecture
+
+The sandbox crate follows a modular design:
+
+```
+sandbox/
+├── lib.rs          # Main library entry point
+├── container.rs    # Container creation and management
+├── namespaces.rs   # Linux namespace setup
+├── cgroups.rs      # cgroups configuration
+├── seccomp.rs      # seccomp security profiles
+├── mounts.rs       # Filesystem mounting and restrictions
+├── privileges.rs   # Capability management
+└── error.rs        # Sandbox-specific error handling
+```
+
+## Key Components
+
+### Container Management
+
+The `Container` struct manages the sandboxed environment:
+
+```rust
+pub struct Container {
+    pub id: String,
+    pub namespaces: NamespaceConfig,
+    pub cgroups: CgroupConfig,
+    pub seccomp: SeccompConfig,
+    pub mounts: MountConfig,
+    pub privileges: PrivilegeConfig,
+    pub resource_limits: ResourceLimits,
+}
+```
+
+### Namespace Configuration
+
+Linux namespaces provide isolation:
+
+```rust
+pub struct NamespaceConfig {
+    pub pid: bool,      // Process isolation
+    pub mount: bool,    // Filesystem isolation
+    pub network: bool,  // Network isolation
+    pub ipc: bool,      // IPC isolation
+    pub uts: bool,      // Hostname isolation
+    pub user: bool,     // User ID isolation
+    pub time: bool,     // Time isolation
+    pub cgroup: bool,   // Resource control isolation
+}
+```
+
+### cgroups Configuration
+
+Resource limits and control:
+
+```rust
+pub struct CgroupConfig {
+    pub memory_limit: u64,
+    pub cpu_time_limit: u64,
+    pub wall_time_limit: u64,
+    pub max_processes: u32,
+    pub max_file_descriptors: u32,
+    pub max_output_size: u64,
+}
+```
+
+## Container Creation
+
+### Basic Container Setup
+
+```rust
+use faber_sandbox::{Container, ContainerConfig, SandboxError};
+
+async fn create_sandbox() -> Result<Container, SandboxError> {
+    let config = ContainerConfig {
+        namespaces: NamespaceConfig {
+            pid: true,
+            mount: true,
+            network: false,
+            ipc: true,
+            uts: true,
+            user: true,
+            time: true,
+            cgroup: true,
+        },
+        cgroups: CgroupConfig {
+            memory_limit: 536870912,  // 512MB
+            cpu_time_limit: 30000000000,  // 30 seconds
+            wall_time_limit: 60000000000,  // 60 seconds
+            max_processes: 10,
+            max_file_descriptors: 100,
+            max_output_size: 1048576,  // 1MB
+        },
+        seccomp: SeccompConfig {
+            enabled: true,
+            level: SeccompLevel::Medium,
+        },
+        mounts: MountConfig {
+            read_only: true,
+            tmpfs_size: 104857600,  // 100MB
+            allowed_paths: vec![],
+            blocked_paths: vec!["/proc".to_string(), "/sys".to_string()],
+        },
+        privileges: PrivilegeConfig {
+            drop_all: true,
+            allowed_capabilities: vec![],
+        },
+    };
+
+    Container::create(config).await
+}
+```
+
+### Namespace Setup
+
+Creating isolated namespaces:
+
+```rust
+pub async fn setup_namespaces(config: &NamespaceConfig) -> Result<(), SandboxError> {
+    if config.pid {
+        unshare(CLONE_NEWPID)?;
+    }
+
+    if config.mount {
+        unshare(CLONE_NEWNS)?;
+    }
+
+    if config.network {
+        unshare(CLONE_NEWNET)?;
+    }
+
+    if config.ipc {
+        unshare(CLONE_NEWIPC)?;
+    }
+
+    if config.uts {
+        unshare(CLONE_NEWUTS)?;
+    }
+
+    if config.user {
+        unshare(CLONE_NEWUSER)?;
+    }
+
+    if config.time {
+        unshare(CLONE_NEWTIME)?;
+    }
+
+    if config.cgroup {
+        unshare(CLONE_NEWCGROUP)?;
+    }
+
+    Ok(())
+}
+```
+
+## cgroups Management
+
+### Setting Resource Limits
+
+```rust
+pub async fn setup_cgroups(config: &CgroupConfig) -> Result<(), SandboxError> {
+    let cgroup_path = format!("/sys/fs/cgroup/faber/{}", generate_id());
+
+    // Create cgroup
+    fs::create_dir_all(&cgroup_path)?;
+
+    // Set memory limit
+    if config.memory_limit > 0 {
+        fs::write(
+            format!("{}/memory.max", cgroup_path),
+            config.memory_limit.to_string(),
+        )?;
+    }
+
+    // Set CPU limit
+    if config.cpu_time_limit > 0 {
+        fs::write(
+            format!("{}/cpu.max", cgroup_path),
+            format!("{} 100000", config.cpu_time_limit / 1000000),
+        )?;
+    }
+
+    // Set process limit
+    if config.max_processes > 0 {
+        fs::write(
+            format!("{}/pids.max", cgroup_path),
+            config.max_processes.to_string(),
+        )?;
+    }
+
+    // Add current process to cgroup
+    fs::write(
+        format!("{}/cgroup.procs", cgroup_path),
+        std::process::id().to_string(),
+    )?;
+
+    Ok(())
+}
+```
+
+## Seccomp Security
+
+### Security Profiles
+
+Different security levels for seccomp:
+
+```rust
+pub enum SeccompLevel {
+    Low,    // Minimal restrictions
+    Medium, // Balanced security
+    High,   // Maximum restrictions
+}
+
+pub fn create_seccomp_profile(level: SeccompLevel) -> Result<(), SandboxError> {
+    let mut rules = Vec::new();
+
+    match level {
+        SeccompLevel::Low => {
+            // Allow most system calls
+            rules.extend_from_slice(&[
+                ScmpSyscall::new("read"),
+                ScmpSyscall::new("write"),
+                ScmpSyscall::new("open"),
+                ScmpSyscall::new("close"),
+                ScmpSyscall::new("exit"),
+                ScmpSyscall::new("exit_group"),
+            ]);
+        }
+        SeccompLevel::Medium => {
+            // Block dangerous system calls
+            rules.extend_from_slice(&[
+                ScmpSyscall::new("read"),
+                ScmpSyscall::new("write"),
+                ScmpSyscall::new("open"),
+                ScmpSyscall::new("close"),
+                ScmpSyscall::new("exit"),
+                ScmpSyscall::new("exit_group"),
+                ScmpSyscall::new("brk"),
+                ScmpSyscall::new("mmap"),
+                ScmpSyscall::new("munmap"),
+            ]);
+
+            // Block dangerous calls
+            let blocked_calls = [
+                "execve", "execveat", "fork", "clone", "vfork",
+                "kill", "tkill", "tgkill", "ptrace", "capset",
+                "setuid", "setgid", "setreuid", "setregid",
+                "chroot", "chdir", "fchdir", "chmod", "fchmod",
+                "chown", "fchown", "lchown", "umask", "umount2",
+                "mount", "pivot_root", "reboot", "shutdown",
+            ];
+
+            for call in &blocked_calls {
+                rules.push(ScmpSyscall::new(call));
+            }
+        }
+        SeccompLevel::High => {
+            // Only allow essential system calls
+            rules.extend_from_slice(&[
+                ScmpSyscall::new("read"),
+                ScmpSyscall::new("write"),
+                ScmpSyscall::new("open"),
+                ScmpSyscall::new("close"),
+                ScmpSyscall::new("exit"),
+                ScmpSyscall::new("exit_group"),
+                ScmpSyscall::new("brk"),
+                ScmpSyscall::new("mmap"),
+                ScmpSyscall::new("munmap"),
+                ScmpSyscall::new("mprotect"),
+                ScmpSyscall::new("rt_sigreturn"),
+                ScmpSyscall::new("sigaltstack"),
+            ]);
+        }
+    }
+
+    // Apply seccomp filter
+    let ctx = ScmpFilterContext::new_filter(ScmpAction::Allow)?;
+
+    for rule in rules {
+        ctx.add_rule(ScmpAction::Allow, rule, &[])?;
+    }
+
+    ctx.load()?;
+    Ok(())
+}
+```
+
+## Filesystem Isolation
+
+### Mount Configuration
+
+Setting up isolated filesystem:
+
+```rust
+pub async fn setup_mounts(config: &MountConfig) -> Result<(), SandboxError> {
+    // Create temporary filesystem
+    if config.tmpfs_size > 0 {
+        mount(
+            Some("tmpfs"),
+            "/tmp",
+            Some("tmpfs"),
+            MsFlags::MS_NOSUID | MsFlags::MS_NODEV | MsFlags::MS_NOEXEC,
+            Some(&format!("size={}", config.tmpfs_size)),
+        )?;
+    }
+
+    // Make root filesystem read-only
+    if config.read_only {
+        mount(
+            Some("/"),
+            "/",
+            None::<&str>,
+            MsFlags::MS_REMOUNT | MsFlags::MS_RDONLY,
+            None::<&str>,
+        )?;
+    }
+
+    // Block dangerous paths
+    for path in &config.blocked_paths {
+        mount(
+            Some("tmpfs"),
+            path,
+            Some("tmpfs"),
+            MsFlags::MS_NOSUID | MsFlags::MS_NODEV | MsFlags::MS_NOEXEC,
+            Some("size=0"),
+        )?;
+    }
+
+    Ok(())
+}
+```
+
+## Capability Management
+
+### Dropping Privileges
+
+```rust
+pub async fn drop_capabilities(config: &PrivilegeConfig) -> Result<(), SandboxError> {
+    if config.drop_all {
+        // Drop all capabilities
+        let mut caps = Capabilities::new()?;
+        caps.clear()?;
+        caps.set_proc()?;
+    } else {
+        // Drop specific capabilities
+        let mut caps = Capabilities::new()?;
+
+        // Remove all capabilities except allowed ones
+        for cap in Capability::iter() {
+            if !config.allowed_capabilities.contains(&cap) {
+                caps.drop(None, cap)?;
+            }
+        }
+
+        caps.set_proc()?;
+    }
+
+    Ok(())
+}
+```
+
+## Process Execution
+
+### Running Commands in Sandbox
+
+```rust
+pub async fn execute_in_sandbox(
+    container: &Container,
+    command: &str,
+    args: &[String],
+    env: &[(String, String)],
+) -> Result<ExecutionResult, SandboxError> {
+    // Fork process
+    let pid = unsafe { fork()? };
+
+    match pid {
+        ForkResult::Parent { child } => {
+            // Parent process - monitor child
+            let start_time = Instant::now();
+            let mut status = 0;
+
+            // Wait for child to complete
+            waitpid(child, Some(&mut status), WUNTRACED)?;
+
+            let duration = start_time.elapsed();
+
+            Ok(ExecutionResult {
+                exit_code: status,
+                duration,
+                resource_usage: collect_resource_usage(child)?,
+            })
+        }
+        ForkResult::Child => {
+            // Child process - execute command
+            // Set up namespaces
+            setup_namespaces(&container.namespaces).await?;
+
+            // Set up cgroups
+            setup_cgroups(&container.cgroups).await?;
+
+            // Set up seccomp
+            if container.seccomp.enabled {
+                create_seccomp_profile(container.seccomp.level)?;
+            }
+
+            // Set up mounts
+            setup_mounts(&container.mounts).await?;
+
+            // Drop capabilities
+            drop_capabilities(&container.privileges).await?;
+
+            // Execute command
+            execvp(command, args, env)?;
+
+            // This should never be reached
+            std::process::exit(1);
+        }
+    }
+}
+```
+
+## Resource Monitoring
+
+### Collecting Usage Statistics
+
+```rust
+pub fn collect_resource_usage(pid: Pid) -> Result<ResourceUsage, SandboxError> {
+    let mut usage = ResourceUsage::new();
+
+    // Read from /proc/{pid}/stat
+    let stat_path = format!("/proc/{}/stat", pid);
+    let stat_content = fs::read_to_string(stat_path)?;
+    let stat_parts: Vec<&str> = stat_content.split_whitespace().collect();
+
+    if stat_parts.len() >= 14 {
+        usage.user_time_ns = stat_parts[13].parse::<u64>().unwrap_or(0) * 10000000;
+        usage.system_time_ns = stat_parts[14].parse::<u64>().unwrap_or(0) * 10000000;
+    }
+
+    // Read memory usage from /proc/{pid}/status
+    let status_path = format!("/proc/{}/status", pid);
+    let status_content = fs::read_to_string(status_path)?;
+
+    for line in status_content.lines() {
+        if line.starts_with("VmPeak:") {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 {
+                usage.memory_peak_bytes = parts[1].parse::<u64>().unwrap_or(0) * 1024;
+            }
+        } else if line.starts_with("VmRSS:") {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 {
+                usage.memory_current_bytes = parts[1].parse::<u64>().unwrap_or(0) * 1024;
+            }
+        }
+    }
+
+    Ok(usage)
+}
+```
+
+## Error Handling
+
+The sandbox crate provides specific error types:
+
+```rust
+#[derive(Debug, thiserror::Error)]
+pub enum SandboxError {
+    #[error("Namespace error: {0}")]
+    Namespace(String),
+
+    #[error("Cgroup error: {0}")]
+    Cgroup(String),
+
+    #[error("Seccomp error: {0}")]
+    Seccomp(String),
+
+    #[error("Mount error: {0}")]
+    Mount(String),
+
+    #[error("Capability error: {0}")]
+    Capability(String),
+
+    #[error("Process error: {0}")]
+    Process(String),
+
+    #[error("Resource error: {0}")]
+    Resource(String),
+
+    #[error("Permission denied: {0}")]
+    Permission(String),
+}
+```
+
+## Testing
+
+The sandbox crate includes comprehensive tests:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_container_creation() {
+        let config = ContainerConfig {
+            namespaces: NamespaceConfig {
+                pid: true,
+                mount: true,
+                network: false,
+                ipc: true,
+                uts: true,
+                user: true,
+                time: true,
+                cgroup: true,
+            },
+            cgroups: CgroupConfig {
+                memory_limit: 104857600,  // 100MB
+                cpu_time_limit: 10000000000,  // 10 seconds
+                wall_time_limit: 20000000000,  // 20 seconds
+                max_processes: 5,
+                max_file_descriptors: 50,
+                max_output_size: 524288,  // 512KB
+            },
+            seccomp: SeccompConfig {
+                enabled: true,
+                level: SeccompLevel::Medium,
+            },
+            mounts: MountConfig {
+                read_only: true,
+                tmpfs_size: 52428800,  // 50MB
+                allowed_paths: vec![],
+                blocked_paths: vec!["/proc".to_string(), "/sys".to_string()],
+            },
+            privileges: PrivilegeConfig {
+                drop_all: true,
+                allowed_capabilities: vec![],
+            },
+        };
+
+        let container = Container::create(config).await.unwrap();
+        assert!(!container.id.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_command_execution() {
+        let container = create_test_container().await.unwrap();
+
+        let result = execute_in_sandbox(
+            &container,
+            "echo",
+            &["hello".to_string(), "world".to_string()],
+            &[],
+        ).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert!(result.duration.as_millis() < 1000);
+    }
+}
+```
+
+## Dependencies
+
+The sandbox crate uses low-level system dependencies:
+
+```toml
+[dependencies]
+nix = { workspace = true }
+libc = { workspace = true }
+caps = { workspace = true }
+syscallz = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+faber-core = { path = "../core" }
+```
+
+## Best Practices
+
+1. **Always use namespaces**: Ensure proper isolation
+2. **Set resource limits**: Prevent resource exhaustion
+3. **Enable seccomp**: Filter dangerous system calls
+4. **Drop capabilities**: Minimize privilege escalation risk
+5. **Use read-only filesystem**: Prevent file modifications
+6. **Monitor resources**: Track usage and limits
+7. **Handle errors gracefully**: Provide clear error messages
+8. **Test thoroughly**: Validate security measures

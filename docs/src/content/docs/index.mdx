@@ -1,0 +1,96 @@
+---
+title: 'Faber - Secure Sandboxed Task Execution'
+description: 'A secure, sandboxed task execution service built in Rust'
+template: splash
+hero:
+  tagline: Secure, sandboxed task execution service built in Rust
+  image:
+    # file: ../../assets/faber.webp
+    # alt: 'Faber Logo'
+    html: '<img src="faber.webp" alt="Faber Logo" class="max-w-full object-contain" />'
+  actions:
+    - text: Get Started
+      link: /guides/installation
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/fractal-tess/faber
+      icon: external
+      variant: secondary
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## Key Features
+
+<CardGrid stagger>
+  <Card title="Secure Sandboxing" icon="shield">
+    Linux namespaces, cgroups, and seccomp for complete isolation of untrusted
+    code execution.
+  </Card>
+  <Card title="Resource Limits" icon="gauge">
+    Configurable CPU, memory, and process limits with comprehensive monitoring
+    and tracking.
+  </Card>
+  <Card title="REST API" icon="api">
+    HTTP interface for task execution with full programmatic access to all
+    features.
+  </Card>
+  <Card title="CLI Interface" icon="terminal">
+    Command-line tools for management and execution with intuitive workflow
+    integration.
+  </Card>
+</CardGrid>
+
+## Quick Start
+
+```bash
+# Build the project
+cargo build --release
+
+# Start the server
+./target/release/faber serve
+
+# Execute a task via CLI
+faber execute "echo hello world"
+```
+
+## Architecture
+
+Faber is organized as a Rust workspace with multiple specialized crates:
+
+- **[Core](./core.md)**: Fundamental types, traits, and error definitions
+- **[Configuration](./configuration.md)**: Configuration management and validation
+- **[Sandbox](./sandbox.md)**: Container and sandboxing functionality
+- **[Executor](./executor.md)**: Task execution logic
+- **[API](./api.md)**: HTTP API layer with Axum
+- **[CLI](./cli.md)**: Command-line interface
+
+## Security Features
+
+- **Linux Namespaces**: PID, mount, network, IPC, UTS, user, time, and cgroup namespaces
+- **cgroups**: Resource limits for CPU, memory, and process count
+- **seccomp**: System call filtering
+- **Capability dropping**: Reduced privilege execution
+- **Read-only filesystem**: Immutable root filesystem
+- **Command validation**: Blocked dangerous commands
+
+## Next Steps
+
+<CardGrid stagger>
+  <Card title="Installation" icon="download">
+    Get Faber up and running on your system with our comprehensive installation
+    guide.
+  </Card>
+  <Card title="Configuration" icon="setting">
+    Learn how to configure Faber for your specific use case and security
+    requirements.
+  </Card>
+  <Card title="CLI Usage" icon="terminal">
+    Master the command-line interface for efficient task execution and
+    management.
+  </Card>
+  <Card title="API Reference" icon="api">
+    Explore the REST API for programmatic access to all Faber features.
+  </Card>
+</CardGrid>

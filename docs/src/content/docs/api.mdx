@@ -1,0 +1,409 @@
+---
+title: 'API Crate'
+description: 'Documentation for the faber-api crate'
+---
+
+# API Crate
+
+The `faber-api` crate provides the HTTP API layer for Faber, built with Axum and featuring automatic OpenAPI/Swagger documentation. It handles HTTP requests, authentication, validation, and task execution coordination.
+
+## Overview
+
+The API crate is responsible for:
+
+- **HTTP Server**: RESTful API endpoints
+- **Authentication**: API key validation and authorization
+- **Request Validation**: Input validation and sanitization
+- **Response Handling**: JSON serialization and error responses
+- **OpenAPI Documentation**: Automatic Swagger UI generation
+- **Middleware**: Logging, CORS, rate limiting
+
+## Architecture
+
+The API crate follows a modular architecture:
+
+```
+api/
+├── lib.rs          # Main library entry point
+├── router.rs       # Route definitions and server setup
+├── execution.rs    # Task execution endpoints
+├── health.rs       # Health check endpoints
+├── middleware.rs   # HTTP middleware (auth, logging, etc.)
+├── validation.rs   # Request validation logic
+└── error.rs        # API-specific error handling
+```
+
+## Key Components
+
+### Router Setup
+
+The main router is created in `router.rs`:
+
+```rust
+pub fn create_router() -> Router {
+    Router::new()
+        .route("/health", get(health::health_check))
+        .route("/execute", post(execution::execute_tasks))
+        .route("/swagger-ui/*path", get(swagger_ui_handler))
+        .layer(middleware::auth_middleware())
+        .layer(middleware::logging_middleware())
+        .layer(middleware::cors_middleware())
+}
+```
+
+### Task Execution Endpoint
+
+The main execution endpoint handles task requests:
+
+```rust
+pub async fn execute_tasks(
+    State(state): State<AppState>,
+    auth: Auth,
+    Json(request): Json<ExecuteRequest>,
+) -> Result<Json<ExecuteResponse>, ApiError> {
+    // Validate request
+    let tasks = validate_execute_request(request)?;
+
+    // Execute tasks
+    let results = state.executor.execute_tasks(tasks).await?;
+
+    // Return results
+    Ok(Json(ExecuteResponse { results }))
+}
+```
+
+### Authentication Middleware
+
+API key authentication is handled by middleware:
+
+```rust
+pub async fn auth_middleware(
+    mut request: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    let auth_header = request
+        .headers()
+        .get("Authorization")
+        .and_then(|h| h.to_str().ok());
+
+    if let Some(api_key) = auth_header {
+        if validate_api_key(api_key) {
+            request.extensions_mut().insert(Auth { api_key });
+            Ok(next.run(request).await)
+        } else {
+            Err(ApiError::Unauthorized("Invalid API key".into()))
+        }
+    } else {
+        Err(ApiError::Unauthorized("Missing API key".into()))
+    }
+}
+```
+
+## API Endpoints
+
+### Health Check
+
+**Endpoint:** `GET /health`
+
+**Response:**
+
+```json
+{
+  "status": "healthy",
+  "timestamp": "2024-01-01T12:00:00Z",
+  "version": "0.1.0"
+}
+```
+
+### Task Execution
+
+**Endpoint:** `POST /execute`
+
+**Request:**
+
+```json
+{
+  "tasks": [
+    {
+      "command": "echo",
+      "args": ["hello", "world"],
+      "env": { "CUSTOM_VAR": "value" },
+      "files": { "script.py": "print('Hello')" },
+      "resource_limits": {
+        "memory_limit": 536870912,
+        "cpu_time_limit": 30000000000
+      }
+    }
+  ]
+}
+```
+
+**Response:**
+
+```json
+{
+  "results": [
+    {
+      "status": "Success",
+      "exit_code": 0,
+      "stdout": "hello world\n",
+      "stderr": null,
+      "resource_usage": {
+        "cpu_time_ns": 1000000,
+        "wall_time_ns": 5000000,
+        "memory_peak_bytes": 1048576
+      }
+    }
+  ]
+}
+```
+
+## Error Handling
+
+The API crate provides comprehensive error handling:
+
+```rust
+#[derive(Debug, thiserror::Error)]
+pub enum ApiError {
+    #[error("Bad request: {0}")]
+    BadRequest(String),
+
+    #[error("Unauthorized: {0}")]
+    Unauthorized(String),
+
+    #[error("Forbidden: {0}")]
+    Forbidden(String),
+
+    #[error("Not found: {0}")]
+    NotFound(String),
+
+    #[error("Internal server error: {0}")]
+    Internal(String),
+
+    #[error("Validation error: {0}")]
+    Validation(String),
+}
+```
+
+### Error Responses
+
+All errors return consistent JSON responses:
+
+```json
+{
+  "error": "Error type",
+  "details": "Detailed error message",
+  "timestamp": "2024-01-01T12:00:00Z"
+}
+```
+
+## Request Validation
+
+The API validates all incoming requests:
+
+```rust
+pub fn validate_execute_request(request: ExecuteRequest) -> Result<Vec<Task>, ApiError> {
+    if request.tasks.is_empty() {
+        return Err(ApiError::Validation("No tasks provided".into()));
+    }
+
+    for task in &request.tasks {
+        if task.command.is_empty() {
+            return Err(ApiError::Validation("Command cannot be empty".into()));
+        }
+
+        // Validate command is not dangerous
+        if is_dangerous_command(&task.command) {
+            return Err(ApiError::Validation("Dangerous command not allowed".into()));
+        }
+    }
+
+    Ok(request.tasks)
+}
+```
+
+## Middleware
+
+### Authentication Middleware
+
+Validates API keys for protected endpoints:
+
+```rust
+pub async fn auth_middleware(
+    request: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    // Extract and validate API key
+    // Add auth context to request extensions
+    next.run(request).await
+}
+```
+
+### Logging Middleware
+
+Logs all HTTP requests and responses:
+
+```rust
+pub async fn logging_middleware(
+    request: Request,
+    next: Next,
+) -> Response {
+    let start = Instant::now();
+    let method = request.method().clone();
+    let uri = request.uri().clone();
+
+    let response = next.run(request).await;
+    let duration = start.elapsed();
+
+    info!(
+        "{} {} {} - {}ms",
+        method,
+        uri,
+        response.status(),
+        duration.as_millis()
+    );
+
+    response
+}
+```
+
+### CORS Middleware
+
+Handles Cross-Origin Resource Sharing:
+
+```rust
+pub fn cors_middleware() -> CorsLayer {
+    CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods([Method::GET, Method::POST])
+        .allow_headers([AUTHORIZATION, CONTENT_TYPE])
+}
+```
+
+## OpenAPI Documentation
+
+The API automatically generates OpenAPI documentation:
+
+```rust
+#[derive(OpenApi)]
+#[openapi(
+    paths(health::health_check, execution::execute_tasks),
+    components(schemas(ExecuteRequest, ExecuteResponse, Task, TaskResult)),
+    tags(
+        (name = "health", description = "Health check endpoints"),
+        (name = "execution", description = "Task execution endpoints")
+    )
+)]
+struct ApiDoc;
+
+pub fn create_swagger_ui() -> Router {
+    Router::new().nest_service(
+        "/swagger-ui",
+        SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()),
+    )
+}
+```
+
+## Rate Limiting
+
+The API implements rate limiting to prevent abuse:
+
+```rust
+pub fn rate_limit_middleware() -> Router {
+    Router::new()
+        .layer(RateLimitLayer::new(
+            RateLimit::new(100, Duration::from_secs(60))
+        ))
+}
+```
+
+## Configuration
+
+The API can be configured via environment variables:
+
+```rust
+pub struct ApiConfig {
+    pub host: String,
+    pub port: u16,
+    pub enable_swagger: bool,
+    pub api_key: Option<String>,
+    pub open_mode: bool,
+    pub rate_limit: u32,
+    pub rate_limit_window: Duration,
+}
+```
+
+## Testing
+
+The API crate includes comprehensive tests:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::StatusCode;
+    use axum_test::TestServer;
+
+    #[tokio::test]
+    async fn test_health_check() {
+        let app = create_router();
+        let server = TestServer::new(app).unwrap();
+
+        let response = server.get("/health").await;
+        assert_eq!(response.status_code(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_execute_tasks() {
+        let app = create_router();
+        let server = TestServer::new(app).unwrap();
+
+        let request = ExecuteRequest {
+            tasks: vec![Task {
+                command: "echo".to_string(),
+                args: Some(vec!["hello".to_string()]),
+                env: None,
+                files: None,
+            }],
+        };
+
+        let response = server
+            .post("/execute")
+            .json(&request)
+            .await;
+
+        assert_eq!(response.status_code(), StatusCode::OK);
+    }
+}
+```
+
+## Dependencies
+
+The API crate uses the following dependencies:
+
+```toml
+[dependencies]
+axum = { workspace = true }
+tokio = { workspace = true }
+tower-http = { workspace = true }
+utoipa = { workspace = true }
+utoipa-axum = { workspace = true }
+utoipa-swagger-ui = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+faber-core = { path = "../core" }
+faber-executor = { path = "../executor" }
+faber-config = { path = "../config" }
+```
+
+## Best Practices
+
+1. **Validate all inputs**: Always validate and sanitize user inputs
+2. **Use proper error handling**: Return appropriate HTTP status codes
+3. **Implement rate limiting**: Prevent API abuse
+4. **Log all requests**: Maintain audit trails
+5. **Use HTTPS in production**: Encrypt all communications
+6. **Implement proper authentication**: Use strong API keys
+7. **Monitor performance**: Track response times and errors
+8. **Version your API**: Plan for API versioning

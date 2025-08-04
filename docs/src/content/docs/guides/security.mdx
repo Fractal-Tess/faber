@@ -1,0 +1,424 @@
+---
+title: 'Security Guide'
+description: 'Comprehensive security documentation for Faber'
+---
+
+# Security Guide
+
+Faber is designed with security as a primary concern, implementing multiple layers of protection to ensure safe execution of untrusted code. This guide covers the security features, best practices, and configuration options.
+
+## Security Architecture
+
+Faber implements a defense-in-depth approach with multiple security layers:
+
+1. **Linux Namespaces**: Process and resource isolation
+2. **cgroups**: Resource limits and control
+3. **seccomp**: System call filtering
+4. **Capability dropping**: Reduced privilege execution
+5. **Filesystem restrictions**: Read-only and controlled access
+6. **Command validation**: Blocked dangerous commands
+7. **Network isolation**: No network access by default
+
+## Linux Namespaces
+
+Faber uses Linux namespaces to create isolated execution environments:
+
+### PID Namespace
+
+- Isolates process IDs
+- Prevents access to host processes
+- Each sandbox has its own process tree
+
+### Mount Namespace
+
+- Isolated filesystem view
+- Read-only root filesystem
+- Controlled mount points
+
+### Network Namespace
+
+- Isolated network stack
+- No network access by default
+- Can be enabled for specific use cases
+
+### IPC Namespace
+
+- Isolated inter-process communication
+- Prevents communication with host processes
+
+### UTS Namespace
+
+- Isolated hostname and domain name
+- Prevents hostname spoofing
+
+### User Namespace
+
+- Isolated user and group IDs
+- Runs as unprivileged user inside container
+
+### Time Namespace
+
+- Isolated time view
+- Can be used for time manipulation protection
+
+### Cgroup Namespace
+
+- Isolated cgroup view
+- Resource control isolation
+
+## cgroups (Control Groups)
+
+cgroups provide resource limits and monitoring:
+
+### Memory Limits
+
+```yaml
+resource_limits:
+  default:
+    memory_limit: 536870912 # 512MB
+```
+
+### CPU Limits
+
+```yaml
+resource_limits:
+  default:
+    cpu_time_limit: 30000000000 # 30 seconds
+    wall_time_limit: 60000000000 # 60 seconds
+```
+
+### Process Limits
+
+```yaml
+resource_limits:
+  default:
+    max_processes: 10
+    max_file_descriptors: 100
+```
+
+## Seccomp (Secure Computing Mode)
+
+Seccomp provides system call filtering to prevent dangerous operations:
+
+### Security Levels
+
+#### Low Security
+
+- Minimal restrictions
+- Allows most system calls
+- Suitable for trusted environments
+
+#### Medium Security (Default)
+
+- Balanced restrictions
+- Blocks dangerous system calls
+- Allows common operations
+
+#### High Security
+
+- Maximum restrictions
+- Blocks most system calls
+- Only allows essential operations
+
+### Configuration
+
+```yaml
+security:
+  seccomp:
+    enabled: true
+    level: 'medium' # low, medium, high
+```
+
+## Capability Management
+
+Faber drops unnecessary Linux capabilities to reduce attack surface:
+
+```yaml
+security:
+  capabilities:
+    drop_all: true
+    allowed: [] # List of allowed capabilities
+```
+
+### Common Capabilities
+
+- `CAP_CHOWN`: Change file ownership
+- `CAP_DAC_OVERRIDE`: Override file permissions
+- `CAP_FOWNER`: File ownership operations
+- `CAP_SETGID`: Set group ID
+- `CAP_SETUID`: Set user ID
+- `CAP_SYS_ADMIN`: System administration
+- `CAP_SYS_CHROOT`: Change root directory
+
+## Filesystem Security
+
+### Read-Only Root
+
+- Root filesystem is read-only
+- Prevents modification of system files
+- Immutable execution environment
+
+### Temporary Filesystem
+
+```yaml
+sandbox:
+  filesystem:
+    tmpfs_size: 104857600 # 100MB
+```
+
+### Path Restrictions
+
+```yaml
+sandbox:
+  filesystem:
+    allowed_paths: ['/tmp', '/var/tmp']
+    blocked_paths: ['/proc', '/sys', '/dev', '/boot']
+```
+
+## Command Validation
+
+Faber validates commands to prevent dangerous operations:
+
+### Blocked Commands
+
+- `rm -rf /`: Recursive deletion
+- `dd`: Direct disk access
+- `mkfs`: Filesystem creation
+- `mount`: Mount operations
+- `umount`: Unmount operations
+- `chroot`: Change root directory
+- `reboot`: System reboot
+- `shutdown`: System shutdown
+
+### Allowed Commands
+
+- Standard utilities: `ls`, `cat`, `grep`, `sed`, `awk`
+- Programming languages: `python`, `node`, `gcc`, `rustc`
+- Build tools: `make`, `cmake`, `cargo`
+- Package managers: `apt`, `yum`, `pip`, `npm`
+
+## Network Security
+
+### Default Isolation
+
+- No network access by default
+- Prevents external communication
+- Isolated execution environment
+
+### Controlled Network Access
+
+```yaml
+sandbox:
+  network:
+    enabled: false # Default: no network
+    allowed_hosts: ['api.example.com']
+    allowed_ports: [80, 443]
+```
+
+## Authentication and Authorization
+
+### API Key Authentication
+
+```yaml
+auth:
+  api_key: 'your-secret-key'
+  required: true
+  open_mode: false
+```
+
+### Best Practices
+
+1. **Use strong API keys**: Generate cryptographically secure keys
+2. **Rotate keys regularly**: Change API keys periodically
+3. **Limit key scope**: Use different keys for different purposes
+4. **Monitor usage**: Track API key usage and access patterns
+
+## Security Configuration Examples
+
+### Development Environment
+
+```yaml
+security:
+  default_security_level: 'low'
+  seccomp:
+    enabled: true
+    level: 'low'
+
+sandbox:
+  namespaces:
+    pid: true
+    mount: true
+    network: false # Allow network for development
+    ipc: true
+    uts: true
+    user: false # Run as root for development
+    time: true
+    cgroup: true
+```
+
+### Production Environment
+
+```yaml
+security:
+  default_security_level: 'high'
+  seccomp:
+    enabled: true
+    level: 'high'
+  capabilities:
+    drop_all: true
+    allowed: []
+
+sandbox:
+  namespaces:
+    pid: true
+    mount: true
+    network: false # No network access
+    ipc: true
+    uts: true
+    user: true # Run as unprivileged user
+    time: true
+    cgroup: true
+
+  filesystem:
+    read_only: true
+    tmpfs_size: 52428800 # 50MB
+    allowed_paths: []
+    blocked_paths: ['/proc', '/sys', '/dev', '/boot', '/etc']
+```
+
+### High-Security Environment
+
+```yaml
+security:
+  default_security_level: 'high'
+  seccomp:
+    enabled: true
+    level: 'high'
+  capabilities:
+    drop_all: true
+    allowed: []
+
+resource_limits:
+  default:
+    memory_limit: 268435456 # 256MB
+    cpu_time_limit: 15000000000 # 15 seconds
+    wall_time_limit: 30000000000 # 30 seconds
+    max_processes: 5
+    max_file_descriptors: 50
+    max_output_size: 524288 # 512KB
+
+sandbox:
+  namespaces:
+    pid: true
+    mount: true
+    network: false
+    ipc: true
+    uts: true
+    user: true
+    time: true
+    cgroup: true
+
+  filesystem:
+    read_only: true
+    tmpfs_size: 26214400 # 25MB
+    allowed_paths: []
+    blocked_paths: ['/proc', '/sys', '/dev', '/boot', '/etc', '/var', '/usr']
+```
+
+## Security Monitoring
+
+### Logging
+
+```yaml
+logging:
+  level: 'info'
+  format: 'json'
+  file: '/var/log/faber.log'
+  debug: false
+```
+
+### Audit Events
+
+- Task execution attempts
+- Resource limit violations
+- Security policy violations
+- Authentication failures
+- Configuration changes
+
+### Metrics
+
+- Resource usage per task
+- Security violations
+- Authentication attempts
+- API usage patterns
+
+## Threat Model
+
+### Attack Vectors
+
+1. **Code Injection**: Prevented by command validation
+2. **Resource Exhaustion**: Prevented by cgroups limits
+3. **Privilege Escalation**: Prevented by capability dropping
+4. **Filesystem Access**: Prevented by namespace isolation
+5. **Network Attacks**: Prevented by network isolation
+6. **Process Injection**: Prevented by PID namespace isolation
+
+### Mitigation Strategies
+
+1. **Defense in Depth**: Multiple security layers
+2. **Principle of Least Privilege**: Minimal required permissions
+3. **Fail Secure**: Default to secure configuration
+4. **Continuous Monitoring**: Log and monitor all activities
+5. **Regular Updates**: Keep system and dependencies updated
+
+## Security Best Practices
+
+### Configuration
+
+1. **Use high security level**: Enable maximum restrictions
+2. **Enable seccomp**: Always use system call filtering
+3. **Drop capabilities**: Remove unnecessary privileges
+4. **Set resource limits**: Prevent resource exhaustion
+5. **Use read-only filesystem**: Prevent file modifications
+
+### Deployment
+
+1. **Run as unprivileged user**: When possible, avoid root
+2. **Use HTTPS**: Encrypt all communications
+3. **Implement rate limiting**: Prevent abuse
+4. **Monitor logs**: Track security events
+5. **Regular audits**: Review security configuration
+
+### API Security
+
+1. **Use strong authentication**: Implement proper API key management
+2. **Validate inputs**: Check all user inputs
+3. **Limit scope**: Restrict API access to necessary operations
+4. **Monitor usage**: Track API access patterns
+5. **Implement timeouts**: Prevent long-running tasks
+
+## Compliance
+
+Faber can be configured to meet various security compliance requirements:
+
+- **SOC 2**: Security controls and monitoring
+- **ISO 27001**: Information security management
+- **PCI DSS**: Payment card industry standards
+- **HIPAA**: Healthcare information protection
+- **GDPR**: Data protection and privacy
+
+## Security Updates
+
+### Regular Updates
+
+- Keep Faber updated to latest version
+- Monitor security advisories
+- Update dependencies regularly
+- Test security patches before deployment
+
+### Vulnerability Reporting
+
+- Report security issues to maintainers
+- Follow responsible disclosure
+- Monitor security mailing lists
+- Subscribe to security advisories

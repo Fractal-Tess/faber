@@ -1,0 +1,139 @@
+---
+title: 'Installation'
+description: 'How to install and set up Faber'
+---
+
+# Installation
+
+## Prerequisites
+
+Before installing Faber, ensure you have the following:
+
+- **Rust 1.70+**: Faber is built with Rust and requires the latest stable toolchain
+- **Linux with cgroups v2**: Faber uses Linux namespaces and cgroups for sandboxing
+- **Root privileges**: Required for sandboxing features (namespaces, cgroups, seccomp)
+- **Nix (optional)**: For development environment setup
+
+## Building from Source
+
+### 1. Clone the Repository
+
+```bash
+git clone <repository-url>
+cd faber
+```
+
+### 2. Build the Project
+
+```bash
+# Build all crates in release mode
+cargo build --release
+
+# Or build in debug mode for development
+cargo build
+```
+
+### 3. Install the Binary
+
+```bash
+# Install to system PATH
+sudo cp target/release/faber /usr/local/bin/
+
+# Or run directly from build directory
+./target/release/faber --help
+```
+
+## Development Setup
+
+### Using Nix (Recommended)
+
+If you have Nix installed, you can use the provided flake for a consistent development environment:
+
+```bash
+# Enter the development shell
+nix develop
+
+# Build the project
+cargo build
+
+# Run tests
+cargo test
+```
+
+### Manual Setup
+
+1. **Install Rust**: Follow the [official Rust installation guide](https://rustup.rs/)
+
+2. **Install Dependencies**:
+
+   ```bash
+   # Ubuntu/Debian
+   sudo apt-get update
+   sudo apt-get install build-essential pkg-config libssl-dev
+
+   # CentOS/RHEL/Fedora
+   sudo yum groupinstall "Development Tools"
+   sudo yum install openssl-devel
+   ```
+
+3. **Verify Installation**:
+   ```bash
+   rustc --version
+   cargo --version
+   ```
+
+## Docker Installation
+
+Faber provides Docker images for easy deployment:
+
+```bash
+# Build the Docker image
+docker build -f docker/Dockerfile.prod -t faber:latest .
+
+# Run Faber in a container
+docker run --privileged -p 8080:8080 faber:latest
+```
+
+**Note**: The `--privileged` flag is required for sandboxing features to work properly.
+
+## Verification
+
+After installation, verify that Faber is working correctly:
+
+```bash
+# Check version
+faber --version
+
+# Show help
+faber --help
+
+# Validate default configuration
+faber validate
+
+# Start the server
+faber serve
+```
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Permission Denied**: Ensure you're running with root privileges for sandboxing features
+2. **cgroups v2 not available**: Update your Linux kernel to version 4.5+ and enable cgroups v2
+3. **Build failures**: Ensure you have the latest Rust toolchain and all dependencies installed
+
+### System Requirements
+
+- **Kernel**: Linux 4.5+ with cgroups v2 support
+- **Architecture**: x86_64 (other architectures may work but are not tested)
+- **Memory**: Minimum 512MB RAM, 1GB+ recommended
+- **Storage**: 100MB+ free space for binary and temporary files
+
+## Next Steps
+
+After successful installation:
+
+1. [Configure Faber](./configuration.md)
+2. [Learn about the API](./api-reference.md)
+3. [Explore CLI usage](./cli-usage.md)
+4. [Understand security features](./security.md)

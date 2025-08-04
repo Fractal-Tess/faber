@@ -1,0 +1,626 @@
+---
+title: 'CLI Crate'
+description: 'Documentation for the faber-cli crate'
+---
+
+# CLI Crate
+
+The `faber-cli` crate provides the command-line interface for Faber, built with Clap. It offers a comprehensive set of commands for managing the Faber service, executing tasks, and configuring the application.
+
+## Overview
+
+The CLI crate is responsible for:
+
+- **Command Parsing**: Parse and validate command-line arguments
+- **Server Management**: Start and manage the Faber HTTP server
+- **Configuration Management**: Display and validate configuration
+- **Task Execution**: Execute tasks directly via CLI
+- **Logging Setup**: Configure logging and output formatting
+- **Error Handling**: Provide user-friendly error messages
+
+## Architecture
+
+The CLI crate follows a modular command structure:
+
+```
+cli/
+├── lib.rs          # Main library entry point
+├── main.rs         # Application entry point
+├── cli.rs          # CLI command definitions
+├── commands.rs     # Command implementations
+└── logging.rs      # Logging configuration
+```
+
+## Key Components
+
+### CLI Structure
+
+The main CLI structure using Clap:
+
+```rust
+#[derive(Parser)]
+#[command(name = "faber")]
+#[command(about = "Secure sandboxed task execution service")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
+pub struct Cli {
+    #[arg(short, long, value_name = "FILE")]
+    pub config: Option<PathBuf>,
+
+    #[arg(short, long)]
+    pub debug: bool,
+
+    #[arg(long, value_name = "LEVEL")]
+    pub log_level: Option<Level>,
+
+    #[arg(long, value_name = "FILE")]
+    pub log_file: Option<PathBuf>,
+
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+}
+```
+
+### Command Subcommands
+
+The available CLI commands:
+
+```rust
+#[derive(Subcommand)]
+pub enum Commands {
+    /// Start the Faber HTTP server
+    Serve {
+        #[arg(short, long)]
+        host: Option<String>,
+
+        #[arg(short, long)]
+        port: Option<u16>,
+
+        #[arg(long)]
+        graceful_shutdown: bool,
+
+        #[arg(long)]
+        api_key: Option<String>,
+
+        #[arg(long)]
+        open_mode: bool,
+    },
+
+    /// Validate configuration files
+    Validate {
+        #[arg(value_name = "CONFIG")]
+        config: Option<PathBuf>,
+    },
+
+    /// Show configuration information
+    Config {
+        #[arg(long)]
+        default: bool,
+    },
+
+    /// Execute tasks directly
+    Execute {
+        #[arg(value_name = "COMMAND")]
+        command: String,
+
+        #[arg(value_name = "ARGS")]
+        args: Vec<String>,
+
+        #[arg(short, long, value_name = "KEY=VALUE")]
+        env: Vec<String>,
+
+        #[arg(long, value_name = "SECONDS")]
+        timeout: Option<u64>,
+
+        #[arg(long, value_name = "MB")]
+        memory: Option<u64>,
+
+        #[arg(long, value_name = "SECONDS")]
+        cpu: Option<u64>,
+    },
+}
+```
+
+## Command Implementations
+
+### Serve Command
+
+Starting the Faber HTTP server:
+
+```rust
+pub async fn serve(cli: Cli, graceful_shutdown: bool) -> Result<(), Box<dyn std::error::Error>> {
+    // Load configuration
+    let config = load_config(cli.config.as_deref())?;
+
+    // Initialize logging
+    init_logging(
+        cli.log_level.unwrap_or(Level::INFO),
+        cli.debug,
+        cli.log_file.as_deref(),
+    );
+
+    // Create server components
+    let executor = TaskExecutor::new(config.executor).await?;
+    let api_router = create_router(executor);
+
+    // Build server
+    let app = Router::new()
+        .nest("/", api_router)
+        .layer(middleware::from_fn(logging_middleware));
+
+    // Start server
+    let addr = format!("{}:{}", config.server.host, config.server.port)
+        .parse::<SocketAddr>()?;
+
+    info!("Starting Faber server on {}", addr);
+
+    if graceful_shutdown {
+        start_server_with_graceful_shutdown(app, addr).await?;
+    } else {
+        start_server(app, addr).await?;
+    }
+
+    Ok(())
+}
+
+async fn start_server_with_graceful_shutdown(
+    app: Router,
+    addr: SocketAddr,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+
+    // Set up graceful shutdown
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+
+    // Handle shutdown signals
+    let shutdown_signal = async {
+        tokio::signal::ctrl_c().await.unwrap();
+        info!("Received shutdown signal");
+        shutdown_tx.send(()).ok();
+    };
+
+    // Start server
+    let server = axum::serve(listener, app)
+        .with_graceful_shutdown(async {
+            shutdown_rx.await.ok();
+        });
+
+    // Wait for server or shutdown signal
+    tokio::select! {
+        _ = server => {},
+        _ = shutdown_signal => {},
+    }
+
+    info!("Server shutdown complete");
+    Ok(())
+}
+```
+
+### Validate Command
+
+Validating configuration files:
+
+```rust
+pub fn validate_config(config_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    info!("Validating configuration: {}", config_path);
+
+    // Load configuration
+    let config = load_config(Some(config_path))?;
+
+    // Validate server configuration
+    validate_server_config(&config.server)?;
+
+    // Validate security configuration
+    validate_security_config(&config.security)?;
+
+    // Validate resource limits
+    validate_resource_limits(&config.resource_limits)?;
+
+    // Validate sandbox configuration
+    validate_sandbox_config(&config.sandbox)?;
+
+    info!("Configuration validation successful");
+    Ok(())
+}
+
+fn validate_server_config(config: &ServerConfig) -> Result<(), ConfigError> {
+    if config.port == 0 || config.port > 65535 {
+        return Err(ConfigError::InvalidPort(config.port));
+    }
+
+    if config.host.is_empty() {
+        return Err(ConfigError::InvalidHost("Host cannot be empty".into()));
+    }
+
+    Ok(())
+}
+
+fn validate_security_config(config: &SecurityConfig) -> Result<(), ConfigError> {
+    if config.seccomp.enabled {
+        match config.seccomp.level {
+            SeccompLevel::Low | SeccompLevel::Medium | SeccompLevel::High => {},
+            _ => return Err(ConfigError::InvalidSeccompLevel),
+        }
+    }
+
+    Ok(())
+}
+```
+
+### Config Command
+
+Displaying configuration information:
+
+```rust
+pub fn show_config(default: bool, config_path: &Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+    if default {
+        // Show default configuration
+        let default_config = Config::default();
+        println!("Default Configuration:");
+        println!("{}", serde_yaml::to_string(&default_config)?);
+    } else {
+        // Show current configuration
+        let config = load_config(config_path.as_deref())?;
+        println!("Current Configuration:");
+        println!("{}", serde_yaml::to_string(&config)?);
+    }
+
+    Ok(())
+}
+```
+
+### Execute Command
+
+Executing tasks directly via CLI:
+
+```rust
+pub async fn execute_task(
+    command: String,
+    args: Vec<String>,
+    env_vars: Vec<String>,
+    timeout: Option<u64>,
+    memory: Option<u64>,
+    cpu: Option<u64>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Parse environment variables
+    let env: HashMap<String, String> = env_vars
+        .into_iter()
+        .filter_map(|var| {
+            let parts: Vec<&str> = var.splitn(2, '=').collect();
+            if parts.len() == 2 {
+                Some((parts[0].to_string(), parts[1].to_string()))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Create task
+    let task = Task {
+        command,
+        args: if args.is_empty() { None } else { Some(args) },
+        env: if env.is_empty() { None } else { Some(env) },
+        files: None,
+    };
+
+    // Create resource limits
+    let resource_limits = ResourceLimits {
+        memory_limit: memory.map(|m| m * 1024 * 1024).unwrap_or(536870912),
+        cpu_time_limit: cpu.map(|c| c * 1_000_000_000).unwrap_or(30_000_000_000),
+        wall_time_limit: timeout.map(|t| t * 1_000_000_000).unwrap_or(60_000_000_000),
+        max_processes: 10,
+        max_file_descriptors: 100,
+        max_output_size: 1048576,
+    };
+
+    // Create executor
+    let executor = TaskExecutor::new(ExecutorConfig::default()).await?;
+
+    // Execute task
+    let results = executor.execute_tasks(vec![task]).await?;
+
+    // Display results
+    for (i, result) in results.iter().enumerate() {
+        println!("Task {}: {}", i + 1, result.status);
+
+        if let Some(stdout) = &result.stdout {
+            println!("STDOUT:\n{}", stdout);
+        }
+
+        if let Some(stderr) = &result.stderr {
+            println!("STDERR:\n{}", stderr);
+        }
+
+        if let Some(error) = &result.error {
+            println!("ERROR: {}", error);
+        }
+
+        println!("Resource Usage:");
+        println!("  CPU Time: {:.2}s", result.resource_usage.cpu_time().as_secs_f64());
+        println!("  Wall Time: {:.2}s", result.resource_usage.wall_time().as_secs_f64());
+        println!("  Memory: {:.2}MB", result.resource_usage.memory_peak_mb());
+        println!("  Processes: {}", result.resource_usage.process_count);
+    }
+
+    Ok(())
+}
+```
+
+## Logging Configuration
+
+### Logging Setup
+
+Configuring logging for the CLI:
+
+```rust
+pub fn init_logging(
+    level: Level,
+    debug: bool,
+    log_file: Option<&Path>,
+) {
+    let env_filter = if debug {
+        "debug"
+    } else {
+        match level {
+            Level::ERROR => "error",
+            Level::WARN => "warn",
+            Level::INFO => "info",
+            Level::DEBUG => "debug",
+            Level::TRACE => "trace",
+        }
+    };
+
+    let mut builder = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env()
+            .add_directive(env_filter.parse().unwrap()));
+
+    // Configure output
+    if let Some(log_file) = log_file {
+        let file_appender = tracing_appender::rolling::RollingFileAppender::new(
+            tracing_appender::rolling::RollingFileAppender::builder()
+                .rotation(tracing_appender::rolling::Rotation::DAILY)
+                .filename_prefix("faber")
+                .filename_suffix("log")
+                .build_in(log_file.parent().unwrap())
+                .unwrap(),
+        );
+
+        builder = builder.with_writer(file_appender);
+    }
+
+    // Initialize subscriber
+    builder.init();
+
+    info!("Logging initialized at level: {}", level);
+}
+```
+
+## Error Handling
+
+### CLI Error Types
+
+```rust
+#[derive(Debug, thiserror::Error)]
+pub enum CliError {
+    #[error("Configuration error: {0}")]
+    Config(#[from] ConfigError),
+
+    #[error("Server error: {0}")]
+    Server(String),
+
+    #[error("Execution error: {0}")]
+    Execution(String),
+
+    #[error("Validation error: {0}")]
+    Validation(String),
+
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("Parse error: {0}")]
+    Parse(String),
+}
+```
+
+### User-Friendly Error Messages
+
+```rust
+fn handle_error(error: Box<dyn std::error::Error>) {
+    eprintln!("Error: {}", error);
+
+    // Provide helpful suggestions
+    if error.to_string().contains("permission denied") {
+        eprintln!("\nSuggestion: Try running with sudo for sandboxing features");
+    } else if error.to_string().contains("configuration") {
+        eprintln!("\nSuggestion: Check your configuration file with 'faber validate'");
+    } else if error.to_string().contains("port") {
+        eprintln!("\nSuggestion: Try a different port with --port <PORT>");
+    }
+
+    std::process::exit(1);
+}
+```
+
+## Configuration Loading
+
+### Configuration Resolution
+
+```rust
+pub fn load_config(config_path: Option<&Path>) -> Result<Config, ConfigError> {
+    // Try to load from specified path
+    if let Some(path) = config_path {
+        if path.exists() {
+            return load_config_from_file(path);
+        } else {
+            return Err(ConfigError::FileNotFound(path.to_path_buf()));
+        }
+    }
+
+    // Try default locations
+    let default_paths = [
+        PathBuf::from("config/config.yaml"),
+        PathBuf::from("config.yaml"),
+        PathBuf::from("/etc/faber/config.yaml"),
+        PathBuf::from("~/.config/faber/config.yaml"),
+    ];
+
+    for path in &default_paths {
+        if path.exists() {
+            return load_config_from_file(path);
+        }
+    }
+
+    // Return default configuration
+    Ok(Config::default())
+}
+
+fn load_config_from_file(path: &Path) -> Result<Config, ConfigError> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| ConfigError::IoError(e))?;
+
+    let config: Config = serde_yaml::from_str(&content)
+        .map_err(|e| ConfigError::ParseError(e))?;
+
+    Ok(config)
+}
+```
+
+## Usage Examples
+
+### Basic Server Start
+
+```bash
+# Start server with default configuration
+faber serve
+
+# Start server with custom host and port
+faber serve --host 0.0.0.0 --port 9000
+
+# Start server in debug mode
+faber serve --debug --log-level debug
+
+# Start server with graceful shutdown
+faber serve --graceful-shutdown
+```
+
+### Configuration Management
+
+```bash
+# Validate configuration
+faber validate
+
+# Validate specific configuration file
+faber validate /path/to/config.yaml
+
+# Show current configuration
+faber config
+
+# Show default configuration
+faber config --default
+```
+
+### Task Execution
+
+```bash
+# Execute simple command
+faber execute "echo hello world"
+
+# Execute with arguments
+faber execute "ls -la"
+
+# Execute with environment variables
+faber execute "env" --env DEBUG=true --env API_KEY=secret
+
+# Execute with resource limits
+faber execute "python script.py" --timeout 30 --memory 512 --cpu 60
+```
+
+### Development Workflow
+
+```bash
+# 1. Validate configuration
+faber validate
+
+# 2. Start development server
+faber serve --debug --log-level debug --open-mode
+
+# 3. Test task execution
+faber execute "echo 'Hello from Faber'"
+
+# 4. Test Python execution
+faber execute "python -c 'import sys; print(f\"Python {sys.version}\")'"
+```
+
+## Testing
+
+The CLI crate includes comprehensive tests:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cli_parsing() {
+        let args = vec!["faber", "serve", "--host", "127.0.0.1", "--port", "8080"];
+        let cli = Cli::parse_from(args);
+
+        assert_eq!(cli.command, Some(Commands::Serve {
+            host: Some("127.0.0.1".to_string()),
+            port: Some(8080),
+            graceful_shutdown: false,
+            api_key: None,
+            open_mode: false,
+        }));
+    }
+
+    #[test]
+    fn test_config_validation() {
+        let config = Config::default();
+        assert!(validate_config(&config).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_task_execution() {
+        let result = execute_task(
+            "echo".to_string(),
+            vec!["test".to_string()],
+            vec![],
+            None,
+            None,
+            None,
+        ).await;
+
+        assert!(result.is_ok());
+    }
+}
+```
+
+## Dependencies
+
+The CLI crate uses the following dependencies:
+
+```toml
+[dependencies]
+clap = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+serde_yaml = { workspace = true }
+thiserror = { workspace = true }
+faber-core = { path = "../core" }
+faber-api = { path = "../api" }
+faber-executor = { path = "../executor" }
+faber-config = { path = "../config" }
+```
+
+## Best Practices
+
+1. **Use descriptive help messages**: Provide clear help text for all commands
+2. **Validate inputs**: Always validate command-line arguments
+3. **Handle errors gracefully**: Provide user-friendly error messages
+4. **Use consistent formatting**: Maintain consistent output formatting
+5. **Support configuration files**: Allow configuration via files
+6. **Implement logging**: Provide comprehensive logging options
+7. **Support graceful shutdown**: Handle shutdown signals properly
+8. **Test thoroughly**: Test all command combinations

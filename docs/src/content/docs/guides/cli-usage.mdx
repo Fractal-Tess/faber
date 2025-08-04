@@ -1,0 +1,352 @@
+---
+title: 'CLI Usage'
+description: "Complete guide to using Faber's command-line interface"
+---
+
+# CLI Usage
+
+Faber provides a comprehensive command-line interface built with Clap for managing the service, executing tasks, and configuring the application.
+
+## Basic Commands
+
+### Starting the Server
+
+```bash
+# Start the server with default configuration
+faber serve
+
+# Start with custom host and port
+faber serve --host 0.0.0.0 --port 9000
+
+# Start with graceful shutdown
+faber serve --graceful-shutdown
+
+# Start in debug mode
+faber serve --debug --log-level debug
+```
+
+### Configuration Management
+
+```bash
+# Show current configuration
+faber config
+
+# Show default configuration
+faber config --default
+
+# Validate configuration
+faber validate
+
+# Validate specific configuration file
+faber validate /path/to/config.yaml
+```
+
+### Task Execution
+
+```bash
+# Execute a simple command
+faber execute "echo hello world"
+
+# Execute with arguments
+faber execute "ls -la"
+
+# Execute Python script
+faber execute "python -c 'print(\"Hello from Python\")'"
+
+# Execute with environment variables
+faber execute "env" --env DEBUG=true --env CUSTOM_VAR=value
+```
+
+## Command Reference
+
+### `faber serve`
+
+Start the Faber HTTP server.
+
+**Options:**
+
+- `--host <HOST>`: Server host (default: 127.0.0.1)
+- `--port <PORT>`: Server port (default: 8080)
+- `--config <CONFIG>`: Configuration file path
+- `--api-key <API_KEY>`: API key for authentication
+- `--open-mode`: Enable open mode (no authentication required)
+- `--graceful-shutdown`: Enable graceful shutdown
+- `--debug`: Enable debug mode
+- `--log-level <LOG_LEVEL>`: Log level (debug, info, warn, error)
+- `--log-file <LOG_FILE>`: Log file path
+
+**Examples:**
+
+```bash
+# Basic server start
+faber serve
+
+# Production server
+faber serve --host 0.0.0.0 --port 8080 --config /etc/faber/config.yaml
+
+# Development server
+faber serve --debug --log-level debug --open-mode
+
+# Server with custom API key
+faber serve --api-key your-secret-key
+```
+
+### `faber config`
+
+Display configuration information.
+
+**Options:**
+
+- `--default`: Show default configuration instead of current
+- `--config <CONFIG>`: Configuration file path
+
+**Examples:**
+
+```bash
+# Show current configuration
+faber config
+
+# Show default configuration
+faber config --default
+
+# Show configuration from specific file
+faber config --config /path/to/config.yaml
+```
+
+### `faber validate`
+
+Validate configuration files.
+
+**Options:**
+
+- `--config <CONFIG>`: Configuration file to validate
+
+**Examples:**
+
+```bash
+# Validate default configuration
+faber validate
+
+# Validate specific configuration file
+faber validate /path/to/config.yaml
+
+# Validate and show errors
+faber validate --config production.yaml
+```
+
+### `faber execute`
+
+Execute tasks directly via CLI (if implemented).
+
+**Options:**
+
+- `--env <KEY=VALUE>`: Set environment variables
+- `--timeout <TIMEOUT>`: Task timeout in seconds
+- `--memory <MEMORY>`: Memory limit in MB
+- `--cpu <CPU>`: CPU time limit in seconds
+
+**Examples:**
+
+```bash
+# Simple command execution
+faber execute "echo hello world"
+
+# Execute with environment variables
+faber execute "python script.py" --env DEBUG=true --env API_KEY=secret
+
+# Execute with resource limits
+faber execute "python heavy_script.py" --timeout 30 --memory 512 --cpu 60
+```
+
+## Global Options
+
+All commands support these global options:
+
+- `--config <CONFIG>`: Configuration file path
+- `--debug`: Enable debug mode
+- `--log-level <LOG_LEVEL>`: Log level
+- `--log-file <LOG_FILE>`: Log file path
+- `--help`: Show help information
+- `--version`: Show version information
+
+## Configuration File
+
+The CLI uses the same configuration system as the API. Configuration files can be in YAML format:
+
+```yaml
+server:
+  host: '127.0.0.1'
+  port: 8080
+  enable_swagger: true
+
+auth:
+  api_key: 'your-secret-key'
+  open_mode: false
+
+logging:
+  level: 'info'
+  format: 'json'
+  file: null
+  debug: false
+```
+
+## Environment Variables
+
+Configuration can also be set via environment variables:
+
+```bash
+# Server configuration
+export FABER_SERVER_HOST=0.0.0.0
+export FABER_SERVER_PORT=9000
+
+# Authentication
+export FABER_AUTH_API_KEY=your-secret-key
+export FABER_AUTH_OPEN_MODE=false
+
+# Logging
+export FABER_LOGGING_LEVEL=debug
+export FABER_LOGGING_FORMAT=json
+```
+
+## Examples
+
+### Development Workflow
+
+```bash
+# 1. Validate configuration
+faber validate
+
+# 2. Start development server
+faber serve --debug --log-level debug --open-mode
+
+# 3. Test task execution
+faber execute "echo 'Hello from Faber'"
+
+# 4. Test Python execution
+faber execute "python -c 'import sys; print(f\"Python {sys.version}\")'"
+```
+
+### Production Deployment
+
+```bash
+# 1. Validate production configuration
+faber validate /etc/faber/production.yaml
+
+# 2. Start production server
+faber serve \
+  --config /etc/faber/production.yaml \
+  --host 0.0.0.0 \
+  --port 8080 \
+  --graceful-shutdown
+
+# 3. Monitor logs
+tail -f /var/log/faber.log
+```
+
+### Testing and Debugging
+
+```bash
+# Test configuration
+faber config --default
+
+# Validate configuration
+faber validate
+
+# Start with verbose logging
+faber serve --debug --log-level debug
+
+# Test API endpoints
+curl http://localhost:8080/health
+curl -X POST http://localhost:8080/execute \
+  -H "Content-Type: application/json" \
+  -d '{"tasks":[{"command":"echo","args":["test"]}]}'
+```
+
+## Error Handling
+
+The CLI provides clear error messages and exit codes:
+
+- **Exit code 0**: Success
+- **Exit code 1**: General error
+- **Exit code 2**: Configuration error
+- **Exit code 3**: Validation error
+
+### Common Error Scenarios
+
+1. **Configuration not found**:
+
+   ```
+   Error: Configuration file not found: /path/to/config.yaml
+   ```
+
+2. **Invalid configuration**:
+
+   ```
+   Error: Invalid configuration: server.port must be between 1 and 65535
+   ```
+
+3. **Permission denied**:
+
+   ```
+   Error: Permission denied: root privileges required for sandboxing
+   ```
+
+4. **Port already in use**:
+   ```
+   Error: Address already in use: 127.0.0.1:8080
+   ```
+
+## Integration with System Services
+
+### systemd Service
+
+Create a systemd service file `/etc/systemd/system/faber.service`:
+
+```ini
+[Unit]
+Description=Faber Secure Task Execution Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/faber serve --config /etc/faber/config.yaml
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start the service:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable faber
+sudo systemctl start faber
+sudo systemctl status faber
+```
+
+### Docker Integration
+
+```bash
+# Build Docker image
+docker build -f docker/Dockerfile.prod -t faber:latest .
+
+# Run with configuration
+docker run --privileged \
+  -p 8080:8080 \
+  -v /etc/faber:/etc/faber \
+  -v /var/log/faber:/var/log \
+  faber:latest serve --config /etc/faber/config.yaml
+```
+
+## Best Practices
+
+1. **Use configuration files**: Store configuration in files rather than command-line arguments
+2. **Validate before deployment**: Always validate configuration before starting the server
+3. **Use appropriate log levels**: Use debug level for development, info for production
+4. **Secure API keys**: Store API keys in environment variables or secure configuration files
+5. **Monitor logs**: Set up log rotation and monitoring for production deployments
+6. **Graceful shutdown**: Use graceful shutdown for production deployments
+7. **Resource limits**: Set appropriate resource limits for your use case

@@ -15,14 +15,14 @@
     in {
       devShells = eachSystem (pkgs: {
         default = pkgs.mkShell {
-          nativeBuildInputs = with pkgs;
-            [
-              # (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
-              # clang
-              # Use mold when we are running in Linux
-              # (pkgs.lib.optionals pkgs.stdenv.isLinux pkgs.mold)
-              cargo-watch
-            ];
+          nativeBuildInputs = with pkgs; [
+            # (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
+            # clang
+            # Use mold when we are running in Linux
+            # (pkgs.lib.optionals pkgs.stdenv.isLinux pkgs.mold)
+            cargo-watch
+            bun
+          ];
           buildInputs = with pkgs;
             [
               # Complete Rust toolchain with cargo, rustc, etc.

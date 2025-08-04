@@ -1,0 +1,253 @@
+---
+title: 'Core Crate'
+description: 'Documentation for the faber-core crate'
+---
+
+# Core Crate
+
+The `faber-core` crate provides the fundamental types, traits, and error definitions used throughout the Faber application. It serves as the foundation for all other crates and defines the core data structures for task execution.
+
+## Overview
+
+The core crate is responsible for:
+
+- **Type Definitions**: Core data structures for tasks and results
+- **Error Handling**: Centralized error types and handling
+- **Resource Management**: Resource usage tracking and limits
+- **Status Management**: Task execution status definitions
+
+## Key Components
+
+### Task Definition
+
+The `Task` struct represents a single task to be executed:
+
+```rust
+pub struct Task {
+    pub command: String,
+    pub args: Option<Vec<String>>,
+    pub env: Option<HashMap<String, String>>,
+    pub files: Option<HashMap<String, String>>,
+}
+```
+
+**Fields:**
+
+- `command`: The command to execute
+- `args`: Optional command-line arguments
+- `env`: Optional environment variables
+- `files`: Optional files to create in the sandbox
+
+### Task Result
+
+The `TaskResult` struct contains the execution results:
+
+```rust
+pub struct TaskResult {
+    pub status: TaskStatus,
+    pub error: Option<String>,
+    pub exit_code: Option<i32>,
+    pub stdout: Option<String>,
+    pub stderr: Option<String>,
+    pub resource_usage: ResourceUsage,
+    pub resource_limits_exceeded: ResourceLimitViolations,
+}
+```
+
+### Task Status
+
+The `TaskStatus` enum defines possible execution states:
+
+```rust
+pub enum TaskStatus {
+    Success,
+    Failure,
+    NotExecuted,
+    ResourceLimitExceeded,
+    Timeout,
+    MemoryLimitExceeded,
+    CpuLimitExceeded,
+}
+```
+
+### Resource Usage
+
+The `ResourceUsage` struct tracks resource consumption:
+
+```rust
+pub struct ResourceUsage {
+    pub cpu_time_ns: u64,
+    pub wall_time_ns: u64,
+    pub memory_peak_bytes: u64,
+    pub memory_current_bytes: u64,
+    pub process_count: u32,
+    pub file_descriptors: u32,
+    pub io_read_bytes: u64,
+    pub io_write_bytes: u64,
+    pub system_time_ns: u64,
+    pub user_time_ns: u64,
+}
+```
+
+### Resource Limit Violations
+
+The `ResourceLimitViolations` struct tracks limit violations:
+
+```rust
+pub struct ResourceLimitViolations {
+    pub cpu_time_limit_exceeded: bool,
+    pub wall_time_limit_exceeded: bool,
+    pub process_limit_exceeded: bool,
+    pub file_descriptor_limit_exceeded: bool,
+    pub output_limit_exceeded: bool,
+}
+```
+
+## Error Handling
+
+The core crate provides centralized error handling through the `FaberError` enum:
+
+```rust
+pub enum FaberError {
+    Sandbox(String),
+    Execution(String),
+    Configuration(String),
+    Validation(String),
+    Resource(String),
+    Security(String),
+    Api(String),
+}
+```
+
+## Usage Examples
+
+### Creating a Task
+
+```rust
+use faber_core::{Task, TaskResult, TaskStatus};
+
+let task = Task {
+    command: "echo".to_string(),
+    args: Some(vec!["hello".to_string(), "world".to_string()]),
+    env: Some(HashMap::from([
+        ("DEBUG".to_string(), "true".to_string()),
+    ])),
+    files: None,
+};
+```
+
+### Handling Task Results
+
+```rust
+use faber_core::{TaskResult, TaskStatus, ResourceUsage};
+
+fn process_result(result: &TaskResult) {
+    match result.status {
+        TaskStatus::Success => {
+            println!("Task completed successfully");
+            if let Some(stdout) = &result.stdout {
+                println!("Output: {}", stdout);
+            }
+        }
+        TaskStatus::Failure => {
+            println!("Task failed with exit code: {:?}", result.exit_code);
+            if let Some(stderr) = &result.stderr {
+                println!("Error: {}", stderr);
+            }
+        }
+        TaskStatus::ResourceLimitExceeded => {
+            println!("Task exceeded resource limits");
+        }
+        _ => {
+            println!("Task status: {:?}", result.status);
+        }
+    }
+}
+```
+
+### Resource Usage Analysis
+
+```rust
+use faber_core::ResourceUsage;
+
+fn analyze_resource_usage(usage: &ResourceUsage) {
+    println!("CPU Time: {:.2}s", usage.cpu_time().as_secs_f64());
+    println!("Wall Time: {:.2}s", usage.wall_time().as_secs_f64());
+    println!("Peak Memory: {:.2}MB", usage.memory_peak_mb());
+    println!("Current Memory: {:.2}MB", usage.memory_current_mb());
+    println!("Processes: {}", usage.process_count);
+    println!("File Descriptors: {}", usage.file_descriptors);
+    println!("I/O Read: {:.2}MB", usage.io_read_mb());
+    println!("I/O Write: {:.2}MB", usage.io_write_mb());
+}
+```
+
+## Type Aliases
+
+For backward compatibility, the core crate provides type aliases:
+
+```rust
+pub type ExecutionTask = Task;
+pub type ExecutionTaskResult = TaskResult;
+pub type ExecutionTaskStatus = TaskStatus;
+```
+
+## Dependencies
+
+The core crate has minimal dependencies:
+
+```toml
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+```
+
+## Testing
+
+The core crate includes comprehensive tests:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_task_creation() {
+        let task = Task {
+            command: "echo".to_string(),
+            args: Some(vec!["hello".to_string()]),
+            env: None,
+            files: None,
+        };
+
+        assert_eq!(task.command, "echo");
+        assert_eq!(task.args.unwrap(), vec!["hello"]);
+    }
+
+    #[test]
+    fn test_resource_usage_default() {
+        let usage = ResourceUsage::new();
+        assert_eq!(usage.cpu_time_ns, 0);
+        assert_eq!(usage.memory_peak_bytes, 0);
+    }
+}
+```
+
+## Integration with Other Crates
+
+The core crate is used by all other Faber crates:
+
+- **API Crate**: Uses core types for HTTP request/response serialization
+- **Executor Crate**: Uses core types for task execution
+- **Sandbox Crate**: Uses core types for resource monitoring
+- **Config Crate**: Uses core types for configuration validation
+- **CLI Crate**: Uses core types for command-line interface
+
+## Best Practices
+
+1. **Use the core types**: Always use the core crate types for consistency
+2. **Handle errors properly**: Use the `FaberError` enum for error handling
+3. **Validate inputs**: Validate task parameters before execution
+4. **Monitor resources**: Track resource usage for all tasks
+5. **Use type aliases**: Use the provided type aliases for backward compatibility
