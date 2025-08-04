@@ -3,6 +3,7 @@
 //! This module provides functionality to drop privileges and manage
 //! user/group permissions for secure container execution.
 
+use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 use tracing::{debug, warn};
@@ -36,9 +37,7 @@ impl PrivilegeManager {
                 if gid != 0 {
                     let result = libc::setgid(gid);
                     if result != 0 {
-                        let error = std::io::Error::last_os_error();
-                        warn!("Failed to set group ID to {}: {}", gid, error);
-                        // Don't fail on privilege dropping errors, just warn
+                        // Don't fail on privilege dropping errors, just continue
                     }
                 }
 
@@ -46,21 +45,15 @@ impl PrivilegeManager {
                 if uid != 0 {
                     let result = libc::setuid(uid);
                     if result != 0 {
-                        let error = std::io::Error::last_os_error();
-                        warn!("Failed to set user ID to {}: {}", uid, error);
-                        // Don't fail on privilege dropping errors, just warn
+                        // Don't fail on privilege dropping errors, just continue
                     }
                 }
 
                 // Set supplementary groups to empty (security measure)
                 let result = libc::setgroups(0, std::ptr::null());
                 if result != 0 {
-                    let error = std::io::Error::last_os_error();
-                    warn!("Failed to clear supplementary groups: {}", error);
                     // Don't fail on this, it's not critical
                 }
-
-                debug!("Dropped privileges to uid={}, gid={}", uid, gid);
                 Ok(())
             });
         }
@@ -81,8 +74,7 @@ impl PrivilegeManager {
             let passwd = unsafe { libc::getpwuid(uid) };
             if passwd.is_null() {
                 return Err(SandboxError::ResourceLimitFailed(format!(
-                    "User ID {} does not exist",
-                    uid
+                    "User ID {uid} does not exist"
                 )));
             }
         }
@@ -91,13 +83,12 @@ impl PrivilegeManager {
             let group = unsafe { libc::getgrgid(gid) };
             if group.is_null() {
                 return Err(SandboxError::ResourceLimitFailed(format!(
-                    "Group ID {} does not exist",
-                    gid
+                    "Group ID {gid} does not exist"
                 )));
             }
         }
 
-        debug!("Privilege check passed for uid={}, gid={}", uid, gid);
+        debug!("Privilege check passed for uid={uid}, gid={gid}");
         Ok(())
     }
 

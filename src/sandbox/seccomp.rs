@@ -3,6 +3,7 @@
 //! This module provides functionality to restrict system calls that processes
 //! can make, significantly reducing the attack surface of the sandbox.
 
+use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 use tracing::{debug, error, info, warn};
@@ -57,14 +58,9 @@ impl SeccompFilter {
                             libc::prctl(libc::PR_SET_SECCOMP, libc::SECCOMP_MODE_STRICT, 0, 0, 0);
 
                         if result != 0 {
-                            warn!(
-                                "Failed to set seccomp mode: {}",
-                                std::io::Error::last_os_error()
-                            );
-                            // Don't fail, just warn
-                        } else {
-                            debug!("Seccomp strict mode applied");
+                            // Don't fail, just continue
                         }
+                        // Seccomp mode applied (or failed silently)
 
                         Ok(())
                     });
