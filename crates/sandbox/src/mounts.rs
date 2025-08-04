@@ -469,6 +469,11 @@ impl MountManager {
 
         // Allow execution in work directory, but not in other tmpfs mounts
         let is_work_dir = target.file_name().map_or(false, |name| name == "work");
+        // Set mount flags for tmpfs:
+        // MS_NOSUID: Do not allow set-user-identifier or set-group-identifier bits to take effect.
+        // MS_NODEV:  Do not interpret character or block special devices on the filesystem.
+        // MS_NOEXEC: Do not allow execution of any binaries on the mounted filesystem.
+        // For the "work" directory, we allow execution (omit MS_NOEXEC).
         let mount_flags = if is_work_dir {
             MsFlags::MS_NOSUID | MsFlags::MS_NODEV // No MS_NOEXEC for work directory
         } else {
