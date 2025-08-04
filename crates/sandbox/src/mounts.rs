@@ -1,10 +1,11 @@
+use faber_config::Config;
 use faber_core::{FaberError, Result};
 use nix::mount::{MntFlags, MsFlags, mount as nix_mount, umount2};
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
 /// Mount point configuration
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct MountPoint {
     pub source: PathBuf,
     pub target: PathBuf,
@@ -14,7 +15,7 @@ pub struct MountPoint {
 }
 
 /// Mount type for different filesystem types
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub enum MountType {
     Bind,
     Proc,
@@ -22,14 +23,14 @@ pub enum MountType {
 }
 
 /// Symlink configuration
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct SymLink {
     pub target: PathBuf,
     pub link_path: PathBuf,
 }
 
 /// Mount configuration for container filesystem
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct MountConfig {
     pub mounts: Vec<MountPoint>,
     pub symlinks: Vec<SymLink>,
@@ -59,6 +60,39 @@ impl Default for MountConfig {
 }
 
 impl MountConfig {
+    /// Create mount configuration from global config
+    pub fn from_config(config: &Config) -> Self {
+        let mut mount_config = Self::default();
+
+        // Add readable mounts from config
+        for (name, paths) in &config.sandbox.filesystem.mounts.readable {
+            if paths.len() >= 2 {
+                mount_config.mounts.push(MountPoint {
+                    source: PathBuf::from(&paths[0]),
+                    target: PathBuf::from(&paths[1]),
+                    mount_type: MountType::Bind,
+                    flags: 1, // readonly flag
+                    data: None,
+                });
+            }
+        }
+
+        // Add tmpfs mounts from config
+        for (name, paths) in &config.sandbox.filesystem.mounts.tmpfs {
+            if paths.len() >= 2 {
+                mount_config.mounts.push(MountPoint {
+                    source: PathBuf::from(""),
+                    target: PathBuf::from(&paths[0]),
+                    mount_type: MountType::Tmpfs,
+                    flags: 0,
+                    data: Some(paths[1].clone()),
+                });
+            }
+        }
+
+        mount_config
+    }
+
     /// Create a default secure mount configuration
     pub fn default_secure() -> Self {
         let mut config = Self::default();

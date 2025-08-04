@@ -49,6 +49,109 @@ pub fn init_logging(level: Level, debug: bool, log_file: Option<&str>) {
         .with(file_layer)
         .with(EnvFilter::new(env_filter));
 
-    // Set the global default
-    set_global_default(subscriber).expect("Failed to set global default subscriber");
+    // Set the global default (ignore if already set)
+    let _ = set_global_default(subscriber);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::path::Path;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_init_logging_with_debug() {
+        let temp_dir = TempDir::new().unwrap();
+        let log_file = temp_dir.path().join("test.log");
+
+        // This should not panic
+        init_logging(Level::INFO, true, Some(log_file.to_str().unwrap()));
+
+        // Verify the log file was created
+        assert!(log_file.exists());
+    }
+
+    #[test]
+    fn test_init_logging_without_debug() {
+        let temp_dir = TempDir::new().unwrap();
+        let log_file = temp_dir.path().join("test.log");
+
+        // This should not panic
+        init_logging(Level::WARN, false, Some(log_file.to_str().unwrap()));
+
+        // Verify the log file was created
+        assert!(log_file.exists());
+    }
+
+    #[test]
+    fn test_init_logging_with_different_levels() {
+        let temp_dir = TempDir::new().unwrap();
+        let log_file = temp_dir.path().join("test.log");
+
+        // Test all log levels
+        let levels = vec![
+            Level::ERROR,
+            Level::WARN,
+            Level::INFO,
+            Level::DEBUG,
+            Level::TRACE,
+        ];
+
+        for level in levels {
+            let test_file = temp_dir.path().join(format!("test_{:?}.log", level));
+            init_logging(level, false, Some(test_file.to_str().unwrap()));
+            assert!(test_file.exists());
+        }
+    }
+
+    #[test]
+    fn test_init_logging_with_directory_creation() {
+        let temp_dir = TempDir::new().unwrap();
+        let nested_dir = temp_dir.path().join("nested").join("deep");
+        let log_file = nested_dir.join("test.log");
+
+        // This should create the nested directory structure
+        init_logging(Level::INFO, false, Some(log_file.to_str().unwrap()));
+
+        // Verify the directory and file were created
+        assert!(nested_dir.exists());
+        assert!(log_file.exists());
+    }
+
+    #[test]
+    fn test_init_logging_default_rolling() {
+        // This should not panic and should create the logs directory
+        init_logging(Level::INFO, false, None);
+
+        // Verify the logs directory was created
+        assert!(Path::new("logs").exists());
+    }
+
+    #[test]
+    fn test_logging_level_mapping() {
+        let temp_dir = TempDir::new().unwrap();
+        let log_file = temp_dir.path().join("test.log");
+
+        // Test that debug mode overrides the level
+        init_logging(Level::ERROR, true, Some(log_file.to_str().unwrap()));
+        assert!(log_file.exists());
+
+        // Test that non-debug mode uses the specified level
+        let log_file2 = temp_dir.path().join("test2.log");
+        init_logging(Level::TRACE, false, Some(log_file2.to_str().unwrap()));
+        assert!(log_file2.exists());
+    }
+
+    #[test]
+    fn test_logging_with_relative_path() {
+        let temp_dir = TempDir::new().unwrap();
+        std::env::set_current_dir(temp_dir.path()).unwrap();
+
+        // Test with relative path
+        init_logging(Level::INFO, false, Some("relative_test.log"));
+
+        // Verify the file was created
+        assert!(Path::new("relative_test.log").exists());
+    }
 }

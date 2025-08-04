@@ -126,63 +126,9 @@ impl TaskExecutor {
     }
 
     fn create_container_sandbox(&self) -> Result<ContainerSandbox> {
-        // Create container configuration from loaded config
-        let security_level = self.get_security_level();
-        let resource_limits = self.get_resource_limits(security_level.clone());
-        let namespace_settings = self.get_namespace_settings();
-
-        let container_config = faber_sandbox::container::ContainerConfig::new(security_level)
-            .with_resource_limits(resource_limits)
-            .with_namespace_settings(namespace_settings)
-            .with_user_ids(1000, 1000); // Default user/group IDs
-
-        // Create container with configuration
-        ContainerSandbox::new(container_config).map_err(|e| {
+        // Create container sandbox directly from config using the new approach
+        faber_sandbox::container::ContainerSandbox::from_config(&self.config).map_err(|e| {
             faber_core::FaberError::Execution(format!("Failed to create container: {}", e))
         })
-    }
-
-    fn get_security_level(&self) -> faber_sandbox::container::SecurityLevel {
-        match self.config.sandbox.security.default_security_level.as_str() {
-            "minimal" => faber_sandbox::container::SecurityLevel::Minimal,
-            "maximum" => faber_sandbox::container::SecurityLevel::Maximum,
-            _ => faber_sandbox::container::SecurityLevel::Standard,
-        }
-    }
-
-    fn get_resource_limits(
-        &self,
-        _security_level: faber_sandbox::container::SecurityLevel,
-    ) -> faber_sandbox::container::ResourceLimits {
-        let limits = &self.config.sandbox.resource_limits;
-
-        faber_sandbox::container::ResourceLimits {
-            memory_limit: limits.memory_limit_kb as u64 * 1024,
-            cpu_time_limit: limits.cpu_time_limit_ms as u64 * 1_000_000,
-            wall_time_limit: limits.wall_time_limit_ms as u64 * 1_000_000,
-            max_processes: limits.max_processes,
-            max_fds: limits.max_fds as u64,
-            stack_limit: limits.stack_limit_kb as u64 * 1024,
-            data_segment_limit: limits.data_segment_limit_kb as u64 * 1024,
-            address_space_limit: limits.address_space_limit_kb as u64 * 1024,
-            cpu_rate_limit: Some(limits.cpu_rate_limit_percent),
-            io_read_limit: Some(limits.io_read_limit_kb_s as u64 * 1024),
-            io_write_limit: Some(limits.io_write_limit_kb_s as u64 * 1024),
-        }
-    }
-
-    fn get_namespace_settings(&self) -> faber_sandbox::container::NamespaceSettings {
-        let ns = &self.config.sandbox.security.namespaces;
-
-        faber_sandbox::container::NamespaceSettings {
-            pid: ns.pid,
-            mount: ns.mount,
-            network: ns.network,
-            ipc: ns.ipc,
-            uts: ns.uts,
-            user: ns.user,
-            time: ns.time,
-            cgroup: ns.cgroup,
-        }
     }
 }

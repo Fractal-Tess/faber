@@ -1,3 +1,4 @@
+use faber_config::Config;
 use faber_core::{FaberError, Result, Task, TaskResult};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -26,15 +27,10 @@ struct ProcessUsage {
     max_rss_kb: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum SecurityLevel {
-    Minimal,
-    Standard,
-    Maximum,
-    Custom,
-}
+// Security level is now determined by configuration
+// The config system provides the security settings directly
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ResourceLimits {
     pub memory_limit: u64,
     pub cpu_time_limit: u64,
@@ -50,66 +46,37 @@ pub struct ResourceLimits {
 }
 
 impl ResourceLimits {
-    pub fn from_security_level(level: SecurityLevel) -> Self {
-        match level {
-            SecurityLevel::Minimal => Self {
-                memory_limit: 2 * 1024 * 1024 * 1024, // 2GB
-                cpu_time_limit: 30_000_000_000,       // 30 seconds
-                wall_time_limit: 60_000_000_000,      // 60 seconds
-                max_processes: 100,
-                max_fds: 1024,
-                stack_limit: 8 * 1024 * 1024,                // 8MB
-                data_segment_limit: 1 * 1024 * 1024 * 1024,  // 1GB
-                address_space_limit: 4 * 1024 * 1024 * 1024, // 4GB
-                cpu_rate_limit: None,
-                io_read_limit: None,
-                io_write_limit: None,
+    pub fn from_config(config: &Config) -> Self {
+        let limits = &config.sandbox.resource_limits;
+        Self {
+            memory_limit: limits.memory_limit_kb as u64 * 1024, // Convert KB to bytes
+            cpu_time_limit: limits.cpu_time_limit_ms as u64 * 1_000_000, // Convert ms to nanoseconds
+            wall_time_limit: limits.wall_time_limit_ms as u64 * 1_000_000, // Convert ms to nanoseconds
+            max_processes: limits.max_processes,
+            max_fds: limits.max_fds as u64,
+            stack_limit: limits.stack_limit_kb as u64 * 1024, // Convert KB to bytes
+            data_segment_limit: limits.data_segment_limit_kb as u64 * 1024, // Convert KB to bytes
+            address_space_limit: limits.address_space_limit_kb as u64 * 1024, // Convert KB to bytes
+            cpu_rate_limit: if limits.cpu_rate_limit_percent > 0 {
+                Some(limits.cpu_rate_limit_percent)
+            } else {
+                None
             },
-            SecurityLevel::Standard => Self {
-                memory_limit: 512 * 1024 * 1024, // 512MB
-                cpu_time_limit: 10_000_000_000,  // 10 seconds
-                wall_time_limit: 30_000_000_000, // 30 seconds
-                max_processes: 50,
-                max_fds: 256,
-                stack_limit: 4 * 1024 * 1024,                // 4MB
-                data_segment_limit: 256 * 1024 * 1024,       // 256MB
-                address_space_limit: 1 * 1024 * 1024 * 1024, // 1GB
-                cpu_rate_limit: Some(50),                    // 50% CPU
-                io_read_limit: Some(10 * 1024 * 1024),       // 10MB/s
-                io_write_limit: Some(10 * 1024 * 1024),      // 10MB/s
+            io_read_limit: if limits.io_read_limit_kb_s > 0 {
+                Some(limits.io_read_limit_kb_s as u64 * 1024) // Convert KB/s to bytes/s
+            } else {
+                None
             },
-            SecurityLevel::Maximum => Self {
-                memory_limit: 128 * 1024 * 1024, // 128MB
-                cpu_time_limit: 5_000_000_000,   // 5 seconds
-                wall_time_limit: 15_000_000_000, // 15 seconds
-                max_processes: 10,
-                max_fds: 64,
-                stack_limit: 1 * 1024 * 1024,           // 1MB
-                data_segment_limit: 64 * 1024 * 1024,   // 64MB
-                address_space_limit: 256 * 1024 * 1024, // 256MB
-                cpu_rate_limit: Some(25),               // 25% CPU
-                io_read_limit: Some(1 * 1024 * 1024),   // 1MB/s
-                io_write_limit: Some(1 * 1024 * 1024),  // 1MB/s
-            },
-            SecurityLevel::Custom => Self {
-                // Default to maximum security for custom
-                memory_limit: 128 * 1024 * 1024, // 128MB
-                cpu_time_limit: 5_000_000_000,   // 5 seconds
-                wall_time_limit: 15_000_000_000, // 15 seconds
-                max_processes: 10,
-                max_fds: 64,
-                stack_limit: 1 * 1024 * 1024,           // 1MB
-                data_segment_limit: 64 * 1024 * 1024,   // 64MB
-                address_space_limit: 256 * 1024 * 1024, // 256MB
-                cpu_rate_limit: Some(25),               // 25% CPU
-                io_read_limit: Some(1 * 1024 * 1024),   // 1MB/s
-                io_write_limit: Some(1 * 1024 * 1024),  // 1MB/s
+            io_write_limit: if limits.io_write_limit_kb_s > 0 {
+                Some(limits.io_write_limit_kb_s as u64 * 1024) // Convert KB/s to bytes/s
+            } else {
+                None
             },
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NamespaceSettings {
     pub pid: bool,
     pub mount: bool,
@@ -122,58 +89,24 @@ pub struct NamespaceSettings {
 }
 
 impl NamespaceSettings {
-    pub fn from_security_level(level: SecurityLevel) -> Self {
-        match level {
-            SecurityLevel::Minimal => Self {
-                pid: false,
-                mount: false,
-                network: true,
-                ipc: false,
-                uts: false,
-                user: false,
-                time: false,
-                cgroup: false,
-            },
-            SecurityLevel::Standard => Self {
-                pid: false,    // Disable PID namespace to avoid process spawning issues
-                mount: true,   // Re-enable mount namespace with proper setup
-                network: true, // Enable network namespace for isolation
-                ipc: true,
-                uts: true,
-                user: true, // Enable user namespace for secure privilege dropping
-                time: false,
-                cgroup: true,
-            },
-            SecurityLevel::Maximum => Self {
-                pid: true,
-                mount: true,
-                network: false,
-                ipc: true,
-                uts: true,
-                user: true,
-                time: true,
-                cgroup: true,
-            },
-            SecurityLevel::Custom => Self {
-                // Default to maximum security for custom
-                pid: true,
-                mount: true,
-                network: false,
-                ipc: true,
-                uts: true,
-                user: true,
-                time: true,
-                cgroup: true,
-            },
+    pub fn from_config(config: &Config) -> Self {
+        let namespaces = &config.sandbox.security.namespaces;
+        Self {
+            pid: namespaces.pid,
+            mount: namespaces.mount,
+            network: namespaces.network,
+            ipc: namespaces.ipc,
+            uts: namespaces.uts,
+            user: namespaces.user,
+            time: namespaces.time,
+            cgroup: namespaces.cgroup,
         }
     }
 }
 
 /// Configuration for container security settings
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ContainerConfig {
-    /// Security level preset
-    pub security_level: SecurityLevel,
     /// Resource limits for execution
     pub resource_limits: ResourceLimits,
     /// Namespace isolation settings
@@ -193,18 +126,21 @@ pub struct ContainerConfig {
 }
 
 impl ContainerConfig {
-    /// Create a new configuration with the specified security level
-    pub fn new(security_level: SecurityLevel) -> Self {
+    /// Create a new configuration from the global config
+    pub fn from_config(config: &Config) -> Self {
         Self {
-            security_level: security_level.clone(),
-            resource_limits: ResourceLimits::from_security_level(security_level.clone()),
-            namespace_settings: NamespaceSettings::from_security_level(security_level),
+            resource_limits: ResourceLimits::from_config(config),
+            namespace_settings: NamespaceSettings::from_config(config),
             uid: 65534, // nobody user - will work with user namespace
             gid: 65534, // nobody group - will work with user namespace
             enable_mount_operations: true,
             work_dir_size_mb: 64,
-            mount_config: MountConfig::default(),
-            seccomp_level: SeccompLevel::None, // Temporarily disable seccomp due to being too restrictive
+            mount_config: MountConfig::from_config(config),
+            seccomp_level: if config.sandbox.security.seccomp.enabled {
+                SeccompLevel::Basic
+            } else {
+                SeccompLevel::None
+            },
         }
     }
 
@@ -230,7 +166,39 @@ impl ContainerConfig {
 
 impl Default for ContainerConfig {
     fn default() -> Self {
-        Self::new(SecurityLevel::Standard)
+        // This should not be used directly - use from_config instead
+        // This is kept for compatibility but will use default values
+        Self {
+            resource_limits: ResourceLimits {
+                memory_limit: 512 * 1024 * 1024, // 512MB
+                cpu_time_limit: 10_000_000_000,  // 10 seconds
+                wall_time_limit: 30_000_000_000, // 30 seconds
+                max_processes: 50,
+                max_fds: 256,
+                stack_limit: 4 * 1024 * 1024,                // 4MB
+                data_segment_limit: 256 * 1024 * 1024,       // 256MB
+                address_space_limit: 1 * 1024 * 1024 * 1024, // 1GB
+                cpu_rate_limit: Some(50),                    // 50% CPU
+                io_read_limit: Some(10 * 1024 * 1024),       // 10MB/s
+                io_write_limit: Some(10 * 1024 * 1024),      // 10MB/s
+            },
+            namespace_settings: NamespaceSettings {
+                pid: false,
+                mount: true,
+                network: true,
+                ipc: true,
+                uts: true,
+                user: true,
+                time: false,
+                cgroup: true,
+            },
+            uid: 65534,
+            gid: 65534,
+            enable_mount_operations: true,
+            work_dir_size_mb: 64,
+            mount_config: MountConfig::default(),
+            seccomp_level: SeccompLevel::None,
+        }
     }
 }
 
@@ -259,8 +227,21 @@ pub struct ContainerSandbox {
 }
 
 impl ContainerSandbox {
-    /// Create a new container sandbox
+    /// Create a new container sandbox from global config
+    pub fn from_config(global_config: &Config) -> Result<Self> {
+        let config = ContainerConfig::from_config(global_config);
+        Self::new_with_config(config, global_config)
+    }
+
+    /// Create a new container sandbox with specific config
     pub fn new(config: ContainerConfig) -> Result<Self> {
+        // Load default config for cgroups and other settings
+        let global_config = Config::default();
+        Self::new_with_config(config, &global_config)
+    }
+
+    /// Create a new container sandbox with both configs
+    fn new_with_config(config: ContainerConfig, global_config: &Config) -> Result<Self> {
         let container_id = Uuid::new_v4().to_string();
         info!("Creating new container sandbox: {}", container_id);
 
@@ -331,7 +312,7 @@ impl ContainerSandbox {
         }
 
         // Initialize cgroup manager for resource limits
-        let cgroup_manager = match CgroupManager::new(&container_id) {
+        let cgroup_manager = match CgroupManager::new(&container_id, global_config) {
             Ok(manager) => {
                 // Apply resource limits
                 if let Err(e) = manager.apply_limits(&config.resource_limits) {
@@ -951,7 +932,6 @@ pub struct Container {
     pub config: ContainerConfig,
     pub resource_limits: ResourceLimits,
     pub namespace_settings: NamespaceSettings,
-    pub security_level: SecurityLevel,
 }
 
 impl Container {
@@ -960,14 +940,12 @@ impl Container {
         config: ContainerConfig,
         resource_limits: ResourceLimits,
         namespace_settings: NamespaceSettings,
-        security_level: SecurityLevel,
     ) -> Self {
         Self {
             id,
             config,
             resource_limits,
             namespace_settings,
-            security_level,
         }
     }
 

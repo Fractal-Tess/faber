@@ -1,3 +1,4 @@
+use faber_config::Config;
 use faber_core::{FaberError, Result};
 use std::fs;
 use std::path::Path;
@@ -21,8 +22,17 @@ pub struct CgroupManager {
 }
 
 impl CgroupManager {
-    pub fn new(container_id: &str) -> std::result::Result<Self, super::error::SandboxError> {
-        let prefix = "faber".to_string();
+    pub fn new(
+        container_id: &str,
+        config: &Config,
+    ) -> std::result::Result<Self, super::error::SandboxError> {
+        if !config.sandbox.cgroups.enabled {
+            return Err(super::error::SandboxError::ResourceLimitFailed(
+                "Cgroups are disabled in configuration".to_string(),
+            ));
+        }
+
+        let prefix = config.sandbox.cgroups.prefix.clone();
         let base_path = None;
         let cgroup_path = format!("{}/{}", prefix, container_id);
 

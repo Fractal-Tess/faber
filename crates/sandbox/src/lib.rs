@@ -8,3 +8,6 @@ pub mod seccomp;
 
 pub use container::*;
 pub use error::*;
+
+#[cfg(test)]
+mod tests;
