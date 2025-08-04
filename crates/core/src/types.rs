@@ -124,7 +124,7 @@ impl ResourceLimitViolations {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TaskStatus {
     Success,
     Failure,

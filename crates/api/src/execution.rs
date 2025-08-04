@@ -1,9 +1,12 @@
 use axum::{Json, extract::Extension, http::StatusCode};
 use faber_config::Config;
 use faber_core::{Task, TaskResult};
+use faber_executor::TaskExecutor;
 use serde::Serialize;
 use std::sync::Arc;
 use tracing::info;
+
+use super::validation::validate_tasks;
 
 #[derive(Serialize)]
 pub struct ExecuteResponse {
@@ -16,22 +19,21 @@ pub async fn execute_tasks(
 ) -> Result<Json<ExecuteResponse>, StatusCode> {
     info!("Received execution request with {} tasks", request.len());
 
-    // TODO: Implement actual task execution using faber-executor
-    let results = request
-        .into_iter()
-        .map(|task| {
-            info!("Would execute task: {}", task.command);
-            TaskResult {
-                status: faber_core::TaskStatus::NotExecuted,
-                error: Some("Task execution not yet implemented".to_string()),
-                exit_code: None,
-                stdout: None,
-                stderr: None,
-                resource_usage: faber_core::ResourceUsage::new(),
-                resource_limits_exceeded: faber_core::ResourceLimitViolations::new(),
-            }
-        })
-        .collect();
+    // Validate tasks
+    if let Err(validation_error) = validate_tasks(&request, config.validation.max_tasks_per_request)
+    {
+        tracing::error!("Task validation failed: {}", validation_error);
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    // Create task executor
+    let executor = TaskExecutor::new((*config).clone());
+
+    // Execute tasks
+    let results = executor.execute_tasks(&request).await.map_err(|e| {
+        tracing::error!("Task execution failed: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     Ok(Json(ExecuteResponse { results }))
 }
