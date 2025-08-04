@@ -1,5 +1,5 @@
 use super::error::ExecutionTaskError;
-use super::task::{Task, TaskResult, TaskStatus};
+use super::task::{ResourceLimitViolations, ResourceUsage, Task, TaskResult, TaskStatus};
 use crate::sandbox::ContainerSandbox;
 use crate::sandbox::error::SandboxError;
 use tracing::{error, info, warn};
@@ -43,6 +43,8 @@ impl TaskExecutor {
                     exit_code: None,
                     stdout: None,
                     stderr: None,
+                    resource_usage: ResourceUsage::new(),
+                    resource_limits_exceeded: ResourceLimitViolations::new(),
                 };
                 results.push(skipped_result);
                 continue;
@@ -66,6 +68,8 @@ impl TaskExecutor {
                         exit_code: None,
                         stdout: None,
                         stderr: None,
+                        resource_usage: ResourceUsage::new(),
+                        resource_limits_exceeded: ResourceLimitViolations::new(),
                     };
                     results.push(failed_result);
                 }

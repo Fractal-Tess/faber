@@ -36,3 +36,7 @@ syscallz = "0.17"
 [dev-dependencies]
 tokio = { version = "1.47.1", features = ["full", "test-util"] }
 tower = "0.5"
+
+[[example]]
+name = "resource_tracking"
+path = "examples/resource_tracking.rs"

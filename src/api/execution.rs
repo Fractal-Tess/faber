@@ -22,8 +22,14 @@ pub struct ExecuteTasksResponse {
 impl ExecuteTasksResponse {
     pub fn new(results: Vec<TaskResult>) -> Self {
         let total_tasks = results.len();
-        let successful_tasks = results.iter().filter(|r| r.error.is_none()).count();
-        let failed_tasks = results.iter().filter(|r| r.error.is_some()).count();
+        let successful_tasks = results
+            .iter()
+            .filter(|r| r.status == crate::executor::task::TaskStatus::Success)
+            .count();
+        let failed_tasks = results
+            .iter()
+            .filter(|r| r.error.is_some() || r.status != crate::executor::task::TaskStatus::Success)
+            .count();
         let skipped_tasks = total_tasks - successful_tasks - failed_tasks;
 
         Self {

@@ -3,7 +3,6 @@
 //! This module provides functionality to drop privileges and manage
 //! user/group permissions for secure container execution.
 
-use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 use tracing::{debug, warn};

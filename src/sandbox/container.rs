@@ -23,6 +23,17 @@ use super::namespaces::{NamespaceConfig, NamespaceManager};
 use super::privileges::PrivilegeManager;
 use super::seccomp::{SeccompFilter, SeccompLevel};
 
+/// Process resource usage statistics
+#[derive(Debug, Clone)]
+struct ProcessUsage {
+    /// User CPU time in nanoseconds
+    user_time_ns: u64,
+    /// System CPU time in nanoseconds
+    system_time_ns: u64,
+    /// Maximum resident set size in KB
+    max_rss_kb: u64,
+}
+
 /// Security level presets for container isolation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SecurityLevel {
@@ -32,6 +43,8 @@ pub enum SecurityLevel {
     Standard,
     /// Maximum isolation - for untrusted code
     Maximum,
+    /// Custom isolation - user-defined settings
+    Custom,
 }
 
 /// Namespace isolation configuration
@@ -43,6 +56,10 @@ pub struct NamespaceSettings {
     pub ipc: bool,
     pub uts: bool,
     pub user: bool,
+    /// Enable time namespace (Linux 5.6+)
+    pub time: bool,
+    /// Enable cgroup namespace
+    pub cgroup: bool,
 }
 
 impl NamespaceSettings {
@@ -55,6 +72,8 @@ impl NamespaceSettings {
                 ipc: false,
                 uts: false,
                 user: false,
+                time: false,
+                cgroup: false,
             },
             SecurityLevel::Standard => Self {
                 pid: false,    // Disable PID namespace to avoid process spawning issues
@@ -63,6 +82,8 @@ impl NamespaceSettings {
                 ipc: true,
                 uts: true,
                 user: true, // Enable user namespace for secure privilege dropping
+                time: false,
+                cgroup: true,
             },
             SecurityLevel::Maximum => Self {
                 pid: true,
@@ -71,6 +92,19 @@ impl NamespaceSettings {
                 ipc: true,
                 uts: true,
                 user: true,
+                time: true,
+                cgroup: true,
+            },
+            SecurityLevel::Custom => Self {
+                // Default to maximum security for custom
+                pid: true,
+                mount: true,
+                network: false,
+                ipc: true,
+                uts: true,
+                user: true,
+                time: true,
+                cgroup: true,
             },
         }
     }
@@ -89,6 +123,19 @@ pub struct ResourceLimits {
     pub max_processes: u32,
     /// Maximum number of file descriptors
     pub max_fds: u64,
+    /// Stack size limit in bytes
+    pub stack_limit: u64,
+    /// Data segment limit in bytes
+    pub data_segment_limit: u64,
+    /// Address space limit in bytes
+    pub address_space_limit: u64,
+    /// CPU rate limit (percentage)
+    pub cpu_rate_limit: Option<u32>,
+    /// CPU set limit (specific cores)
+    pub cpu_set_limit: Option<String>,
+    /// I/O rate limits
+    pub io_read_limit: Option<u64>,
+    pub io_write_limit: Option<u64>,
 }
 
 impl ResourceLimits {
@@ -98,22 +145,145 @@ impl ResourceLimits {
                 memory_limit: 2 * 1024 * 1024 * 1024, // 2GB
                 cpu_time_limit: 30_000_000_000,       // 30 seconds
                 wall_time_limit: 60_000_000_000,      // 60 seconds
-                max_processes: 128,
-                max_fds: 256,
+                max_processes: 100,
+                max_fds: 1024,
+                stack_limit: 8 * 1024 * 1024,                // 8MB
+                data_segment_limit: 1 * 1024 * 1024 * 1024,  // 1GB
+                address_space_limit: 4 * 1024 * 1024 * 1024, // 4GB
+                cpu_rate_limit: None,
+                cpu_set_limit: None,
+                io_read_limit: None,
+                io_write_limit: None,
             },
             SecurityLevel::Standard => Self {
-                memory_limit: 1024 * 1024 * 1024, // 1GB
-                cpu_time_limit: 5_000_000_000,    // 5 seconds
-                wall_time_limit: 10_000_000_000,  // 10 seconds
-                max_processes: 32,
-                max_fds: 128, // Increased from 64 to ensure enough FDs for pipes
+                memory_limit: 512 * 1024 * 1024, // 512MB
+                cpu_time_limit: 10_000_000_000,  // 10 seconds
+                wall_time_limit: 30_000_000_000, // 30 seconds
+                max_processes: 50,
+                max_fds: 256,
+                stack_limit: 4 * 1024 * 1024,                // 4MB
+                data_segment_limit: 256 * 1024 * 1024,       // 256MB
+                address_space_limit: 1 * 1024 * 1024 * 1024, // 1GB
+                cpu_rate_limit: Some(50),                    // 50% CPU
+                cpu_set_limit: None,
+                io_read_limit: Some(10 * 1024 * 1024), // 10MB/s
+                io_write_limit: Some(10 * 1024 * 1024), // 10MB/s
             },
             SecurityLevel::Maximum => Self {
-                memory_limit: 512 * 1024 * 1024, // 512MB
-                cpu_time_limit: 2_000_000_000,   // 2 seconds
-                wall_time_limit: 5_000_000_000,  // 5 seconds
-                max_processes: 16,
-                max_fds: 32,
+                memory_limit: 128 * 1024 * 1024, // 128MB
+                cpu_time_limit: 5_000_000_000,   // 5 seconds
+                wall_time_limit: 15_000_000_000, // 15 seconds
+                max_processes: 10,
+                max_fds: 64,
+                stack_limit: 1 * 1024 * 1024,           // 1MB
+                data_segment_limit: 64 * 1024 * 1024,   // 64MB
+                address_space_limit: 256 * 1024 * 1024, // 256MB
+                cpu_rate_limit: Some(25),               // 25% CPU
+                cpu_set_limit: None,
+                io_read_limit: Some(1 * 1024 * 1024),  // 1MB/s
+                io_write_limit: Some(1 * 1024 * 1024), // 1MB/s
+            },
+            SecurityLevel::Custom => Self {
+                // Default to maximum security for custom
+                memory_limit: 128 * 1024 * 1024, // 128MB
+                cpu_time_limit: 5_000_000_000,   // 5 seconds
+                wall_time_limit: 15_000_000_000, // 15 seconds
+                max_processes: 10,
+                max_fds: 64,
+                stack_limit: 1 * 1024 * 1024,           // 1MB
+                data_segment_limit: 64 * 1024 * 1024,   // 64MB
+                address_space_limit: 256 * 1024 * 1024, // 256MB
+                cpu_rate_limit: Some(25),               // 25% CPU
+                cpu_set_limit: None,
+                io_read_limit: Some(1 * 1024 * 1024),  // 1MB/s
+                io_write_limit: Some(1 * 1024 * 1024), // 1MB/s
+            },
+        }
+    }
+}
+
+/// Security hardening options
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SecurityOptions {
+    /// Enable ASLR (Address Space Layout Randomization)
+    pub enable_aslr: bool,
+    /// Enable stack canaries
+    pub enable_stack_canaries: bool,
+    /// Enable DEP (Data Execution Prevention)
+    pub enable_dep: bool,
+    /// Enable seccomp filtering
+    pub enable_seccomp: bool,
+    /// Enable capabilities dropping
+    pub enable_capabilities: bool,
+    /// Enable no_new_privs
+    pub enable_no_new_privs: bool,
+    /// Enable secure computing mode
+    pub enable_secure_computing: bool,
+    /// Disable core dumps
+    pub disable_core_dumps: bool,
+    /// Restrict file system access
+    pub restrict_fs_access: bool,
+    /// Enable network isolation
+    pub enable_network_isolation: bool,
+    /// Enable time namespace
+    pub enable_time_namespace: bool,
+}
+
+impl SecurityOptions {
+    pub fn from_security_level(level: SecurityLevel) -> Self {
+        match level {
+            SecurityLevel::Minimal => Self {
+                enable_aslr: true,
+                enable_stack_canaries: false,
+                enable_dep: true,
+                enable_seccomp: false,
+                enable_capabilities: false,
+                enable_no_new_privs: false,
+                enable_secure_computing: false,
+                disable_core_dumps: false,
+                restrict_fs_access: false,
+                enable_network_isolation: true,
+                enable_time_namespace: false,
+            },
+            SecurityLevel::Standard => Self {
+                enable_aslr: true,
+                enable_stack_canaries: true,
+                enable_dep: true,
+                enable_seccomp: true,
+                enable_capabilities: true,
+                enable_no_new_privs: true,
+                enable_secure_computing: true,
+                disable_core_dumps: true,
+                restrict_fs_access: true,
+                enable_network_isolation: true,
+                enable_time_namespace: false,
+            },
+            SecurityLevel::Maximum => Self {
+                enable_aslr: true,
+                enable_stack_canaries: true,
+                enable_dep: true,
+                enable_seccomp: true,
+                enable_capabilities: true,
+                enable_no_new_privs: true,
+                enable_secure_computing: true,
+                disable_core_dumps: true,
+                restrict_fs_access: true,
+                enable_network_isolation: true,
+                enable_time_namespace: true,
+            },
+            SecurityLevel::Custom => Self {
+                // Default to maximum security for custom
+                enable_aslr: true,
+                enable_stack_canaries: true,
+                enable_dep: true,
+                enable_seccomp: true,
+                enable_capabilities: true,
+                enable_no_new_privs: true,
+                enable_secure_computing: true,
+                disable_core_dumps: true,
+                restrict_fs_access: true,
+                enable_network_isolation: true,
+                enable_time_namespace: true,
             },
         }
     }
@@ -483,8 +653,14 @@ impl ContainerSandbox {
         args: &[String],
         env: &HashMap<String, String>,
     ) -> Result<TaskResult, SandboxError> {
+        use crate::executor::task::{ResourceLimitViolations, ResourceUsage};
+        use std::time::Instant;
+
         // Check if container is active
         self.is_active_or_err()?;
+
+        // Record start time for wall clock measurement
+        let start_time = Instant::now();
 
         // Construct command
         let mut cmd = Command::new(command);
@@ -576,9 +752,11 @@ impl ContainerSandbox {
             SandboxError::ExecutionFailed(error_context)
         })?;
 
+        let child_pid = child.id();
+
         // Add process to cgroup (if cgroup manager exists)
         if let Some(ref cgroup_manager) = self.cgroup_manager {
-            if let Err(e) = cgroup_manager.add_process(child.id()) {
+            if let Err(e) = cgroup_manager.add_process(child_pid) {
                 warn!("Failed to add process to cgroup: {}", e);
             }
         }
@@ -599,17 +777,85 @@ impl ContainerSandbox {
             SandboxError::ExecutionFailed(error_context)
         })?;
 
+        // Calculate wall time
+        let wall_time = start_time.elapsed();
+        let wall_time_ns = wall_time.as_nanos() as u64;
+
+        // Collect resource usage statistics
+        let mut resource_usage = ResourceUsage::new();
+        let mut resource_violations = ResourceLimitViolations::new();
+
+        // Get resource stats from cgroup if available
+        if let Some(ref cgroup_manager) = self.cgroup_manager {
+            if let Ok(stats) = cgroup_manager.get_resource_stats() {
+                resource_usage.memory_peak_bytes = stats.memory_usage;
+                resource_usage.memory_current_bytes = stats.memory_usage;
+                resource_usage.cpu_time_ns = stats.cpu_usage;
+                resource_usage.process_count = stats.process_count;
+                resource_usage.io_read_bytes = stats.io_read_bytes;
+                resource_usage.io_write_bytes = stats.io_write_bytes;
+            }
+        }
+
+        // Set wall time
+        resource_usage.wall_time_ns = wall_time_ns;
+
+        // Get process resource usage using wait4 if available
+        if let Ok(usage) = self.get_process_usage(child_pid) {
+            resource_usage.user_time_ns = usage.user_time_ns;
+            resource_usage.system_time_ns = usage.system_time_ns;
+            resource_usage.cpu_time_ns = usage.user_time_ns + usage.system_time_ns;
+        }
+
+        // Check for resource limit violations
+        let limits = &self.config.resource_limits;
+        if resource_usage.memory_peak_bytes > limits.memory_limit {
+            resource_violations.memory_limit_exceeded = true;
+        }
+        if resource_usage.cpu_time_ns > limits.cpu_time_limit {
+            resource_violations.cpu_time_limit_exceeded = true;
+        }
+        if resource_usage.wall_time_ns > limits.wall_time_limit {
+            resource_violations.wall_time_limit_exceeded = true;
+        }
+        if resource_usage.process_count > limits.max_processes {
+            resource_violations.process_limit_exceeded = true;
+        }
+
         let exit_code = output.status.code().unwrap_or(-1);
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
-        // Log the captured output for debugging
+        // Log the captured output and resource usage for debugging
         debug!(
-            "Command '{}' completed with exit code {}. Stdout: '{}', Stderr: '{}'",
-            command, exit_code, stdout, stderr
+            "Command '{}' completed with exit code {}. Wall time: {:?}, CPU time: {:?}, Memory: {:.2}MB. Stdout: '{}', Stderr: '{}'",
+            command,
+            exit_code,
+            resource_usage.wall_time(),
+            resource_usage.cpu_time(),
+            resource_usage.memory_peak_mb(),
+            stdout,
+            stderr
         );
 
-        if exit_code != 0 {
+        // Determine task status based on exit code and resource violations
+        let status = if resource_violations.any_exceeded() {
+            if resource_violations.memory_limit_exceeded {
+                TaskStatus::MemoryLimitExceeded
+            } else if resource_violations.cpu_time_limit_exceeded {
+                TaskStatus::CpuLimitExceeded
+            } else if resource_violations.wall_time_limit_exceeded {
+                TaskStatus::Timeout
+            } else {
+                TaskStatus::ResourceLimitExceeded
+            }
+        } else if exit_code != 0 {
+            TaskStatus::Failure
+        } else {
+            TaskStatus::Success
+        };
+
+        if exit_code != 0 && status == TaskStatus::Failure {
             let debug_info = self.get_debug_info();
             let error_context = format!(
                 "Command '{}' failed with exit code {} in container {}. Working directory: {}. Command args: {:?}. Stdout: '{}'. Stderr: '{}'. Debug info: {}",
@@ -626,11 +872,13 @@ impl ContainerSandbox {
         }
 
         Ok(TaskResult {
-            status: TaskStatus::Success,
+            status,
             error: None,
             exit_code: Some(exit_code),
             stdout: Some(stdout),
             stderr: Some(stderr),
+            resource_usage,
+            resource_limits_exceeded: resource_violations,
         })
     }
 
@@ -668,6 +916,33 @@ impl ContainerSandbox {
 
         self.is_active = false;
         Ok(())
+    }
+
+    /// Get process resource usage using wait4
+    fn get_process_usage(&self, pid: u32) -> Result<ProcessUsage, SandboxError> {
+        use libc::{WNOHANG, rusage, wait4};
+        use std::mem;
+
+        let mut rusage: rusage = unsafe { mem::zeroed() };
+
+        // Use wait4 to get resource usage for the process
+        let result = unsafe { wait4(pid as i32, std::ptr::null_mut(), WNOHANG, &mut rusage) };
+
+        if result < 0 {
+            return Err(SandboxError::ResourceLimitFailed(format!(
+                "Failed to get resource usage for process {}: {}",
+                pid,
+                std::io::Error::last_os_error()
+            )));
+        }
+
+        Ok(ProcessUsage {
+            user_time_ns: (rusage.ru_utime.tv_sec as u64 * 1_000_000_000)
+                + (rusage.ru_utime.tv_usec as u64 * 1000),
+            system_time_ns: (rusage.ru_stime.tv_sec as u64 * 1_000_000_000)
+                + (rusage.ru_stime.tv_usec as u64 * 1000),
+            max_rss_kb: rusage.ru_maxrss as u64,
+        })
     }
 
     /// Get debugging information about the container state

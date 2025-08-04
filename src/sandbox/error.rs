@@ -41,6 +41,8 @@ impl From<SandboxError> for TaskResult {
             exit_code: None,
             stdout: None,
             stderr: None,
+            resource_usage: crate::executor::task::ResourceUsage::new(),
+            resource_limits_exceeded: crate::executor::task::ResourceLimitViolations::new(),
         }
     }
 }
