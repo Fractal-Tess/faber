@@ -7,6 +7,8 @@ target
 *.md
 !README.md
 
+# Embedded git repository
+go-judge/
 
 oldlib
 logs
