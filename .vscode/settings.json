@@ -1,3 +1,5 @@
 {
-  "lldb.verboseLogging": true
+  "lldb.verboseLogging": true,
+  "git.openRepositoryInParentFolders": "always",
+  "scm.defaultViewMode": "tree"
 }
