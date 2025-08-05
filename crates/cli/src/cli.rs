@@ -1,12 +1,16 @@
 use clap::{Parser, Subcommand};
 use tracing::Level;
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 #[command(name = "faber")]
 #[command(about = "A secure sandboxed task execution service")]
 #[command(version)]
 #[command(propagate_version = true)]
 pub struct Cli {
+    /// Configuration file path
+    #[arg(short, long, default_value = "/faber/config/default.toml")]
+    pub config: String,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
@@ -43,10 +47,10 @@ pub enum Commands {
         #[arg(short, long, default_value = "/faber/config/default.toml")]
         config: Option<String>,
     },
-    /// Validate configuration
+    /// Validate configuration, optionally display the parsed config
     ValidateConfig {
-        /// Configuration file path
-        #[arg(short, long, default_value = "/faber/confiog/default.toml")]
-        config: Option<String>,
+        /// Display the parsed configuration after validation
+        #[arg(short, long)]
+        display: bool,
     },
 }

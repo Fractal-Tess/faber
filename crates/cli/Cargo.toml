@@ -12,10 +12,7 @@ name = "faber"
 path = "src/main.rs"
 
 [dependencies]
-faber-api = { path = "../api" }
 faber-config = { path = "../config" }
-faber-core = { path = "../core" }
-faber-queue = { path = "../queue" }
 axum = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }

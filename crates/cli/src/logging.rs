@@ -2,16 +2,12 @@ use tracing::{Level, subscriber::set_global_default};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 pub fn init_logging(level: Level, log_dir: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
-    let env_filter = if debug {
-        "debug"
-    } else {
-        match level {
-            Level::ERROR => "error",
-            Level::WARN => "warn",
-            Level::INFO => "info",
-            Level::DEBUG => "debug",
-            Level::TRACE => "trace",
-        }
+    let env_filter = match level {
+        Level::ERROR => "error",
+        Level::WARN => "warn",
+        Level::INFO => "info",
+        Level::DEBUG => "debug",
+        Level::TRACE => "trace",
     };
 
     let log_directory = log_dir.unwrap_or("logs");

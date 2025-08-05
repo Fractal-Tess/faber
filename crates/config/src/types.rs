@@ -2,16 +2,15 @@ use serde::Deserialize;
 
 /// Main configuration structure loaded from default.toml
 #[derive(Debug, Clone, Deserialize)]
-pub struct GlobalConfig {
+pub struct FaberConfig {
     pub api: crate::api::ApiConfig,
     pub sandbox: crate::sandbox::SandboxConfig,
     pub queue: crate::queue::QueueConfig,
 }
 
-// TODO: Improve this type
-/// Configuration overrides that can be applied to a GlobalConfig
+/// Configuration overrides that can be applied to a FaberConfig
 #[derive(Debug, Clone, Default)]
-pub struct ConfigOverrides {
+pub struct FaberConfigOverrides {
     pub host: Option<String>,
     pub port: Option<u16>,
     pub auth_enabled: Option<bool>,

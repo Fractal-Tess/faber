@@ -5,7 +5,7 @@ edition = "2024"
 
 
 [dependencies]
-faber-core = { path = "../core" }
 serde = { workspace = true }
 toml = "0.9.4"
 thiserror = { workspace = true }
+tracing = "0.1"
