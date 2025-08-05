@@ -8,7 +8,7 @@ services:
       - ../.cargo:/faber/.cargo:ro
       - ../config:/faber/config:ro
       - ../crates:/faber/crates:ro
-      - ../logs:/faber/logs:rw
+      - ../logs:/var/log/faber:rw
       - ../scripts:/faber/scripts:ro
       - ../tests:/faber/tests:ro
       - ../Cargo.toml:/faber/Cargo.toml:ro
