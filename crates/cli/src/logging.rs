@@ -1,8 +1,8 @@
 use tracing::{Level, subscriber::set_global_default};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
-pub fn init_logging(level: Level, log_dir: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
-    let env_filter = match level {
+pub fn init_logging(level: &Level, log_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let env_filter = match *level {
         Level::ERROR => "error",
         Level::WARN => "warn",
         Level::INFO => "info",
@@ -10,10 +10,9 @@ pub fn init_logging(level: Level, log_dir: Option<&str>) -> Result<(), Box<dyn s
         Level::TRACE => "trace",
     };
 
-    let log_directory = log_dir.unwrap_or("logs");
-    std::fs::create_dir_all(log_directory)?;
+    std::fs::create_dir_all(log_dir)?;
 
-    let file_appender = tracing_appender::rolling::daily(log_directory, "faber.log");
+    let file_appender = tracing_appender::rolling::hourly(log_dir, "faber.log");
 
     let console_layer = fmt::layer()
         .with_target(false)

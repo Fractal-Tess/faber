@@ -36,16 +36,16 @@ pub enum Commands {
         workers: Option<usize>,
 
         /// Log directory path (if not specified, uses logs/)
-        #[arg(long)]
-        log_dir: Option<String>,
+        #[arg(long, default_value = "/var/log/faber")]
+        log_dir: String,
 
         /// Log level (error, warn, info, debug, trace)
         #[arg(short, long, default_value = Level::INFO.as_str())]
-        log_level: Option<Level>,
+        log_level: Level,
 
         /// Configuration file path
         #[arg(short, long, default_value = "/faber/config/default.toml")]
-        config: Option<String>,
+        config: String,
     },
     /// Validate configuration, optionally display the parsed config
     ValidateConfig {

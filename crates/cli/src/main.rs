@@ -1,11 +1,9 @@
 use clap::{CommandFactory, Parser};
+use faber_cli::{Cli, Commands, ServeOptions, init_logging, serve};
 use faber_config::FaberConfig;
-use tracing::{Level, error};
-
-use faber_cli::{Cli, Commands, init_logging, serve};
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Platform check - only allow Linux to run
     #[cfg(not(target_os = "linux"))]
     {
@@ -26,7 +24,17 @@ async fn main() {
             log_level,
             config,
         }) => {
-            todo!();
+            init_logging(&log_level, &log_dir)?;
+            let options = ServeOptions::new(
+                auth_enabled,
+                host,
+                port,
+                workers,
+                log_dir,
+                log_level,
+                config,
+            );
+            serve(options)?;
         }
         Some(Commands::ValidateConfig { display }) => {
             let config = FaberConfig::load_from_path(cli.config).expect("Failed to load config");
@@ -40,10 +48,12 @@ async fn main() {
             Cli::command()
                 .print_help()
                 .map_err(|e| {
-                    error!("Failed to print help: {e}");
+                    eprintln!("Failed to print help: {e}");
                 })
                 .expect("Failed to print help");
             std::process::exit(0);
         }
-    }
+    };
+
+    Ok(())
 }
