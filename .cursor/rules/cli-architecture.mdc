@@ -1,0 +1,48 @@
+# CLI Architecture
+
+## Main Components
+
+The CLI crate ([crates/cli/](mdc:crates/cli/)) contains the main application logic:
+
+- **[src/main.rs](mdc:crates/cli/src/main.rs)** - Binary entry point
+- **[src/lib.rs](mdc:crates/cli/src/lib.rs)** - Library entry point
+- **[src/cli.rs](mdc:crates/cli/src/cli.rs)** - CLI argument parsing and commands
+- **[src/serve.rs](mdc:crates/cli/src/serve.rs)** - HTTP server implementation
+- **[src/logging.rs](mdc:crates/cli/src/logging.rs)** - Logging configuration
+
+## Server Architecture
+
+- Uses Axum web framework for HTTP server
+- Implements OpenAPI/Swagger documentation with `utoipa`
+- Provides health check endpoints
+- Supports both CLI and server modes
+
+## Configuration
+
+- Integrates with [faber-config](mdc:crates/config/) crate
+- Loads configuration from [config/default.toml](mdc:config/default.toml)
+- Supports environment variable overrides
+- Validates configuration on startup
+
+## Dependencies
+
+Key dependencies from workspace [Cargo.toml](mdc:Cargo.toml):
+
+- `axum` - Web framework
+- `clap` - CLI argument parsing
+- `tokio` - Async runtime
+- `tracing` - Structured logging
+- `serde_json` - JSON serialization
+- `thiserror` - Error handling
+
+## Development
+
+- Run with `cargo run` for CLI mode
+- Run with `cargo run -- serve` for server mode
+- Use `make dev` for Docker development environment
+- Health check available at `http://localhost:3000/health`
+  description:
+  globs:
+  alwaysApply: false
+
+---

@@ -1,0 +1,56 @@
+# Testing Guidelines
+
+## Test Organization
+
+- **Unit Tests**: Written in the same file as the code being tested
+- **Integration Tests**: Located in [tests/](mdc:tests/) directory
+- **Test Categories**:
+  - [tests/basic_commands/](mdc:tests/basic_commands/) - Basic CLI functionality
+  - [tests/c_compilation/](mdc:tests/c_compilation/) - C code compilation tests
+  - [tests/common/](mdc:tests/common/) - Shared test utilities
+
+## Test Execution
+
+Use the [Makefile](mdc:Makefile) for running tests:
+
+- `make test-all` - Run all tests in Docker
+- `make test-unit` - Run unit tests only
+- `make test-integration` - Run integration tests
+- `make test-verbose` - Run tests with verbose output
+- `make test-crate CRATE=name` - Test specific crate
+
+## Test Environment
+
+- Tests run in isolated Docker containers via [docker/docker-compose.test.yml](mdc:docker/docker-compose.test.yml)
+- Uses separate test Dockerfile for consistent environment
+- Tests have access to all necessary system tools and dependencies
+
+## Writing Tests
+
+- Use `#[cfg(test)]` for test-only code
+- Use `#[tokio::test]` for async tests
+- Use `tracing` for test logging
+- Test both success and failure cases
+- Test edge cases and error conditions
+- Use descriptive test names
+
+## Test Dependencies
+
+From workspace [Cargo.toml](mdc:Cargo.toml):
+
+- `tokio` with `test-util` feature for async testing
+- `tower` for HTTP testing utilities
+- `tempfile` for temporary file operations
+
+## Security Testing
+
+- Test sandbox isolation
+- Test input validation
+- Test resource limits
+- Test privilege escalation prevention
+- Test system call filtering
+  description:
+  globs:
+  alwaysApply: false
+
+---
