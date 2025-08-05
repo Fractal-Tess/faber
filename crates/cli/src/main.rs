@@ -31,7 +31,7 @@ async fn main() {
         Some(Commands::ValidateConfig { display }) => {
             let config = FaberConfig::load_from_path(cli.config).expect("Failed to load config");
             if display {
-                println!("{config}");
+                println!("{config:#?}");
             } else {
                 println!("Config validated successfully");
             }
@@ -46,35 +46,4 @@ async fn main() {
             std::process::exit(0);
         }
     }
-
-    // match cli.command {
-    //     Some(Commands::Serve {
-    //         log_level,
-    //         auth_enabled,
-    //         host,
-    //         log_dir,
-    //         port,
-    //         workers,
-    //         config,
-    //     }) => {
-    //         // let config = GlobalConfig::load_from_path(config)?;
-    //         // serve(config).await?;
-    //     }
-    // Some(Commands::Validate { config }) => {
-    //     let config_path = config
-    //         .as_deref()
-    //         .or(cli.config.as_deref())
-    //         .unwrap_or("config/config.yaml");
-    //     // validate_config(config_path)?;
-    // }
-    // Some(Commands::Config { default }) => {
-    //     // show_config(default, &cli.config)?;
-    // }
-    // None => {
-    //     Cli::command().print_help().map_err(|e| {
-    //         error!("Failed to print help: {e}");
-    //     })?;
-    //     std::process::exit(0);
-    // }
-    // };
 }

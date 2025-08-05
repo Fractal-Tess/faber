@@ -1,7 +1,7 @@
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct SandboxConfig {
+pub struct ContainerConfig {
     pub resource_limits: ResourceLimitsConfig,
     pub cgroups: CgroupsConfig,
     pub filesystem: crate::filesystem::FilesystemConfig,

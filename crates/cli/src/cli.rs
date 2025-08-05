@@ -3,7 +3,7 @@ use tracing::Level;
 
 #[derive(Parser, Debug)]
 #[command(name = "faber")]
-#[command(about = "A secure sandboxed task execution service")]
+#[command(about = "A secure containerized task execution service")]
 #[command(version)]
 #[command(propagate_version = true)]
 pub struct Cli {

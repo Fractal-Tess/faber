@@ -4,7 +4,7 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Deserialize)]
 pub struct FaberConfig {
     pub api: crate::api::ApiConfig,
-    pub sandbox: crate::sandbox::SandboxConfig,
+    pub container: crate::container::ContainerConfig,
     pub queue: crate::queue::QueueConfig,
 }
 
@@ -19,7 +19,7 @@ pub struct FaberConfigOverrides {
 
 // Re-export all types for backward compatibility
 pub use crate::api::*;
+pub use crate::container::*;
 pub use crate::filesystem::*;
 pub use crate::queue::*;
-pub use crate::sandbox::*;
 pub use crate::security::*;

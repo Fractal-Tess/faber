@@ -3,9 +3,9 @@ use std::fs;
 use std::path::Path;
 
 pub mod api;
+pub mod container;
 pub mod filesystem;
 pub mod queue;
-pub mod sandbox;
 pub mod security;
 pub mod types;
 
@@ -65,14 +65,14 @@ impl Display for FaberConfig {
         writeln!(f, "  Auth: enabled={}", self.api.auth.enable)?;
         writeln!(
             f,
-            "  Sandbox Security: level={}",
-            self.sandbox.security.default_security_level
+            "  Container Security: level={}",
+            self.container.security.default_security_level
         )?;
         writeln!(
             f,
             "  Resource Limits: memory={}KB, cpu_time={}ms",
-            self.sandbox.resource_limits.memory_limit_kb,
-            self.sandbox.resource_limits.cpu_time_limit_ms
+            self.container.resource_limits.memory_limit_kb,
+            self.container.resource_limits.cpu_time_limit_ms
         )?;
         Ok(())
     }
