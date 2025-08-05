@@ -1,8 +1,11 @@
+use std::sync::Arc;
+
+use faber_config::{FaberConfig, logging::LogRotation};
 use tracing::{Level, subscriber::set_global_default};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
-pub fn init_logging(level: &Level, log_dir: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let env_filter = match *level {
+pub fn init_logging(config: Arc<FaberConfig>) -> Result<(), Box<dyn std::error::Error>> {
+    let env_filter = match config.logging.level {
         Level::ERROR => "error",
         Level::WARN => "warn",
         Level::INFO => "info",
@@ -10,9 +13,16 @@ pub fn init_logging(level: &Level, log_dir: &str) -> Result<(), Box<dyn std::err
         Level::TRACE => "trace",
     };
 
-    std::fs::create_dir_all(log_dir)?;
+    std::fs::create_dir_all(&config.logging.dir)?;
 
-    let file_appender = tracing_appender::rolling::hourly(log_dir, "faber.log");
+    let file_appender = match config.logging.rotation {
+        LogRotation::Hourly => {
+            tracing_appender::rolling::hourly(&config.logging.dir, &config.logging.file_name_prefix)
+        }
+        LogRotation::Daily => {
+            tracing_appender::rolling::daily(&config.logging.dir, &config.logging.file_name_prefix)
+        }
+    };
 
     let console_layer = fmt::layer()
         .with_target(false)

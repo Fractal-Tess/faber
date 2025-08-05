@@ -1,0 +1,16 @@
+[package]
+name = "faber-api"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+faber-config = { path = "../config" }
+# faber-executor = { path = "../executor" }
+# faber-queue = { path = "../queue" }
+axum = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+tower-http = { workspace = true }
+uuid = { workspace = true }

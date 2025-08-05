@@ -4,56 +4,32 @@ use std::path::Path;
 
 pub mod api;
 pub mod container;
+mod error;
 pub mod filesystem;
+pub mod logging;
 pub mod queue;
 pub mod security;
 pub mod types;
 
 pub use types::*;
 
-// Simple error type for config operations
-#[derive(Debug, thiserror::Error)]
-pub enum ConfigError {
-    #[error("Configuration error: {0}")]
-    Config(String),
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
-}
-
-pub type Result<T> = std::result::Result<T, ConfigError>;
+use crate::error::FaberConfigError;
 
 impl FaberConfig {
     /// Load configuration from a specific file path
-    pub fn load_from_path<P: AsRef<Path>>(path: P) -> Result<Self> {
+    pub fn load_from_path<P: AsRef<Path>>(path: P) -> Result<Self, FaberConfigError> {
         // 1. Load from specified config file path or default
         if !path.as_ref().exists() {
-            return Err(ConfigError::Config(format!(
-                "Config file not found: {}",
-                path.as_ref().display()
-            )));
+            return Err(FaberConfigError::ConfigNotFound(
+                path.as_ref().to_path_buf(),
+            ));
         }
 
         let content = fs::read_to_string(path)?;
 
-        let config: FaberConfig = toml::from_str(&content)
-            .map_err(|e| ConfigError::Config(format!("Failed to parse config file: {e}")))?;
+        let config: FaberConfig = toml::from_str(&content)?;
 
         Ok(config)
-    }
-
-    pub fn apply_overrides(&mut self, overrides: FaberConfigOverrides) {
-        if let Some(host) = overrides.host {
-            self.api.host = host;
-        }
-        if let Some(port) = overrides.port {
-            self.api.port = port;
-        }
-        if let Some(auth_enabled) = overrides.auth_enabled {
-            self.api.auth.enable = auth_enabled;
-        }
-        if let Some(workers) = overrides.workers {
-            self.queue.worker_count = workers;
-        }
     }
 }
 
@@ -63,17 +39,6 @@ impl Display for FaberConfig {
         writeln!(f, "  API: {}:{}", self.api.host, self.api.port)?;
         writeln!(f, "  CORS: enabled={}", self.api.cors.enable_cors)?;
         writeln!(f, "  Auth: enabled={}", self.api.auth.enable)?;
-        writeln!(
-            f,
-            "  Container Security: level={}",
-            self.container.security.default_security_level
-        )?;
-        writeln!(
-            f,
-            "  Resource Limits: memory={}KB, cpu_time={}ms",
-            self.container.resource_limits.memory_limit_kb,
-            self.container.resource_limits.cpu_time_limit_ms
-        )?;
         Ok(())
     }
 }

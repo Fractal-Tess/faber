@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 faber-config = { path = "../config" }
+faber-api = { path = "../api" }
 axum = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }

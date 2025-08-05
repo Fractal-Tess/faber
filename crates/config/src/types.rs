@@ -6,6 +6,7 @@ pub struct FaberConfig {
     pub api: crate::api::ApiConfig,
     pub container: crate::container::ContainerConfig,
     pub queue: crate::queue::QueueConfig,
+    pub logging: crate::logging::LoggingConfig,
 }
 
 /// Configuration overrides that can be applied to a FaberConfig
@@ -14,7 +15,7 @@ pub struct FaberConfigOverrides {
     pub host: Option<String>,
     pub port: Option<u16>,
     pub auth_enabled: Option<bool>,
-    pub workers: Option<u16>,
+    pub workers: Option<usize>,
 }
 
 // Re-export all types for backward compatibility

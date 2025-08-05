@@ -1,57 +1,56 @@
+use std::sync::Arc;
+
 use clap::{CommandFactory, Parser};
-use faber_cli::{Cli, Commands, ServeOptions, init_logging, serve};
+use faber_api::serve;
+use faber_cli::{Cli, Commands, init_logging};
 use faber_config::FaberConfig;
+use std::error::Error;
+use std::process::exit;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn Error>> {
     // Platform check - only allow Linux to run
     #[cfg(not(target_os = "linux"))]
     {
         eprintln!("Error: Faber is only supported on Linux.");
         eprintln!("Current platform: {}", std::env::consts::OS);
-        std::process::exit(1);
+        exit(1);
     }
 
     let cli = Cli::parse();
 
-    match cli.command {
-        Some(Commands::Serve {
-            auth_enabled,
-            host,
-            port,
-            workers,
-            log_dir,
-            log_level,
-            config,
-        }) => {
-            init_logging(&log_level, &log_dir)?;
-            let options = ServeOptions::new(
-                auth_enabled,
-                host,
-                port,
-                workers,
-                log_dir,
-                log_level,
-                config,
-            );
-            serve(options)?;
+    let command = cli.command.unwrap_or_else(|| {
+        Cli::command()
+            .print_help()
+            .map_err(|e| {
+                eprintln!("Failed to print help: {e}");
+            })
+            .expect("Failed to print help");
+        exit(0);
+    });
+
+    let config = match FaberConfig::load_from_path(&cli.config) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("{e}");
+            exit(1);
         }
-        Some(Commands::ValidateConfig { display }) => {
-            let config = FaberConfig::load_from_path(cli.config).expect("Failed to load config");
+    };
+
+    let config = Arc::new(config);
+
+    match command {
+        Commands::Serve {} => {
+            init_logging(Arc::clone(&config))?;
+            serve(config).await?;
+        }
+
+        Commands::ValidateConfig { display } => {
             if display {
                 println!("{config:#?}");
             } else {
                 println!("Config validated successfully");
             }
-        }
-        None => {
-            Cli::command()
-                .print_help()
-                .map_err(|e| {
-                    eprintln!("Failed to print help: {e}");
-                })
-                .expect("Failed to print help");
-            std::process::exit(0);
         }
     };
 

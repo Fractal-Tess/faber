@@ -27,11 +27,11 @@ pub struct RequestConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct AuthConfig {
     pub enable: bool,
-    pub secret_key: String,
+    pub api_key: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct EndpointsConfig {
     pub health_endpoint: String,
-    pub execute_endpoint: String,
+    pub task_execution_endpoint: String,
 }

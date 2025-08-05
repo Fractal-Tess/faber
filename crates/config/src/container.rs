@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ContainerConfig {
@@ -28,8 +28,32 @@ pub struct ResourceLimitsConfig {
 pub struct CgroupsConfig {
     pub enabled: bool,
     pub prefix: String,
-    pub version: String,
+    pub version: CgroupVersion,
     pub enable_cpu_rate_limit: bool,
     pub enable_memory_limit: bool,
     pub enable_process_limit: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum CgroupVersion {
+    V1,
+    V2,
+}
+
+impl<'de> Deserialize<'de> for CgroupVersion {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = u8::deserialize(deserializer)?;
+        match s {
+            1 => Err(serde::de::Error::custom(
+                "Cgroup version 1 is not supported",
+            )),
+            2 => Ok(CgroupVersion::V2),
+            _ => Err(serde::de::Error::custom(format!(
+                "Invalid cgroup version: {s}"
+            ))),
+        }
+    }
 }

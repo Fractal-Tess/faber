@@ -2,14 +2,8 @@ use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SecurityConfig {
-    #[serde(default = "default_security_level")]
-    pub default_security_level: String,
     pub namespaces: NamespaceConfig,
     pub seccomp: SeccompConfig,
-}
-
-fn default_security_level() -> String {
-    "medium".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]

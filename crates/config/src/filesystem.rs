@@ -97,33 +97,3 @@ where
 
     Ok(mounts)
 }
-
-impl ReadOnlyMount {
-    pub fn new(name: String, source: String, target: String) -> Self {
-        Self {
-            name,
-            source,
-            target,
-        }
-    }
-}
-
-impl ReadWriteMount {
-    pub fn new(name: String, source: String, target: String) -> Self {
-        Self {
-            name,
-            source,
-            target,
-        }
-    }
-}
-
-impl TempfsMount {
-    pub fn new(name: String, target: String, options: String) -> Self {
-        Self {
-            name,
-            target,
-            options,
-        }
-    }
-}
