@@ -1,0 +1,81 @@
+---
+alwaysApply: true
+---
+
+# Faber Project Overview
+
+Faber is a secure, sandboxed task execution service built in Rust that provides isolated environments for running untrusted code. The project uses Linux namespaces, cgroups, and seccomp for security.
+
+## Project Structure
+
+The main workspace is defined in [Cargo.toml](mdc:Cargo.toml) with the following crates:
+
+- **`faber-core`** ([crates/core/](mdc:crates/core/)): Core types, traits, and error definitions
+- **`faber-config`** ([crates/config/](mdc:crates/config/)): Configuration management and validation
+- **`faber-container`** ([crates/container/](mdc:crates/container/)): Container and sandboxing functionality using Linux namespaces
+- **`faber-executor`** ([crates/executor/](mdc:crates/executor/)): Task execution logic
+- **`faber-api`** ([crates/api/](mdc:crates/api/)): HTTP API layer with Axum
+- **`faber-cli`** ([crates/cli/](mdc:crates/cli/)): Command-line interface with Clap
+- **`faber-queue`** ([crates/queue/](mdc:crates/queue/)): Job queue management and worker processing
+
+## Key Files
+
+- [config/default.toml](mdc:config/default.toml): Default configuration
+- [docker/](mdc:docker/): Docker configurations for development, testing, and production
+
+## Development Environment
+
+- **Docker** containers must run as root inside the container
+- **Nix** development shell with Rust toolchain
+- **Tokio** async runtime for concurrency
+- **Axum** for HTTP API
+- **Clap** for CLI argument parsing
+
+## Security Features
+
+- Linux namespaces (PID, mount, network, IPC, UTS, user, time, cgroup)
+- cgroups for resource limits
+- seccomp for system call filtering
+- Capability dropping for reduced privileges
+- Read-only filesystem
+- Command validation
+
+## Build and Run
+
+Cannot build and run because the container needs to be run as root. So it is already set up to run in a docker container.
+Log files are stored in the `logs` directory.
+To interact with the api, use curl like so:
+
+````
+curl --location 'http://localhost:3000/execute-tasks' \
+--header 'Content-Type: application/json' \
+--data '[
+    {
+        "command": "/usr/bin/echo",
+        "args":[ "hello world" ]
+    },
+    {
+        "command":"/usr/bin/g++",
+        "args":[
+            "main.cpp",
+            "-o",
+            "program"
+        ],
+        "files":{
+            "main.cpp":"#include <iostream>\n#include <vector>\n\nint main() {\n    std::vector<int> numbers = {1, 2, 3, 4, 5};\n    \n    std::cout << \"Numbers: \";\n    for (const auto& num : numbers) {\n        std::cout << num << \" \";\n    }\n    std::cout << std::endl;\n    \n    return 0;\n}"
+        }
+    },
+    {
+        "command":"./program"
+    }
+]'```
+
+Before executing the command for curl, wait a couple of seconds to make sure the container is ready.e of secon
+
+
+description:
+globs:
+alwaysApply: false
+
+---
+````
