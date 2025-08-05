@@ -1,19 +1,31 @@
 use std::time::Instant;
 
 use axum::{extract::Request, http::HeaderValue, middleware::Next, response::Response};
-use tracing::debug;
+use tracing::{debug, info, warn};
 
 use crate::middlewares::request_id::RequestId;
 
 pub async fn timing_middleware(request: Request, next: Next) -> Response {
-    let request_id = request.extensions().get::<RequestId>().unwrap().clone();
+    let request_id = request.extensions().get::<RequestId>().cloned();
     let start = Instant::now();
     let mut response = next.run(request).await;
     let duration = start.elapsed();
-    response.headers_mut().insert(
-        "X-Response-Time",
-        HeaderValue::from_str(&duration.as_secs_f64().to_string()).unwrap(),
-    );
-    debug!("Request {request_id:?} took {duration:?}");
+
+    // Try to add the response time header, log warning if it fails
+    if let Ok(header_value) = HeaderValue::from_str(format!("{}ms", duration.as_millis()).as_str())
+    {
+        response
+            .headers_mut()
+            .insert("X-Response-Time", header_value);
+    } else {
+        warn!("Failed to create X-Response-Time header value");
+    }
+
+    // Log the timing information with request ID if available
+    match request_id {
+        Some(id) => info!("Request {id:?} took {duration:?}"),
+        None => info!("Request took {duration:?} (no request ID available)"),
+    }
+
     response
 }
