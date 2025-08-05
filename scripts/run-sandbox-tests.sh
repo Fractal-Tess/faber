@@ -16,17 +16,17 @@ cargo build
 
 # Run tests for the sandbox crate specifically
 echo "Running sandbox tests..."
-cargo test -p faber-sandbox
+cargo test -p faber-container
 
 # Run tests with output (to see test results)
 echo "Running sandbox tests with output..."
-cargo test -p faber-sandbox -- --nocapture
+cargo test -p faber-container -- --nocapture
 
 # Run specific test modules if needed
 echo "Running specific test modules..."
-cargo test -p faber-sandbox error_tests -- --nocapture
-cargo test -p faber-sandbox resource_limits_tests -- --nocapture
-cargo test -p faber-sandbox namespace_settings_tests -- --nocapture
-cargo test -p faber-sandbox container_config_tests -- --nocapture
+cargo test -p faber-container error_tests -- --nocapture
+cargo test -p faber-container resource_limits_tests -- --nocapture
+cargo test -p faber-container namespace_settings_tests -- --nocapture
+cargo test -p faber-container container_config_tests -- --nocapture
 
 echo "All sandbox tests completed!" 

@@ -28,10 +28,6 @@ execute_endpoint = "/execute-tasks" # The endpoint path for executing tasks (str
 [queue]
 worker_count = 2 # Number of worker threads to process jobs
 max_queue_size = 100 # Maximum number of jobs in the queue
-max_queue_wait_time_seconds = 300 # Maximum time a job can wait in the queue before being cancelled (5 minutes)
-max_job_execution_time_seconds = 120 # Maximum time a job can run before being cancelled (2 minutes)
-worker_poll_interval_ms = 100 # How often workers check for new jobs (milliseconds)
-max_concurrent_sandboxes = 2 # Maximum number of concurrent sandboxes (should match worker_count)
 
 [sandbox.resource_limits]
 memory_limit_kb = 524288 # 512MB
@@ -71,12 +67,16 @@ usr = ["/usr", "/usr"]
 # var_lib_ghc = ["/var/lib/ghc", "/var/lib/ghc"]
 # etc_java_17_openjdk = ["/etc/java-17-openjdk", "/etc/java-17-openjdk"]
 
-# Device files 
+# Device files (essential for many programs)
 dev_null = ["/dev/null", "/dev/null"]
 dev_random = ["/dev/random", "/dev/random"]
 dev_urandom = ["/dev/urandom", "/dev/urandom"]
 dev_zero = ["/dev/zero", "/dev/zero"]
 dev_full = ["/dev/full", "/dev/full"]
+
+# Essential configuration files
+etc_ld_so_cache = ["/etc/ld.so.cache", "/etc/ld.so.cache"]
+etc_alternatives = ["/etc/alternatives", "/etc/alternatives"]
 
 # [sandbox.filesystem.mounts.writable]
 # # Working directory for user code
@@ -93,18 +93,18 @@ tmp_tmpfs = ["/tmp", "size=128m,nr_inodes=4k"]
 default_security_level = "standard" # Not configurable for now
 
 [sandbox.security.namespaces]
-pid = false      # Enable PID namespace isolation (can override with FABER_SANDBOX_PID_NAMESPACE_ENABLED)
+pid = false      # Enable PID namespace isolation (can override with faber_container_PID_NAMESPACE_ENABLED)
 mount = true     # Enable mount namespace isolation
 network = true   # Enable network namespace isolation
 ipc = true       # Enable IPC namespace isolation
 uts = true       # Enable UTS (hostname) namespace isolation
-user = true      # Enable user namespace isolation
+user = false     # Disable user namespace isolation temporarily
 time = false     # Enable time namespace isolation
-cgroup = true    # Enable cgroup namespace isolation
+cgroup = false    # Enable cgroup namespace isolation
 
 
 [sandbox.security.seccomp]
-enabled = true
+enabled = false
 # Default action for syscalls not explicitly allowed
 default_action = "SCMP_ACT_ERRNO"
 

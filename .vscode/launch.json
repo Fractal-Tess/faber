@@ -6,13 +6,7 @@
       "request": "launch",
       "name": "Remote Debug (Docker Container)",
       "program": "${workspaceFolder}/target/x86_64-unknown-linux-musl/debug/faber",
-      "args": [
-        "--config",
-        "/faber/config/config.yaml",
-        "--log-file",
-        "/faber/logs/debug.log",
-        "serve"
-      ],
+      "args": ["--log-dir", "/faber/logs", "serve"],
       "initCommands": [
         "platform select remote-linux",
         "platform connect connect://0.0.0.0:12345",

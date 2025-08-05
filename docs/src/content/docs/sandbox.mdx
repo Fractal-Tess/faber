@@ -1,11 +1,11 @@
 ---
 title: 'Sandbox Crate'
-description: 'Documentation for the faber-sandbox crate'
+description: 'Documentation for the faber-container crate'
 ---
 
 # Sandbox Crate
 
-The `faber-sandbox` crate provides the core sandboxing functionality for Faber, implementing Linux namespaces, cgroups, and seccomp to create secure, isolated execution environments for untrusted code.
+The `faber-container` crate provides the core sandboxing functionality for Faber, implementing Linux namespaces, cgroups, and seccomp to create secure, isolated execution environments for untrusted code.
 
 ## Overview
 
@@ -89,7 +89,7 @@ pub struct CgroupConfig {
 ### Basic Container Setup
 
 ```rust
-use faber_sandbox::{Container, ContainerConfig, SandboxError};
+use faber_container::{Container, ContainerConfig, SandboxError};
 
 async fn create_sandbox() -> Result<Container, SandboxError> {
     let config = ContainerConfig {

@@ -1,6 +1,6 @@
 # Faber
 
-![faber](./faber.png) 
+![faber](./faber.png)
 Faber is a secure, sandboxed task execution service that provides isolated environments for running untrusted code. It uses Linux namespaces, cgroups, and seccomp to create secure containers for task execution.
 
 ## Architecture
@@ -9,7 +9,7 @@ The project is organized as a Rust workspace with multiple crates:
 
 - **`faber-core`**: Core types, traits, and error definitions
 - **`faber-config`**: Configuration management and validation
-- **`faber-sandbox`**: Container and sandboxing functionality
+- **`faber-container`**: Container and sandboxing functionality
 - **`faber-executor`**: Task execution logic
 - **`faber-api`**: HTTP API layer with Axum
 - **`faber-cli`**: Command-line interface with Clap

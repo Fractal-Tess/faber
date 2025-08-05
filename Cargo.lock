@@ -335,6 +335,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "faber-container"
+version = "0.1.0"
+dependencies = [
+ "caps",
+ "faber-config",
+ "faber-core",
+ "libc",
+ "nix",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "syscallz",
+ "tempfile",
+ "thiserror 2.0.12",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "faber-core"
 version = "0.1.0"
 dependencies = [
@@ -348,8 +367,8 @@ name = "faber-executor"
 version = "0.1.0"
 dependencies = [
  "faber-config",
+ "faber-container",
  "faber-core",
- "faber-sandbox",
  "serde",
  "tempfile",
  "thiserror 2.0.12",
@@ -367,25 +386,6 @@ dependencies = [
  "serde",
  "thiserror 2.0.12",
  "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "faber-sandbox"
-version = "0.1.0"
-dependencies = [
- "caps",
- "faber-config",
- "faber-core",
- "libc",
- "nix",
- "serde",
- "serde_json",
- "serde_yaml",
- "syscallz",
- "tempfile",
- "thiserror 2.0.12",
  "tracing",
  "uuid",
 ]

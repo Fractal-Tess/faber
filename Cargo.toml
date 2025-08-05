@@ -3,7 +3,7 @@ resolver = "3"
 members = [
     "crates/core",
     "crates/config",
-    "crates/sandbox",
+    "crates/container",
     "crates/executor",
     "crates/api",
     "crates/cli",
