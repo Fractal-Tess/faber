@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use axum::{extract::Request, http::HeaderValue, middleware::Next, response::Response};
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 use crate::middlewares::request_id::RequestId;
 
