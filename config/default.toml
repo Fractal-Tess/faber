@@ -23,7 +23,7 @@ api_key = "" # Secret key for authentication, must be set via FABER_AUTH_SECRET_
 
 [api.endpoints]
 health_endpoint = "/health" # The health check endpoint path (string)
-task_execution_endpoint = "/execute-tasks" # The endpoint path for executing tasks (string)
+task_execution_endpoint = "/execute" # The endpoint path for executing tasks (string)
 
 [logging]
 dir = "/var/log/faber" # The directory to store logs (string)
