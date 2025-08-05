@@ -13,6 +13,7 @@ pub async fn execution(
     Json(request): Json<ExecutionRequest>,
 ) -> Result<Json<ExecutionResponse>, (StatusCode, Json<String>)> {
     debug!("Received execution request with {} tasks", request.len());
+    debug!("Config: {:?}", config);
 
     Ok(Json(vec![]))
 }
