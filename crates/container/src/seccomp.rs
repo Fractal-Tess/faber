@@ -74,69 +74,6 @@ impl SeccompFilter {
 
         Ok(())
     }
-
-    /// Load seccomp filter from configuration file
-    fn load_filter_from_config(&self) -> Result<()> {
-        if let Some(config_file) = &self.config_file {
-            info!("Loading seccomp filter from config file: {}", config_file);
-
-            // Read and parse configuration file
-            let content = std::fs::read_to_string(config_file).map_err(|e| {
-                FaberError::Sandbox(format!("Failed to read seccomp config file: {}", e))
-            })?;
-
-            // Parse configuration and apply filter
-            self.parse_and_apply_config(&content)?;
-        }
-
-        Ok(())
-    }
-
-    /// Parse configuration and apply seccomp filter
-    fn parse_and_apply_config(&self, content: &str) -> Result<()> {
-        // This is a simplified implementation
-        // In a real implementation, you would parse the configuration
-        // and create a BPF filter based on the allowed system calls
-
-        info!("Parsing seccomp configuration");
-
-        // For now, just log the configuration
-        for line in content.lines() {
-            if !line.trim().is_empty() && !line.starts_with('#') {
-                info!("Seccomp rule: {}", line.trim());
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Create a basic seccomp filter for the specified level
-    fn create_basic_filter(&self) -> Result<()> {
-        match self.level {
-            SeccompLevel::None => Ok(()),
-            SeccompLevel::Basic => self.create_basic_filter_basic(),
-            SeccompLevel::Medium => self.create_basic_filter_medium(),
-            SeccompLevel::Strict => self.create_basic_filter_strict(),
-        }
-    }
-
-    fn create_basic_filter_basic(&self) -> Result<()> {
-        // Basic filter - allow common system calls
-        info!("Creating basic seccomp filter");
-        Ok(())
-    }
-
-    fn create_basic_filter_medium(&self) -> Result<()> {
-        // Medium filter - more restrictive
-        info!("Creating medium seccomp filter");
-        Ok(())
-    }
-
-    fn create_basic_filter_strict(&self) -> Result<()> {
-        // Strict filter - very restrictive
-        info!("Creating strict seccomp filter");
-        Ok(())
-    }
 }
 
 // Legacy SeccompManager for backward compatibility

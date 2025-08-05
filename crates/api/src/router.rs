@@ -7,11 +7,11 @@ use axum::{
     Extension, Router,
     routing::{get, post},
 };
-use faber_config::Config;
+use faber_config::GlobalConfig;
 use faber_queue::QueueManager;
 use std::sync::Arc;
 
-pub fn create_router(config: &Config, queue_manager: Arc<QueueManager>) -> Router {
+pub fn create_router(config: &GlobalConfig, queue_manager: Arc<QueueManager>) -> Router {
     let public_routes =
         Router::new().route(&config.api.endpoints.health_endpoint, get(health_check));
 
@@ -19,13 +19,13 @@ pub fn create_router(config: &Config, queue_manager: Arc<QueueManager>) -> Route
         .route(&config.api.endpoints.execute_endpoint, post(execute_tasks))
         .layer(Extension(queue_manager));
 
-    protected_routes = if config.api.auth.enable.parse().unwrap_or(false) {
-        protected_routes
-    } else {
-        protected_routes
+    // The config.api.auth.enable is already parsed from "env:VAR|default" format during config loading
+    let auth_enabled = config.api.auth.enable.parse::<bool>().unwrap_or(false);
+    if auth_enabled {
+        protected_routes = protected_routes
             .layer(Extension(Arc::new(config.api.auth.secret_key.clone())))
-            .layer(middleware::from_fn(auth_middleware))
-    };
+            .layer(middleware::from_fn(auth_middleware));
+    }
 
     let final_routes = public_routes.merge(protected_routes);
 

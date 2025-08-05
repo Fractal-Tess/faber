@@ -1,5 +1,5 @@
 pub mod error;
-pub mod task_executor;
+pub mod executor;
 
 pub use error::*;
-pub use task_executor::*;
+pub use executor::*;

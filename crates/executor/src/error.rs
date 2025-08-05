@@ -1,5 +1,5 @@
+use faber_container::SandboxError;
 use faber_core::FaberError;
-use faber_sandbox::SandboxError;
 use serde::Serialize;
 use std::time::Duration;
 use thiserror::Error;

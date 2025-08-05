@@ -1,31 +1,36 @@
 use clap::{CommandFactory, Parser};
 use tracing::{Level, error};
 
-use faber_cli::{Cli, Commands, init_logging, serve, show_config, validate_config};
+use faber_cli::{Cli, Commands, init_logging, serve, validate_config};
 
 #[tokio::main]
 async fn main() {
-    let cli = Cli::parse();
-    println!("cli: {:?}", cli);
-    std::process::exit(1);
-
-    // Initialize logging
-    init_logging(
-        cli.log_level.unwrap_or(Level::INFO),
-        cli.debug,
-        cli.log_file.as_deref(),
-    );
-
-    if let Err(e) = run(cli).await {
-        error!("Application failed: {}", e);
+    // Platform check - only allow Linux to run
+    #[cfg(not(target_os = "linux"))]
+    {
+        eprintln!("Error: Faber is only supported on Linux.");
+        eprintln!("Current platform: {}", std::env::consts::OS);
         std::process::exit(1);
     }
-}
 
-async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
+    let cli = Cli::parse();
+
+    init_logging(cli.log_level.unwrap_or(Level::INFO), &cli.log_dir).map_err(|e| {
+        error!("Failed to initialize logging: {e}");
+    })?;
+
     match cli.command {
-        Some(Commands::Serve { graceful_shutdown }) => {
-            serve(cli, graceful_shutdown).await?;
+        Some(Commands::Serve {
+            log_level,
+            auth_enabled,
+            host,
+            log_dir,
+            port,
+            workers,
+            config,
+        }) => {
+            let config = GlobalConfig::load_from_path(config)?;
+            serve(config).await?;
         }
         Some(Commands::Validate { config }) => {
             let config_path = config
@@ -39,10 +44,11 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         }
 
         None => {
-            // Show help if no subcommand is provided
-            let _ = Cli::command().print_help();
+            Cli::command().print_help().map_err(|e| {
+                error!("Failed to print help: {e}");
+            })?;
             std::process::exit(0);
         }
-    }
+    };
     Ok(())
 }

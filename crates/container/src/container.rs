@@ -1,4 +1,4 @@
-use faber_config::Config;
+use faber_config::GlobalConfig;
 use faber_core::{FaberError, Result, Task, TaskResult};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -14,7 +14,7 @@ use super::error::SandboxError;
 use super::mounts::{MountConfig, MountManager};
 use super::namespaces::{NamespaceConfig, NamespaceManager};
 use super::privileges::PrivilegeManager;
-use super::seccomp::{SeccompFilter, SeccompLevel};
+use super::seccomp::SeccompLevel;
 
 /// Process resource usage statistics
 #[derive(Debug, Clone)]
@@ -46,7 +46,7 @@ pub struct ResourceLimits {
 }
 
 impl ResourceLimits {
-    pub fn from_config(config: &Config) -> Self {
+    pub fn from_config(config: &GlobalConfig) -> Self {
         let limits = &config.sandbox.resource_limits;
         Self {
             memory_limit: limits.memory_limit_kb as u64 * 1024, // Convert KB to bytes
@@ -89,7 +89,7 @@ pub struct NamespaceSettings {
 }
 
 impl NamespaceSettings {
-    pub fn from_config(config: &Config) -> Self {
+    pub fn from_config(config: &GlobalConfig) -> Self {
         let namespaces = &config.sandbox.security.namespaces;
         Self {
             pid: namespaces.pid,
@@ -127,7 +127,7 @@ pub struct ContainerConfig {
 
 impl ContainerConfig {
     /// Create a new configuration from the global config
-    pub fn from_config(config: &Config) -> Self {
+    pub fn from_config(config: &GlobalConfig) -> Self {
         Self {
             resource_limits: ResourceLimits::from_config(config),
             namespace_settings: NamespaceSettings::from_config(config),
@@ -203,7 +203,7 @@ impl Default for ContainerConfig {
 }
 
 /// Secure container sandbox for process execution
-pub struct ContainerSandbox {
+pub struct Container {
     /// Unique container ID
     container_id: String,
     /// Container configuration
@@ -222,13 +222,14 @@ pub struct ContainerSandbox {
     mount_manager: MountManager,
     /// Privilege manager for dropping privileges
     privilege_manager: PrivilegeManager,
-    /// Seccomp filter for system call filtering
-    seccomp_filter: SeccompFilter,
+    // TODO:
+    // Seccomp filter for system call filtering
+    // seccomp_filter: SeccompFilter,
 }
 
-impl ContainerSandbox {
+impl Container {
     /// Create a new container sandbox from global config
-    pub fn from_config(global_config: &Config) -> Result<Self> {
+    pub fn from_config(global_config: &GlobalConfig) -> Result<Self> {
         let config = ContainerConfig::from_config(global_config);
         Self::new_with_config(config, global_config)
     }
@@ -236,12 +237,12 @@ impl ContainerSandbox {
     /// Create a new container sandbox with specific config
     pub fn new(config: ContainerConfig) -> Result<Self> {
         // Load default config for cgroups and other settings
-        let global_config = Config::default();
+        let global_config = GlobalConfig::default();
         Self::new_with_config(config, &global_config)
     }
 
     /// Create a new container sandbox with both configs
-    fn new_with_config(config: ContainerConfig, global_config: &Config) -> Result<Self> {
+    fn new_with_config(config: ContainerConfig, global_config: &GlobalConfig) -> Result<Self> {
         let container_id = Uuid::new_v4().to_string();
         info!("Creating new container sandbox: {}", container_id);
 
@@ -280,28 +281,37 @@ impl ContainerSandbox {
             network: config.namespace_settings.network,
             ipc: config.namespace_settings.ipc,
             uts: config.namespace_settings.uts,
-            user: true, // Enable user namespace for secure privilege dropping
+            user: config.namespace_settings.user, // Use config setting instead of forcing true
         };
 
         let namespace_manager = NamespaceManager::new(namespace_config);
 
         // Initialize mount manager with container-specific configuration
-        let mount_config = if config.mount_config.mounts.is_empty() {
-            // Use default config with custom work directory size
-            MountConfig::default_secure()
-        } else {
-            config.mount_config.clone()
-        };
+        let mount_config = config.mount_config.clone();
+        info!(
+            "Using mount configuration with {} mounts",
+            mount_config.mounts.len()
+        );
         let mount_manager = MountManager::new(&mount_config, &container_root);
 
         // Create directory structure first (outside namespace)
         if let Err(e) = mount_manager.apply_mounts() {
-            let error_context = format!(
-                "Failed to apply mounts for container {}. Mount config: {:?}. Error: {}",
-                container_id, mount_config, e
+            let debug_info = format!(
+                "Container root: {}, Mount config: {:?}, Error: {}",
+                container_root.display(),
+                mount_config,
+                e
             );
+            let error_context =
+                format!("Failed to apply mounts for container {container_id}. {debug_info}");
             return Err(FaberError::Sandbox(error_context));
         }
+
+        // Log successful mount operations for debugging
+        info!(
+            "Successfully applied mounts for container {} with config: {:?}",
+            container_id, mount_config
+        );
 
         // Apply path masking for additional security
         if let Err(e) = mount_manager.apply_path_masking() {
@@ -331,36 +341,10 @@ impl ContainerSandbox {
         // Initialize privilege manager
         let privilege_manager = PrivilegeManager::new(config.uid, config.gid);
 
-        // Initialize seccomp filter
-        let seccomp_filter = if Path::new("seccomp.yaml").exists() {
-            SeccompFilter::new_with_config(config.seccomp_level, "seccomp.yaml".to_string())
-                .unwrap_or_else(|e| {
-                    warn!(
-                        "Failed to create seccomp filter with config: {}, falling back to basic",
-                        e
-                    );
-                    SeccompFilter::new(config.seccomp_level).unwrap_or_else(|e| {
-                        warn!(
-                            "Failed to create seccomp filter: {}, falling back to none",
-                            e
-                        );
-                        SeccompFilter::new(SeccompLevel::None).unwrap()
-                    })
-                })
-        } else {
-            SeccompFilter::new(config.seccomp_level).unwrap_or_else(|e| {
-                warn!(
-                    "Failed to create seccomp filter: {}, falling back to none",
-                    e
-                );
-                SeccompFilter::new(SeccompLevel::None).unwrap()
-            })
-        };
+        // TODO: ADD seccomp filtering
 
         info!(
-            "Successfully created container sandbox: {} with root at {}",
-            container_id,
-            container_root.display()
+            "Successfully created container sandbox: {container_id} with root at {container_root:?}"
         );
 
         Ok(Self {
@@ -373,7 +357,7 @@ impl ContainerSandbox {
             namespace_manager,
             mount_manager,
             privilege_manager,
-            seccomp_filter,
+            // seccomp_filter,
         })
     }
 
@@ -503,8 +487,56 @@ impl ContainerSandbox {
         // Record start time for wall clock measurement
         let start_time = Instant::now();
 
-        // Construct command
-        let mut cmd = Command::new(command);
+        // Resolve command path within the sandbox environment
+        let resolved_command = if command.starts_with('/') {
+            // For absolute paths, try to find the command in mounted directories
+            let command_name = std::path::Path::new(command)
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_else(|| command.to_string());
+
+            let path_dirs = [
+                self.container_root.join("usr/local/bin"),
+                self.container_root.join("usr/bin"),
+                self.container_root.join("bin"),
+            ];
+
+            let mut found_path = None;
+            for dir in &path_dirs {
+                let test_path = dir.join(&command_name);
+                if test_path.exists() {
+                    found_path = Some(test_path);
+                    break;
+                }
+            }
+
+            match found_path {
+                Some(path) => {
+                    info!(
+                        "Resolved absolute command '{}' to '{}'",
+                        command,
+                        path.display()
+                    );
+                    path.to_string_lossy().to_string()
+                }
+                None => {
+                    // If not found in mounted dirs, try the original path (might work in some cases)
+                    warn!(
+                        "Could not resolve absolute command '{}' in mounted directories, trying original path",
+                        command
+                    );
+                    command.to_string()
+                }
+            }
+        } else {
+            // For relative commands, use the command as-is and let PATH resolve it
+            command.to_string()
+        };
+
+        debug!("Command resolved to: {}", resolved_command);
+
+        // Construct command with resolved path
+        let mut cmd = Command::new(&resolved_command);
         cmd.args(args);
         cmd.current_dir(&self.work_dir);
 
@@ -514,9 +546,9 @@ impl ContainerSandbox {
         cmd.stderr(std::process::Stdio::piped());
 
         // Apply seccomp filter for system call restriction
-        if let Err(e) = self.seccomp_filter.apply_to_command(&mut cmd) {
-            warn!("Failed to apply seccomp filter: {}", e);
-        }
+        // if let Err(e) = self.seccomp_filter.apply_to_command(&mut cmd) {
+        //     warn!("Failed to apply seccomp filter: {}", e);
+        // }
 
         // Apply privilege dropping
         if let Err(e) = self.privilege_manager.apply_privileges(&mut cmd) {
@@ -538,43 +570,17 @@ impl ContainerSandbox {
 
         // Log command details for debugging
         info!(
-            "Executing command in container {}: '{}' with args {:?} in dir {}",
+            "Executing command in container {}: '{}' (resolved from '{}') with args {:?} in dir {}",
             self.container_id,
+            resolved_command,
             command,
             args,
             self.work_dir.display()
         );
 
-        // Debug: Check if the command exists
-        let command_path = if command.starts_with('/') {
-            command.to_string()
-        } else {
-            // Try to find the command in PATH
-            let path_dirs = [
-                self.container_root.join("usr/local/bin"),
-                self.container_root.join("usr/bin"),
-                self.container_root.join("bin"),
-            ];
-
-            let mut found_path = None;
-            for dir in &path_dirs {
-                let test_path = dir.join(command);
-                if test_path.exists() {
-                    found_path = Some(test_path);
-                    break;
-                }
-            }
-
-            found_path
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|| command.to_string())
-        };
-
-        debug!("Command path resolved to: {}", command_path);
-
-        // Check if command file exists
-        if !std::path::Path::new(&command_path).exists() {
-            warn!("Command file does not exist: {}", command_path);
+        // Check if resolved command file exists
+        if !std::path::Path::new(&resolved_command).exists() {
+            warn!("Resolved command file does not exist: {}", resolved_command);
         }
 
         // Execute and capture result
@@ -850,70 +856,108 @@ impl ContainerSandbox {
         info.push(format!("Container root: {}", self.container_root.display()));
         info.push(format!("Is active: {}", self.is_active));
 
-        // Check if common binaries exist
+        // Check if common binaries exist in mounted locations
         let common_bins = [
-            "/bin/sh",
-            "/bin/ls",
-            "/usr/bin/gcc",
-            "/usr/bin/python3",
-            "/bin/echo",
-            "/usr/bin/which",
+            ("sh", ["bin/sh", "usr/bin/sh"]),
+            ("ls", ["bin/ls", "usr/bin/ls"]),
+            ("echo", ["bin/echo", "usr/bin/echo"]),
+            ("gcc", ["usr/bin/gcc", "usr/local/bin/gcc"]),
+            ("python3", ["usr/bin/python3", "usr/local/bin/python3"]),
+            ("which", ["usr/bin/which", "bin/which"]),
         ];
+
         let mut available_bins = Vec::new();
         let mut missing_bins = Vec::new();
 
-        for bin in &common_bins {
-            let bin_path = self.container_root.join(bin.trim_start_matches('/'));
-            if bin_path.exists() {
-                available_bins.push(bin);
-            } else {
-                missing_bins.push(bin);
+        for (bin_name, possible_paths) in &common_bins {
+            let mut found = false;
+            for path in possible_paths {
+                let bin_path = self.container_root.join(path);
+                if bin_path.exists() {
+                    available_bins.push(format!("{} ({})", bin_name, bin_path.display()));
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                let attempted_paths: Vec<String> = possible_paths
+                    .iter()
+                    .map(|p| self.container_root.join(p).display().to_string())
+                    .collect();
+                missing_bins.push(format!("{} (tried: {:?})", bin_name, attempted_paths));
             }
         }
 
         info.push(format!("Available binaries: {:?}", available_bins));
         info.push(format!("Missing binaries: {:?}", missing_bins));
 
-        // Check PATH directories
+        // Check PATH directories and their contents
         let path_dirs = [
             self.container_root.join("usr/local/bin"),
             self.container_root.join("usr/bin"),
             self.container_root.join("bin"),
         ];
 
-        let mut existing_path_dirs = Vec::new();
-        let mut missing_path_dirs = Vec::new();
-
+        let mut path_info = Vec::new();
         for dir in &path_dirs {
             if dir.exists() {
-                existing_path_dirs.push(dir.display().to_string());
+                // Count files in directory
+                if let Ok(entries) = std::fs::read_dir(dir) {
+                    let count = entries.count();
+                    path_info.push(format!("{} ({} files)", dir.display(), count));
+                } else {
+                    path_info.push(format!("{} (unreadable)", dir.display()));
+                }
             } else {
-                missing_path_dirs.push(dir.display().to_string());
+                path_info.push(format!("{} (missing)", dir.display()));
             }
         }
+        info.push(format!("PATH directories: {:?}", path_info));
 
-        info.push(format!(
-            "Existing PATH directories: {:?}",
-            existing_path_dirs
-        ));
-        info.push(format!("Missing PATH directories: {:?}", missing_path_dirs));
-
-        // Check working directory contents
-        if let Ok(entries) = std::fs::read_dir(&self.work_dir) {
-            let files: Vec<String> = entries
-                .filter_map(|e| e.ok())
-                .map(|e| e.file_name().to_string_lossy().to_string())
-                .collect();
-            info.push(format!("Work directory contents: {:?}", files));
+        // Check working directory
+        if self.work_dir.exists() {
+            if let Ok(entries) = std::fs::read_dir(&self.work_dir) {
+                let files: Vec<String> = entries
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.file_name().to_string_lossy().to_string())
+                    .collect();
+                info.push(format!(
+                    "Work directory accessible with {} items: {:?}",
+                    files.len(),
+                    files
+                ));
+            } else {
+                info.push("Work directory exists but not readable".to_string());
+            }
         } else {
-            info.push("Work directory not accessible".to_string());
+            info.push("Work directory does not exist".to_string());
         }
+
+        // Check mount points
+        let mut mount_info = Vec::new();
+        for mount in &self.config.mount_config.mounts {
+            let target_path = self.container_root.join(&mount.target);
+            if target_path.exists() {
+                mount_info.push(format!(
+                    "{:?} -> {} (OK)",
+                    mount.source,
+                    target_path.display()
+                ));
+            } else {
+                mount_info.push(format!(
+                    "{:?} -> {} (MISSING)",
+                    mount.source,
+                    target_path.display()
+                ));
+            }
+        }
+        info.push(format!("Mount status: {:?}", mount_info));
 
         info.join(", ")
     }
 }
 
-impl Drop for ContainerSandbox {
+impl Drop for Container {
     fn drop(&mut self) {
         if self.is_active {
             if let Err(e) = self.cleanup() {
@@ -923,48 +967,5 @@ impl Drop for ContainerSandbox {
                 );
             }
         }
-    }
-}
-
-// Legacy Container struct for backward compatibility
-pub struct Container {
-    pub id: String,
-    pub config: ContainerConfig,
-    pub resource_limits: ResourceLimits,
-    pub namespace_settings: NamespaceSettings,
-}
-
-impl Container {
-    pub fn new(
-        id: String,
-        config: ContainerConfig,
-        resource_limits: ResourceLimits,
-        namespace_settings: NamespaceSettings,
-    ) -> Self {
-        Self {
-            id,
-            config,
-            resource_limits,
-            namespace_settings,
-        }
-    }
-
-    pub async fn execute_task(&self, task: &Task) -> Result<TaskResult> {
-        // TODO: Implement actual container execution
-        tracing::info!(
-            "Would execute task in container {}: {}",
-            self.id,
-            task.command
-        );
-
-        Err(FaberError::Execution(
-            "Container execution not yet implemented".to_string(),
-        ))
-    }
-
-    pub async fn cleanup(&self) -> Result<()> {
-        // TODO: Implement container cleanup
-        tracing::info!("Would cleanup container {}", self.id);
-        Ok(())
     }
 }

@@ -1,4 +1,4 @@
-use faber_config::Config;
+use faber_config::GlobalConfig;
 use faber_core::{FaberError, Result};
 use std::fs;
 use std::path::Path;
@@ -24,7 +24,7 @@ pub struct CgroupManager {
 impl CgroupManager {
     pub fn new(
         container_id: &str,
-        config: &Config,
+        config: &GlobalConfig,
     ) -> std::result::Result<Self, super::error::SandboxError> {
         if !config.sandbox.cgroups.enabled {
             return Err(super::error::SandboxError::ResourceLimitFailed(
@@ -113,7 +113,7 @@ impl CgroupManager {
         let memory_limit_file =
             format!("/sys/fs/cgroup/{}/memory.limit_in_bytes", self.cgroup_path);
         fs::write(&memory_limit_file, limit.to_string())
-            .map_err(|e| FaberError::Sandbox(format!("Failed to set memory limit: {}", e)))
+            .map_err(|e| FaberError::Sandbox(format!("Failed to set memory limit: {e}")))
     }
 
     fn set_cpu_rate_limit(&self, rate: u32) -> Result<()> {
@@ -122,52 +122,52 @@ impl CgroupManager {
 
         // Set CPU period (default 100000 microseconds = 100ms)
         fs::write(&cpu_cfs_period_file, "100000")
-            .map_err(|e| FaberError::Sandbox(format!("Failed to set CPU period: {}", e)))?;
+            .map_err(|e| FaberError::Sandbox(format!("Failed to set CPU period: {e}")))?;
 
         // Set CPU quota based on rate percentage
         let quota = (rate as u64 * 100000) / 100;
         fs::write(&cpu_cfs_quota_file, quota.to_string())
-            .map_err(|e| FaberError::Sandbox(format!("Failed to set CPU quota: {}", e)))
+            .map_err(|e| FaberError::Sandbox(format!("Failed to set CPU quota: {e}")))
     }
 
     fn set_process_limit(&self, limit: u32) -> Result<()> {
         let pids_max_file = format!("/sys/fs/cgroup/{}/pids.max", self.cgroup_path);
         fs::write(&pids_max_file, limit.to_string())
-            .map_err(|e| FaberError::Sandbox(format!("Failed to set process limit: {}", e)))
+            .map_err(|e| FaberError::Sandbox(format!("Failed to set process limit: {e}")))
     }
 
     fn read_memory_usage(&self) -> Result<u64> {
         let memory_usage_file =
             format!("/sys/fs/cgroup/{}/memory.usage_in_bytes", self.cgroup_path);
         let content = fs::read_to_string(&memory_usage_file)
-            .map_err(|e| FaberError::Sandbox(format!("Failed to read memory usage: {}", e)))?;
+            .map_err(|e| FaberError::Sandbox(format!("Failed to read memory usage: {e}")))?;
 
         content
             .trim()
             .parse::<u64>()
-            .map_err(|e| FaberError::Sandbox(format!("Failed to parse memory usage: {}", e)))
+            .map_err(|e| FaberError::Sandbox(format!("Failed to parse memory usage: {e}")))
     }
 
     fn read_cpu_usage(&self) -> Result<u64> {
         let cpu_usage_file = format!("/sys/fs/cgroup/{}/cpuacct.usage", self.cgroup_path);
         let content = fs::read_to_string(&cpu_usage_file)
-            .map_err(|e| FaberError::Sandbox(format!("Failed to read CPU usage: {}", e)))?;
+            .map_err(|e| FaberError::Sandbox(format!("Failed to read CPU usage: {e}")))?;
 
         content
             .trim()
             .parse::<u64>()
-            .map_err(|e| FaberError::Sandbox(format!("Failed to parse CPU usage: {}", e)))
+            .map_err(|e| FaberError::Sandbox(format!("Failed to parse CPU usage: {e}")))
     }
 
     fn read_process_count(&self) -> Result<u32> {
         let pids_current_file = format!("/sys/fs/cgroup/{}/pids.current", self.cgroup_path);
         let content = fs::read_to_string(&pids_current_file)
-            .map_err(|e| FaberError::Sandbox(format!("Failed to read process count: {}", e)))?;
+            .map_err(|e| FaberError::Sandbox(format!("Failed to read process count: {e}")))?;
 
         content
             .trim()
             .parse::<u32>()
-            .map_err(|e| FaberError::Sandbox(format!("Failed to parse process count: {}", e)))
+            .map_err(|e| FaberError::Sandbox(format!("Failed to parse process count: {e}")))
     }
 
     fn read_io_stats(&self) -> Result<(u64, u64)> {
@@ -176,7 +176,7 @@ impl CgroupManager {
             self.cgroup_path
         );
         let content = fs::read_to_string(&io_stat_file)
-            .map_err(|e| FaberError::Sandbox(format!("Failed to read IO stats: {}", e)))?;
+            .map_err(|e| FaberError::Sandbox(format!("Failed to read IO stats: {e}")))?;
 
         let mut read_bytes = 0u64;
         let mut write_bytes = 0u64;
