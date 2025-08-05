@@ -13,7 +13,6 @@ services:
       - ../tests:/faber/tests:ro
       - ../Cargo.toml:/faber/Cargo.toml:ro
 
-      - cargo-cache:/usr/local/cargo/registry
       - cargo-target:/faber/target
     privileged: true
     network_mode: 'host'
