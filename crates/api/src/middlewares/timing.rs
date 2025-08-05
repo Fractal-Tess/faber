@@ -6,7 +6,6 @@ use tracing::{debug, info, warn};
 use crate::middlewares::request_id::RequestId;
 
 pub async fn timing_middleware(request: Request, next: Next) -> Response {
-    let request_id = request.extensions().get::<RequestId>().cloned();
     let start = Instant::now();
     let mut response = next.run(request).await;
     let duration = start.elapsed();
@@ -21,10 +20,12 @@ pub async fn timing_middleware(request: Request, next: Next) -> Response {
         warn!("Failed to create X-Response-Time header value");
     }
 
+    let request_id = response.extensions().get::<RequestId>();
+
     // Log the timing information with request ID if available
     match request_id {
-        Some(id) => info!("Request {id:?} took {duration:?}"),
-        None => info!("Request took {duration:?} (no request ID available)"),
+        Some(id) => debug!("Request {id:?} took {duration:?}"),
+        None => debug!("Request took {duration:?} (no request ID available)"),
     }
 
     response
