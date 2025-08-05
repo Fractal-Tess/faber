@@ -19,17 +19,23 @@ max_request_size_kb = 10240 # 10MB
 
 [api.auth]
 enable = false
-secret_key = "" # Secret key for authentication, must be set via FABER_AUTH_SECRET_KEY env variable (no fallback for security)
+api_key = "" # Secret key for authentication, must be set via FABER_AUTH_SECRET_KEY env variable (no fallback for security)
 
 [api.endpoints]
 health_endpoint = "/health" # The health check endpoint path (string)
-execute_endpoint = "/execute-tasks" # The endpoint path for executing tasks (string)
+task_execution_endpoint = "/execute-tasks" # The endpoint path for executing tasks (string)
+
+[logging]
+dir = "/var/log/faber" # The directory to store logs (string)
+level = "info" # The log level (error/warn/info/debug/trace)
+rotation = "hourly" # The log rotation (hourly/daily)
+file_name_prefix = "faber" # The prefix for the log file name (string)
 
 [queue]
 worker_count = 2 # Number of worker threads to process jobs
 max_queue_size = 100 # Maximum number of jobs in the queue
 
-[sandbox.resource_limits]
+[container.resource_limits]
 memory_limit_kb = 524288 # 512MB
 cpu_time_limit_ms = 10000 # 10 seconds
 max_cpu_cores = 1 # 1 core
@@ -43,18 +49,17 @@ cpu_rate_limit_percent = 50 # 50%
 io_read_limit_kb_s = 10 # 10MB/s
 io_write_limit_kb_s = 10 # 10MB/s
 
-[sandbox.cgroups]
+[container.cgroups]
 enabled = true # Enable or disable cgroups support
+version = 2 # Not configurable for now
 prefix = "faber" # Not configurable for now
-version = "v2" # Not configurable for now
 enable_cpu_rate_limit = true # Enable or disable CPU rate limiting (true/false)
 enable_memory_limit = true # Enable or disable memory limiting (true/false)
 enable_process_limit = true # Enable or disable process limiting (true/false)
 
 
-
-# Format: `mount_name` = ['host_path', 'sandbox_path']
-[sandbox.filesystem.mounts.readable]
+# Format: `mount_name` = ['host_path', 'container_path']
+[container.filesystem.mounts.readable]
 # System binaries and libraries
 bin = ["/bin", "/bin"]
 lib = ["/lib", "/lib"]
@@ -78,18 +83,18 @@ dev_full = ["/dev/full", "/dev/full"]
 etc_ld_so_cache = ["/etc/ld.so.cache", "/etc/ld.so.cache"]
 etc_alternatives = ["/etc/alternatives", "/etc/alternatives"]
 
-[sandbox.filesystem.mounts.writable]
+[container.filesystem.mounts.writable]
 # # Working directory for user code
 # work_dir = ["/tmp/faber/work", "/work"]
 # # Temporary directory
 # tmp_dir = ["/tmp/faber/tmp", "/tmp"]
 
 # Format 'mount_name' = ['host_path', 'options']
-[sandbox.filesystem.mounts.tmpfs]
+[container.filesystem.mounts.tmpfs]
 work_tmpfs = ["/work", "size=256m,nr_inodes=4k"]
 tmp_tmpfs = ["/tmp", "size=128m,nr_inodes=4k"]
 
-[sandbox.security.namespaces]
+[container.security.namespaces]
 pid = false      # Enable PID namespace isolation (can override with faber_container_PID_NAMESPACE_ENABLED)
 mount = true     # Enable mount namespace isolation
 network = true   # Enable network namespace isolation
@@ -100,7 +105,7 @@ time = false     # Enable time namespace isolation
 cgroup = false    # Enable cgroup namespace isolation
 
 
-[sandbox.security.seccomp]
+[container.security.seccomp]
 enabled = false
 # Default action for syscalls not explicitly allowed
 default_action = "SCMP_ACT_ERRNO"
@@ -112,7 +117,7 @@ architectures = [
     "SCMP_ARCH_AARCH64"
 ]
 
-[sandbox.security.seccomp.syscalls]
+[container.security.seccomp.syscalls]
 
 #TODO: Add disallowed syscalls
 blocked = []
