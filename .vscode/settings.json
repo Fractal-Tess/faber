@@ -1,5 +1,18 @@
 {
   "lldb.verboseLogging": true,
   "git.openRepositoryInParentFolders": "always",
-  "scm.defaultViewMode": "tree"
+  "scm.defaultViewMode": "tree",
+  "files.exclude": {
+    "**/.direnv": true,
+    "**/.git": true,
+    "**/target": true
+  },
+  "explorer.fileNesting.enabled": true,
+  "explorer.fileNesting.patterns": {
+    "Cargo.toml": "Cargo.lock",
+    "Dockerfile": "Dockerfile.*",
+    "flake.nix": "flake.lock,.envrc",
+    "README.md": "LICENSE",
+    ".gitignore": ".cursorignore"
+  }
 }
