@@ -27,14 +27,14 @@ pub enum WorkerMessage {
 
 /// Individual worker that processes tasks
 pub struct Worker {
-    id: usize,
+    id: u16,
     state: WorkerState,
     config: Arc<FaberConfig>,
     receiver: Receiver<WorkerMessage>,
 }
 
 impl Worker {
-    pub fn new(id: usize, config: Arc<FaberConfig>, receiver: Receiver<WorkerMessage>) -> Self {
+    pub fn new(id: u16, config: Arc<FaberConfig>, receiver: Receiver<WorkerMessage>) -> Self {
         Self {
             id,
             state: WorkerState::Initializing,
@@ -45,13 +45,15 @@ impl Worker {
 
     /// Start the worker lifecycle
     pub async fn run(mut self) {
-        info!("Worker {} starting", self.id);
+        info!("Worker {} starting up", self.id);
 
         // Initialize the worker
         if let Err(e) = self.initialize().await {
             error!("Worker {} failed to initialize: {}", self.id, e);
             return;
         }
+
+        info!("Worker {} ready and waiting for tasks", self.id);
 
         // Main worker loop
         while let Some(message) = self.receiver.recv().await {
@@ -61,9 +63,14 @@ impl Worker {
                     response_sender,
                 } => {
                     self.state = WorkerState::Executing;
-                    debug!("Worker {} executing task: {:?}", self.id, task);
+                    info!("Worker {} starting task execution: {:?}", self.id, task);
 
                     let result = self.execute_task(task).await;
+
+                    info!(
+                        "Worker {} completed task execution with result: {:?}",
+                        self.id, result
+                    );
 
                     // Send result back to the API
                     if let Err(e) = response_sender.send(result) {
@@ -75,6 +82,8 @@ impl Worker {
                         error!("Worker {} failed to cleanup/reinitialize: {}", self.id, e);
                         break;
                     }
+
+                    info!("Worker {} ready for next task", self.id);
                 }
                 WorkerMessage::Shutdown => {
                     info!("Worker {} received shutdown signal", self.id);
@@ -88,7 +97,7 @@ impl Worker {
 
     /// Initialize the worker
     async fn initialize(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        debug!("Worker {} initializing", self.id);
+        info!("Worker {} beginning initialization", self.id);
         self.state = WorkerState::Initializing;
 
         // TODO: Add worker-specific initialization tasks here
@@ -98,11 +107,20 @@ impl Worker {
         // - Initialize security context
         // - Set up networking
 
-        // Simulate initialization time
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        debug!("Worker {} setting up container environment", self.id);
+        // Simulate container setup
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        debug!("Worker {} preparing file system", self.id);
+        // Simulate filesystem preparation
+        tokio::time::sleep(tokio::time::Duration::from_millis(30)).await;
+
+        debug!("Worker {} initializing security context", self.id);
+        // Simulate security initialization
+        tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
 
         self.state = WorkerState::Ready;
-        debug!("Worker {} initialized and ready", self.id);
+        info!("Worker {} initialization completed successfully", self.id);
         Ok(())
     }
 
@@ -110,17 +128,32 @@ impl Worker {
     async fn execute_task(&self, task: Task) -> TaskResult {
         let start_time = Instant::now();
 
-        debug!("Worker {} executing command: {}", self.id, task.cmd);
+        info!("Worker {} executing command: '{}'", self.id, task.cmd);
+        if let Some(args) = &task.args {
+            debug!("Worker {} command arguments: {:?}", self.id, args);
+        }
 
         // TODO: Implement actual task execution
         // This is a placeholder implementation
         match self.execute_command(&task).await {
             Ok((stdout, stderr, exit_code)) => {
                 let duration = start_time.elapsed();
+                info!(
+                    "Worker {} command completed successfully in {:?} (exit code: {})",
+                    self.id, duration, exit_code
+                );
+                debug!("Worker {} stdout: {}", self.id, stdout);
+                if !stderr.is_empty() {
+                    debug!("Worker {} stderr: {}", self.id, stderr);
+                }
                 TaskResult::success(stdout, stderr, exit_code, duration)
             }
             Err(e) => {
                 let duration = start_time.elapsed();
+                error!(
+                    "Worker {} command failed after {:?}: {}",
+                    self.id, duration, e
+                );
                 TaskResult::failure(e.to_string(), duration)
             }
         }
@@ -140,15 +173,36 @@ impl Worker {
         // 5. Capture stdout/stderr
         // 6. Return results
 
+        debug!(
+            "Worker {} setting up container environment for command",
+            self.id
+        );
+        // Simulate container setup
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        if let Some(env_vars) = &task.env {
+            debug!(
+                "Worker {} applying {} environment variables",
+                self.id,
+                env_vars.len()
+            );
+        }
+
+        if let Some(files) = &task.files {
+            debug!("Worker {} creating {} files", self.id, files.len());
+        }
+
         // Placeholder implementation
         let empty_args = vec![];
         let args = task.args.as_ref().unwrap_or(&empty_args);
         let cmd_with_args = format!("{} {}", task.cmd, args.join(" "));
 
-        debug!("Worker {} would execute: {}", self.id, cmd_with_args);
+        debug!("Worker {} executing command: {}", self.id, cmd_with_args);
 
         // Simulate execution
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
+
+        debug!("Worker {} command execution completed", self.id);
 
         // Simulate success
         Ok((
@@ -162,7 +216,7 @@ impl Worker {
     async fn cleanup_and_reinitialize(
         &mut self,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        debug!("Worker {} cleaning up", self.id);
+        info!("Worker {} beginning cleanup process", self.id);
         self.state = WorkerState::CleaningUp;
 
         // TODO: Add cleanup tasks here
@@ -172,8 +226,19 @@ impl Worker {
         // - Reset security context
         // - Clean up networking
 
-        // Simulate cleanup time
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        debug!("Worker {} cleaning up container resources", self.id);
+        // Simulate container cleanup
+        tokio::time::sleep(tokio::time::Duration::from_millis(25)).await;
+
+        debug!("Worker {} removing temporary files", self.id);
+        // Simulate file cleanup
+        tokio::time::sleep(tokio::time::Duration::from_millis(15)).await;
+
+        debug!("Worker {} resetting security context", self.id);
+        // Simulate security reset
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
+        info!("Worker {} cleanup completed, reinitializing", self.id);
 
         // Reinitialize
         self.initialize().await?;

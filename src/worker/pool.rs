@@ -23,10 +23,11 @@ impl WorkerPool {
         let worker_count = config.queue.worker_count;
         info!("Creating worker pool with {} workers", worker_count);
 
-        let mut workers = Vec::with_capacity(worker_count);
-        let mut worker_handles = Vec::with_capacity(worker_count);
+        let mut workers = Vec::with_capacity(worker_count as usize);
+        let mut worker_handles = Vec::with_capacity(worker_count as usize);
 
         for worker_id in 0..worker_count {
+            debug!("Creating worker {}", worker_id);
             let (sender, receiver) = mpsc::channel(100); // Buffer size for each worker
             let worker = Worker::new(worker_id, Arc::clone(&config), receiver);
 
@@ -37,6 +38,7 @@ impl WorkerPool {
 
             workers.push(sender);
             worker_handles.push(handle);
+            debug!("Worker {} created successfully", worker_id);
         }
 
         info!(
@@ -53,7 +55,7 @@ impl WorkerPool {
     }
 
     /// Execute a task using round-robin worker selection
-    pub async fn execute_task(
+    async fn execute_task(
         &mut self,
         task: Task,
     ) -> Result<TaskResult, Box<dyn std::error::Error + Send + Sync>> {
@@ -65,6 +67,7 @@ impl WorkerPool {
         let worker_id = self.next_worker;
         self.next_worker = (self.next_worker + 1) % self.workers.len();
 
+        debug!("Assigning task to worker {} (round-robin)", worker_id);
         let worker_sender = &self.workers[worker_id];
 
         // Create response channel
@@ -76,33 +79,41 @@ impl WorkerPool {
             response_sender,
         };
 
+        debug!("Sending task to worker {}", worker_id);
         worker_sender
             .send(message)
             .await
             .map_err(|e| format!("Failed to send task to worker {worker_id}: {e}"))?;
 
         // Wait for response
+        debug!("Waiting for result from worker {}", worker_id);
         let result = response_receiver
             .await
             .map_err(|e| format!("Failed to receive result from worker {worker_id}: {e}"))?;
 
-        debug!("Task executed by worker {}: {:?}", worker_id, result);
+        info!("Task completed by worker {}: {:?}", worker_id, result);
         Ok(result)
     }
 
-    /// Execute multiple tasks in parallel
     pub async fn execute_tasks(
         &mut self,
         tasks: Vec<Task>,
     ) -> Result<Vec<TaskResult>, Box<dyn std::error::Error + Send + Sync>> {
-        let mut results = Vec::with_capacity(tasks.len());
+        let task_count = tasks.len();
+        info!("Starting execution of {} tasks", task_count);
+
+        let mut results = Vec::with_capacity(task_count);
 
         // Execute tasks sequentially to avoid borrowing issues
-        for task in tasks {
+        for (index, task) in tasks.into_iter().enumerate() {
+            info!("Executing task {}/{}: {:?}", index + 1, task_count, task);
             match self.execute_task(task).await {
-                Ok(result) => results.push(result),
+                Ok(result) => {
+                    info!("Task {}/{} completed successfully", index + 1, task_count);
+                    results.push(result);
+                }
                 Err(e) => {
-                    error!("Task execution failed: {}", e);
+                    error!("Task {}/{} execution failed: {}", index + 1, task_count, e);
                     // Create a failure result
                     results.push(TaskResult::failure(
                         e.to_string(),
@@ -112,6 +123,7 @@ impl WorkerPool {
             }
         }
 
+        info!("Completed execution of all {} tasks", task_count);
         Ok(results)
     }
 
