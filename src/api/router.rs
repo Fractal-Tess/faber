@@ -14,7 +14,6 @@ use axum::{
 pub async fn create_router(config: Arc<FaberConfig>) -> Router {
     let config_extension = Extension(Arc::clone(&config));
 
-    // Create worker pool
     let executor_pool = ExecutorPool::new(Arc::clone(&config))
         .await
         .expect("Failed to create executor pool");

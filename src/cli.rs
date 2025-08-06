@@ -4,6 +4,7 @@ use crate::config::FaberConfig;
 use crate::{api::serve, logging::init_logging};
 use std::error::Error;
 use std::process::exit;
+use tracing::{error, info};
 
 use clap::{CommandFactory, Parser, Subcommand};
 
@@ -57,7 +58,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let config = match FaberConfig::load_from_path(&cli.config) {
         Ok(config) => config,
         Err(e) => {
-            eprintln!("{e}");
+            eprintln!("Failed to load configuration from {}: {}", cli.config, e);
             exit(1);
         }
     };
@@ -71,13 +72,16 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         Commands::ValidateConfig { display } => {
+            info!("Validating configuration...");
             if display {
                 println!("{config:#?}");
             } else {
                 println!("Config validated successfully");
             }
+            info!("Configuration validation completed");
         }
     };
 
+    info!("CLI run completed successfully");
     Ok(())
 }

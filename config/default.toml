@@ -27,12 +27,12 @@ task_execution_endpoint = "/execute" # The endpoint path for executing tasks (st
 
 [logging]
 dir = "/var/log/faber" # The directory to store logs (string)
-level = "info" # The log level (error/warn/info/debug/trace)
+level = "debug" # The log level (error/warn/info/debug/trace)
 rotation = "hourly" # The log rotation (hourly/daily)
 file_name_prefix = "faber" # The prefix for the log file name (string)
 
 [executor]
-executor_count = 1 # Number of executor threads to process jobs
+executor_count = 4 # Number of executor threads to process jobs
 max_queue_size = 100 # Maximum number of jobs in the queue
 
 [container]
@@ -54,11 +54,11 @@ default_group = 0 # The default group to run commands as (0 = root)
 # - time: Isolates system time (Linux 5.6+)
 # - cgroup: Isolates cgroup hierarchy
 
-pid = false      # Enable PID namespace isolation (recommended with mount namespace)
-mount = false     # Enable mount namespace isolation (recommended for most use cases)
+pid = true      # Enable PID namespace isolation (recommended with mount namespace)
+mount = true     # Enable mount namespace isolation (recommended for most use cases)
 network = false   # Enable network namespace isolation (isolates network completely)
-ipc = false       # Enable IPC namespace isolation (isolates inter-process communication)
-uts = false       # Enable UTS namespace isolation (isolates hostname/domain)
+ipc = true       # Enable IPC namespace isolation (isolates inter-process communication)
+uts = true       # Enable UTS namespace isolation (isolates hostname/domain)
 user = false     # Enable user namespace isolation (requires careful configuration)
 time = false     # Enable time namespace isolation (Linux 5.6+)
 cgroup = false    # Enable cgroup namespace isolation (isolates cgroup hierarchy)
@@ -91,6 +91,7 @@ enable_process_limit = true # Enable or disable process limiting (true/false)
 # permissions: 'ro' for read-only (default), 'rw' for read-write
 [container.filesystem.mounts.folders]
 # System binaries and libraries (read-only)
+# These paths should exist in most Linux distributions including Debian
 bin = ["/bin", "/bin", "ro"]
 lib = ["/lib", "/lib", "ro"]
 lib64 = ["/lib64", "/lib64", "ro"]

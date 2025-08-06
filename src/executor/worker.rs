@@ -1,9 +1,7 @@
 use crate::config::FaberConfig;
-use crate::container::Container;
+use crate::container::{Container, ContainerNamespaces};
 use crate::executor::task::{Task, TaskResult};
-use nix::libc::{gid_t, uid_t};
-use nix::sched::unshare;
-use nix::unistd::{setgid, setuid};
+
 use std::process::Command;
 use std::sync::Arc;
 use std::time::Instant;
@@ -23,10 +21,6 @@ pub enum WorkerState {
 /// Message sent to worker
 #[derive(Debug)]
 pub enum WorkerMessage {
-    Execute {
-        task: Task,
-        response_sender: oneshot::Sender<TaskResult>,
-    },
     ExecuteBatch {
         tasks: Vec<Task>,
         response_sender: oneshot::Sender<Vec<TaskResult>>,
@@ -40,6 +34,7 @@ pub struct Worker {
     state: WorkerState,
     config: Arc<FaberConfig>,
     container: Option<Container>,
+    namespaces: Option<ContainerNamespaces>,
     receiver: Receiver<WorkerMessage>,
 }
 
@@ -50,13 +45,14 @@ impl Worker {
             state: WorkerState::Initializing,
             config,
             container: None,
+            namespaces: None,
             receiver,
         }
     }
 
     /// Start the worker lifecycle
     pub async fn run(mut self) {
-        info!("Worker {} starting up", self.id);
+        debug!("Worker {} starting up", self.id);
 
         // Initialize the worker
         if let Err(e) = self.initialize().await {
@@ -64,45 +60,18 @@ impl Worker {
             return;
         }
 
-        info!("Worker {} ready and waiting for tasks", self.id);
+        debug!("Worker {} ready and waiting for tasks", self.id);
 
         // Main worker loop
         while let Some(message) = self.receiver.recv().await {
             match message {
-                WorkerMessage::Execute {
-                    task,
-                    response_sender,
-                } => {
-                    self.state = WorkerState::Executing;
-                    info!("Worker {} starting task execution: {:?}", self.id, task);
-
-                    let result = self.execute_task(task).await;
-
-                    info!(
-                        "Worker {} completed task execution with result: {:?}",
-                        self.id, result
-                    );
-
-                    // Send result back to the API
-                    if let Err(e) = response_sender.send(result) {
-                        error!("Worker {} failed to send result: {:?}", self.id, e);
-                    }
-
-                    // Cleanup and reinitialize
-                    if let Err(e) = self.cleanup_and_reinitialize().await {
-                        error!("Worker {} failed to cleanup/reinitialize: {}", self.id, e);
-                        break;
-                    }
-
-                    info!("Worker {} ready for next task", self.id);
-                }
                 WorkerMessage::ExecuteBatch {
                     tasks,
                     response_sender,
                 } => {
                     self.state = WorkerState::Executing;
                     let task_count = tasks.len();
-                    info!(
+                    debug!(
                         "Worker {} starting batch execution of {} tasks",
                         self.id, task_count
                     );
@@ -130,44 +99,38 @@ impl Worker {
                         results.push(result);
                     }
 
-                    info!(
+                    debug!(
                         "Worker {} completed batch execution of {} tasks",
-                        self.id,
-                        results.len()
+                        self.id, task_count
                     );
 
-                    // Send all results back to the API
+                    // Send results back
                     if let Err(e) = response_sender.send(results) {
-                        error!("Worker {} failed to send batch results: {:?}", self.id, e);
+                        error!("Worker {} failed to send results: {:?}", self.id, e);
                     }
 
-                    // Cleanup and reinitialize after the entire batch
-                    if let Err(e) = self.cleanup_and_reinitialize().await {
-                        error!(
-                            "Worker {} failed to cleanup/reinitialize after batch: {}",
-                            self.id, e
-                        );
-                        break;
-                    }
-
-                    info!("Worker {} ready for next batch", self.id);
+                    self.state = WorkerState::Ready;
                 }
                 WorkerMessage::Shutdown => {
-                    info!("Worker {} received shutdown signal", self.id);
+                    info!("Worker {} received shutdown message", self.id);
+                    self.state = WorkerState::CleaningUp;
                     break;
                 }
             }
         }
 
-        info!("Worker {} shutting down", self.id);
+        debug!("Worker {} shutting down", self.id);
     }
 
     /// Initialize the worker
     async fn initialize(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        info!("Worker {} beginning initialization", self.id);
+        debug!("Worker {} beginning initialization", self.id);
         self.state = WorkerState::Initializing;
 
-        // Create and initialize container
+        if let Some(mut container) = self.container.take() {
+            container.cleanup().await?;
+        }
+
         debug!("Worker {} creating container", self.id);
         let mut container = Container::new(self.config.clone());
 
@@ -179,13 +142,24 @@ impl Worker {
         self.container = Some(container);
         debug!("Worker {} container initialized successfully", self.id);
 
+        // Initialize namespaces
+        debug!("Worker {} initializing namespaces", self.id);
+        let mut namespaces =
+            ContainerNamespaces::new(self.config.container.security.namespaces.clone());
+        if let Err(e) = namespaces.initialize().await {
+            error!("Worker {} failed to initialize namespaces: {}", self.id, e);
+            return Err(Box::new(e));
+        }
+        self.namespaces = Some(namespaces);
+        debug!("Worker {} namespaces initialized successfully", self.id);
+
         self.state = WorkerState::Ready;
         info!("Worker {} initialization completed successfully", self.id);
         Ok(())
     }
 
     /// Execute a task
-    async fn execute_task(&self, task: Task) -> TaskResult {
+    async fn execute_task(&mut self, task: Task) -> TaskResult {
         let start_time = Instant::now();
 
         info!("Worker {} executing command: '{}'", self.id, task.cmd);
@@ -193,8 +167,6 @@ impl Worker {
             debug!("Worker {} command arguments: {:?}", self.id, args);
         }
 
-        // TODO: Implement actual task execution
-        // This is a placeholder implementation
         match self.execute_command(&task).await {
             Ok((stdout, stderr, exit_code)) => {
                 let duration = start_time.elapsed();
@@ -219,61 +191,34 @@ impl Worker {
         }
     }
 
-    /// Execute the actual command
+    /// Execute the actual command in the container
     async fn execute_command(
         &self,
         task: &Task,
     ) -> Result<(String, String, i32), Box<dyn std::error::Error + Send + Sync>> {
         // Get container reference
         let container = self.container.as_ref().ok_or("Container not initialized")?;
+        let namespaces = self
+            .namespaces
+            .as_ref()
+            .ok_or("Namespaces not initialized")?;
 
         debug!("Worker {} executing command in container", self.id);
-
-        // Get container root path and namespace configuration
-        let root_path = container
-            .get_root_path()
-            .map_err(|e| format!("Failed to get container root path: {e}"))?;
-
-        // Get namespace configuration for logging and validation
-        let namespace_config = container
-            .get_namespace_config()
-            .map_err(|e| format!("Failed to get namespace config: {e}"))?;
-
-        // Get namespace flags directly from configuration
-        let namespace_flags = container
-            .get_namespace_flags()
-            .map_err(|e| format!("Failed to get namespace flags: {e}"))?;
-
-        // Log namespace configuration for debugging
-        debug!(
-            "Worker {} namespace configuration: {:?}",
-            self.id, namespace_config
-        );
-        debug!("Worker {} namespace flags: {:?}", self.id, namespace_flags);
-
-        // Validate namespace configuration
-        self.validate_namespace_config(namespace_config)?;
 
         // Prepare command arguments
         let empty_args = vec![];
         let args = task.args.as_ref().unwrap_or(&empty_args);
         let args_strings: Vec<String> = args.iter().map(|s| s.to_string()).collect();
 
-        // Build command with namespace isolation
-        let mut command = Command::new("unshare");
+        // Set up namespaces
+        namespaces
+            .setup_environment()
+            .map_err(|e| format!("Failed to set up namespaces: {e}"))?;
 
-        // Add namespace flags based on configuration
-        for flag in namespace_flags {
-            command.arg(flag);
-        }
-
-        command.arg("--root").arg(root_path);
-        command.arg("--wd").arg(&self.config.container.work_dir);
-        command.arg(&task.cmd);
-        command.args(&args_strings);
-
-        // Execute command
-        let output = command
+        // Execute the command directly in the current process
+        let output = Command::new(&task.cmd)
+            .args(&args_strings)
+            .current_dir(&self.config.container.work_dir)
             .output()
             .map_err(|e| format!("Failed to execute command: {e}"))?;
 
@@ -281,74 +226,6 @@ impl Worker {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         let exit_code = output.status.code().unwrap_or(-1);
 
-        debug!("Worker {} command execution completed", self.id);
-
         Ok((stdout, stderr, exit_code))
-    }
-
-    /// Cleanup and reinitialize the worker
-    async fn cleanup_and_reinitialize(
-        &mut self,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        info!("Worker {} beginning cleanup process", self.id);
-        self.state = WorkerState::CleaningUp;
-
-        // Cleanup container
-        if let Some(mut container) = self.container.take() {
-            debug!("Worker {} cleaning up container", self.id);
-            if let Err(e) = container.cleanup().await {
-                error!("Worker {} failed to cleanup container: {}", self.id, e);
-            }
-        }
-
-        info!("Worker {} cleanup completed, reinitializing", self.id);
-
-        // Reinitialize
-        self.initialize().await?;
-
-        Ok(())
-    }
-
-    /// Validate namespace configuration before command execution
-    fn validate_namespace_config(
-        &self,
-        namespace_config: &crate::config::NamespaceConfig,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Check for potentially problematic namespace combinations
-        if namespace_config.user && !namespace_config.pid {
-            warn!(
-                "Worker {}: User namespace enabled but PID namespace disabled - this may cause issues",
-                self.id
-            );
-        }
-
-        if namespace_config.network && !namespace_config.mount {
-            warn!(
-                "Worker {}: Network namespace enabled but mount namespace disabled - this may limit functionality",
-                self.id
-            );
-        }
-
-        // Log enabled namespaces for debugging
-        let enabled_namespaces: Vec<&str> = [
-            ("mount", namespace_config.mount),
-            ("uts", namespace_config.uts),
-            ("ipc", namespace_config.ipc),
-            ("network", namespace_config.network),
-            ("pid", namespace_config.pid),
-            ("user", namespace_config.user),
-            ("time", namespace_config.time),
-            ("cgroup", namespace_config.cgroup),
-        ]
-        .iter()
-        .filter_map(|(name, enabled)| if *enabled { Some(*name) } else { None })
-        .collect();
-
-        debug!(
-            "Worker {}: Enabled namespaces: {:?}",
-            self.id, enabled_namespaces
-        );
-
-        Ok(())
     }
 }

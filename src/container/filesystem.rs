@@ -8,12 +8,14 @@ use crate::config::FilesystemConfig;
 
 #[derive(Debug, thiserror::Error)]
 pub enum FilesystemError {
-    #[error("Failed to mount filesystem: {0}")]
-    MountError(String),
-    #[error("Failed to unmount filesystem: {0}")]
-    UnmountError(String),
+    #[error(transparent)]
+    MountError(nix::errno::Errno),
+    #[error(transparent)]
+    UnmountError(nix::Error),
     #[error("Failed to create directory: {0}")]
     DirectoryCreation(#[from] std::io::Error),
+    #[error("Failed to create device: {0}")]
+    DeviceCreation(String),
 }
 
 /// Container filesystem manager
@@ -65,7 +67,9 @@ impl ContainerFilesystem {
         let folder_mounts = self.config.mounts.folders.clone();
         for (i, mount) in folder_mounts.iter().enumerate() {
             debug!("Processing folder mount {}: {:?}", i, mount);
-            self.mount_folder(mount).await?;
+            if let Err(e) = self.mount_folder(mount).await {
+                warn!("Failed to mount folder {}: {}, continuing...", i, e);
+            }
         }
 
         // Mount tmpfs directories
@@ -73,7 +77,9 @@ impl ContainerFilesystem {
         let tmpfs_mounts = self.config.mounts.tmpfs.clone();
         for (i, mount) in tmpfs_mounts.iter().enumerate() {
             debug!("Processing tmpfs mount {}: {:?}", i, mount);
-            self.mount_tmpfs(mount).await?;
+            if let Err(e) = self.mount_tmpfs(mount).await {
+                warn!("Failed to mount tmpfs {}: {}, continuing...", i, e);
+            }
         }
 
         // Mount device files
@@ -84,7 +90,9 @@ impl ContainerFilesystem {
         let device_mounts = self.config.mounts.devices.clone();
         for (i, mount) in device_mounts.iter().enumerate() {
             debug!("Processing device mount {}: {:?}", i, mount);
-            self.mount_device(mount).await?;
+            if let Err(e) = self.mount_device(mount).await {
+                warn!("Failed to mount device {}: {}, continuing...", i, e);
+            }
         }
 
         // Mount individual files
@@ -92,8 +100,16 @@ impl ContainerFilesystem {
         let file_mounts = self.config.mounts.files.clone();
         for (i, mount) in file_mounts.iter().enumerate() {
             debug!("Processing file mount {}: {:?}", i, mount);
-            self.mount_file(mount).await?;
+            if let Err(e) = self.mount_file(mount).await {
+                warn!("Failed to mount file {}: {}, continuing...", i, e);
+            }
         }
+
+        // Create essential devices
+        self.create_essential_devices().await?;
+
+        // Create container configuration files
+        self.create_container_config_files().await?;
 
         info!("Container filesystem initialized successfully");
         debug!("Total mounted paths: {:?}", self.mounted_paths);
@@ -107,12 +123,86 @@ impl ContainerFilesystem {
         // Unmount all mounted paths in reverse order
         for path in self.mounted_paths.iter().rev() {
             if let Err(e) = self.unmount_path(path).await {
-                error!("Failed to unmount {:?}: {}", path, e);
+                // Only log as warning since unmount_path now handles most errors gracefully
+                warn!("Failed to unmount {:?}: {}", path, e);
             }
         }
 
         self.mounted_paths.clear();
         info!("Container filesystem cleanup completed");
+        Ok(())
+    }
+
+    /// Create essential device files in the container
+    async fn create_essential_devices(&self) -> Result<(), FilesystemError> {
+        debug!("Creating essential device files");
+
+        let dev_path = self.container_path.join("dev");
+        fs::create_dir_all(&dev_path).await?;
+
+        // Essential devices: null, zero, random, urandom
+        let devices = [
+            ("null", nix::sys::stat::SFlag::S_IFCHR, 1, 3),
+            ("zero", nix::sys::stat::SFlag::S_IFCHR, 1, 5),
+            ("random", nix::sys::stat::SFlag::S_IFCHR, 1, 8),
+            ("urandom", nix::sys::stat::SFlag::S_IFCHR, 1, 9),
+        ];
+
+        for (name, dev_type, major, minor) in &devices {
+            let device_path = dev_path.join(name);
+
+            // Check if device already exists (e.g., from filesystem mounting)
+            if device_path.exists() {
+                debug!("Device {} already exists, skipping creation", name);
+                continue;
+            }
+
+            let dev = nix::sys::stat::makedev(*major, *minor);
+
+            match nix::sys::stat::mknod(
+                &device_path,
+                *dev_type,
+                nix::sys::stat::Mode::from_bits_truncate(0o666),
+                dev,
+            ) {
+                Ok(_) => {
+                    debug!("Successfully created device {}", name);
+                }
+                Err(nix::errno::Errno::EEXIST) => {
+                    debug!("Device {} already exists (EEXIST), skipping", name);
+                }
+                Err(e) => {
+                    return Err(FilesystemError::DeviceCreation(format!(
+                        "Failed to create device {name}: {e}"
+                    )));
+                }
+            }
+        }
+
+        debug!("Essential devices creation completed");
+        Ok(())
+    }
+
+    /// Create basic container configuration files
+    async fn create_container_config_files(&self) -> Result<(), FilesystemError> {
+        debug!("Creating container configuration files");
+
+        let etc_path = self.container_path.join("etc");
+        fs::create_dir_all(&etc_path).await?;
+
+        // Create passwd file
+        let passwd_content =
+            "root:x:0:0:root:/:/bin/sh\nuser:x:1000:1000:Container User:/work:/bin/sh\n";
+        fs::write(etc_path.join("passwd"), passwd_content).await?;
+
+        // Create group file
+        let group_content = "root:x:0:\nuser:x:1000:\n";
+        fs::write(etc_path.join("group"), group_content).await?;
+
+        // Create hostname file
+        fs::write(etc_path.join("hostname"), "faber-container\n").await?;
+
+        debug!("Container configuration files created successfully");
         Ok(())
     }
 
@@ -163,6 +253,7 @@ impl ContainerFilesystem {
                 "Source path {} does not exist, skipping mount",
                 mount.source
             );
+            // Don't add to mounted_paths since we didn't actually mount anything
             return Ok(());
         }
 
@@ -177,47 +268,44 @@ impl ContainerFilesystem {
         );
 
         match mount_result {
-            Ok(_) => debug!("Successfully mounted {} to {:?}", mount.source, target_path),
+            Ok(_) => {
+                debug!("Successfully mounted {} to {:?}", mount.source, target_path);
+
+                // Make it read-only if specified
+                if matches!(
+                    mount.permissions,
+                    crate::config::FolderPermissions::ReadOnly
+                ) {
+                    debug!("Attempting to make folder read-only...");
+                    let remount_result = nix_mount(
+                        None::<&str>,
+                        target_path.as_os_str(),
+                        None::<&str>,
+                        MsFlags::MS_BIND | MsFlags::MS_RDONLY | MsFlags::MS_REMOUNT,
+                        None::<&str>,
+                    );
+
+                    match remount_result {
+                        Ok(_) => debug!("Successfully made {} read-only", mount.source),
+                        Err(e) => {
+                            warn!("Failed to make {} read-only: {}", mount.source, e);
+                            // Continue anyway, the mount is still functional
+                        }
+                    }
+                }
+
+                // Only add to mounted_paths if the mount was successful
+                self.mounted_paths.push(target_path);
+            }
             Err(e) => {
                 error!(
                     "Failed to mount {} to {:?}: {}",
                     mount.source, target_path, e
                 );
-                return Err(FilesystemError::MountError(format!(
-                    "Failed to mount {}: {}",
-                    mount.source, e
-                )));
+                return Err(FilesystemError::MountError(e));
             }
         }
 
-        // Make it read-only if specified
-        if matches!(
-            mount.permissions,
-            crate::config::FolderPermissions::ReadOnly
-        ) {
-            debug!("Attempting to make folder read-only...");
-            let remount_result = nix_mount(
-                None::<&str>,
-                target_path.as_os_str(),
-                None::<&str>,
-                MsFlags::MS_BIND | MsFlags::MS_RDONLY | MsFlags::MS_REMOUNT,
-                None::<&str>,
-            );
-
-            match remount_result {
-                Ok(_) => debug!("Successfully made {} read-only", mount.source),
-                Err(e) => {
-                    warn!("Failed to make {} read-only: {}", mount.source, e);
-                    return Err(FilesystemError::MountError(format!(
-                        "Failed to make {} read-only: {}",
-                        mount.source, e
-                    )));
-                }
-            }
-        }
-
-        self.mounted_paths.push(target_path);
-        debug!("=== Completed folder mount operation ===");
         Ok(())
     }
 
@@ -273,10 +361,7 @@ impl ContainerFilesystem {
             Ok(_) => debug!("Successfully mounted tmpfs to {:?}", target_path),
             Err(e) => {
                 error!("Failed to mount tmpfs to {:?}: {}", target_path, e);
-                return Err(FilesystemError::MountError(format!(
-                    "Failed to mount tmpfs {}: {}",
-                    mount.target, e
-                )));
+                return Err(FilesystemError::MountError(e));
             }
         }
 
@@ -351,10 +436,7 @@ impl ContainerFilesystem {
                     "Failed to create target device file {:?}: {}",
                     target_path, e
                 );
-                return Err(FilesystemError::MountError(format!(
-                    "Failed to create target device file {}: {}",
-                    mount.target, e
-                )));
+                return Err(FilesystemError::DirectoryCreation(e));
             }
             debug!("Target device file created successfully");
         }
@@ -370,50 +452,47 @@ impl ContainerFilesystem {
         );
 
         match mount_result {
-            Ok(_) => debug!(
-                "Successfully mounted device {} to {:?}",
-                mount.source, target_path
-            ),
+            Ok(_) => {
+                debug!(
+                    "Successfully mounted device {} to {:?}",
+                    mount.source, target_path
+                );
+
+                // Make it read-only if specified
+                if matches!(
+                    mount.permissions,
+                    crate::config::DevicePermissions::ReadOnly
+                ) {
+                    debug!("Attempting to make device read-only...");
+                    let remount_result = nix_mount(
+                        None::<&str>,
+                        target_path.as_os_str(),
+                        None::<&str>,
+                        MsFlags::MS_BIND | MsFlags::MS_RDONLY | MsFlags::MS_REMOUNT,
+                        None::<&str>,
+                    );
+
+                    match remount_result {
+                        Ok(_) => debug!("Successfully made device {} read-only", mount.source),
+                        Err(e) => {
+                            warn!("Failed to make device {} read-only: {}", mount.source, e);
+                            // Continue anyway, the mount is still functional
+                        }
+                    }
+                }
+
+                // Only add to mounted_paths if the mount was successful
+                self.mounted_paths.push(target_path);
+            }
             Err(e) => {
                 error!(
                     "Failed to mount device {} to {:?}: {}",
                     mount.source, target_path, e
                 );
-                return Err(FilesystemError::MountError(format!(
-                    "Failed to mount device {}: {}",
-                    mount.source, e
-                )));
+                return Err(FilesystemError::MountError(e));
             }
         }
 
-        // Make it read-only if specified
-        if matches!(
-            mount.permissions,
-            crate::config::DevicePermissions::ReadOnly
-        ) {
-            debug!("Attempting to make device read-only...");
-            let remount_result = nix_mount(
-                None::<&str>,
-                target_path.as_os_str(),
-                None::<&str>,
-                MsFlags::MS_BIND | MsFlags::MS_RDONLY | MsFlags::MS_REMOUNT,
-                None::<&str>,
-            );
-
-            match remount_result {
-                Ok(_) => debug!("Successfully made device {} read-only", mount.source),
-                Err(e) => {
-                    warn!("Failed to make device {} read-only: {}", mount.source, e);
-                    return Err(FilesystemError::MountError(format!(
-                        "Failed to make device {} read-only: {}",
-                        mount.source, e
-                    )));
-                }
-            }
-        }
-
-        self.mounted_paths.push(target_path);
-        debug!("=== Completed device mount operation ===");
         Ok(())
     }
 
@@ -475,10 +554,7 @@ impl ContainerFilesystem {
             // Create an empty file that will be replaced by the bind mount
             if let Err(e) = std::fs::File::create(&target_path) {
                 error!("Failed to create target file {:?}: {}", target_path, e);
-                return Err(FilesystemError::MountError(format!(
-                    "Failed to create target file {}: {}",
-                    mount.target, e
-                )));
+                return Err(FilesystemError::DirectoryCreation(e));
             }
             debug!("Target file created successfully");
         }
@@ -496,47 +572,44 @@ impl ContainerFilesystem {
         );
 
         match mount_result {
-            Ok(_) => debug!(
-                "Successfully mounted file {} to {:?}",
-                mount.source, target_path
-            ),
+            Ok(_) => {
+                debug!(
+                    "Successfully mounted file {} to {:?}",
+                    mount.source, target_path
+                );
+
+                // Make it read-only if specified
+                if matches!(mount.permissions, crate::config::FilePermissions::ReadOnly) {
+                    debug!("Attempting to make file read-only...");
+                    let remount_result = nix_mount(
+                        None::<&str>,
+                        target_path.as_os_str(),
+                        None::<&str>,
+                        MsFlags::MS_BIND | MsFlags::MS_RDONLY | MsFlags::MS_REMOUNT,
+                        None::<&str>,
+                    );
+
+                    match remount_result {
+                        Ok(_) => debug!("Successfully made file {} read-only", mount.source),
+                        Err(e) => {
+                            warn!("Failed to make file {} read-only: {}", mount.source, e);
+                            // Continue anyway, the mount is still functional
+                        }
+                    }
+                }
+
+                // Only add to mounted_paths if the mount was successful
+                self.mounted_paths.push(target_path);
+            }
             Err(e) => {
                 error!(
                     "Failed to mount file {} to {:?}: {}",
                     mount.source, target_path, e
                 );
-                return Err(FilesystemError::MountError(format!(
-                    "Failed to mount file {}: {}",
-                    mount.source, e
-                )));
+                return Err(FilesystemError::MountError(e));
             }
         }
 
-        // Make it read-only if specified
-        if matches!(mount.permissions, crate::config::FilePermissions::ReadOnly) {
-            debug!("Attempting to make file read-only...");
-            let remount_result = nix_mount(
-                None::<&str>,
-                target_path.as_os_str(),
-                None::<&str>,
-                MsFlags::MS_BIND | MsFlags::MS_RDONLY | MsFlags::MS_REMOUNT,
-                None::<&str>,
-            );
-
-            match remount_result {
-                Ok(_) => debug!("Successfully made file {} read-only", mount.source),
-                Err(e) => {
-                    warn!("Failed to make file {} read-only: {}", mount.source, e);
-                    return Err(FilesystemError::MountError(format!(
-                        "Failed to make file {} read-only: {}",
-                        mount.source, e
-                    )));
-                }
-            }
-        }
-
-        self.mounted_paths.push(target_path);
-        debug!("=== Completed file mount operation ===");
         Ok(())
     }
 
@@ -544,10 +617,30 @@ impl ContainerFilesystem {
     async fn unmount_path(&self, path: &PathBuf) -> Result<(), FilesystemError> {
         debug!("Unmounting: {:?}", path);
 
-        umount(path.as_os_str()).map_err(|e| {
-            FilesystemError::UnmountError(format!("Failed to unmount {:?}: {}", path, e))
-        })?;
+        // Check if the path exists before trying to unmount
+        if !path.exists() {
+            debug!("Path {:?} does not exist, skipping unmount", path);
+            return Ok(());
+        }
 
-        Ok(())
+        match umount(path.as_os_str()) {
+            Ok(_) => {
+                debug!("Successfully unmounted: {:?}", path);
+                Ok(())
+            }
+            Err(nix::errno::Errno::ENOENT) => {
+                debug!("Mount point {:?} does not exist (ENOENT), skipping", path);
+                Ok(())
+            }
+            Err(nix::errno::Errno::EINVAL) => {
+                debug!("Path {:?} is not a mount point (EINVAL), skipping", path);
+                Ok(())
+            }
+            Err(e) => {
+                warn!("Failed to unmount {:?}: {}", path, e);
+                // Don't return error for unmount failures during cleanup
+                Ok(())
+            }
+        }
     }
 }

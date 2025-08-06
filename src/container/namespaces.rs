@@ -1,4 +1,4 @@
-use nix::sched::CloneFlags;
+use nix::sched::{CloneFlags, unshare};
 use tracing::{debug, info, warn};
 
 use crate::config::NamespaceConfig;
@@ -9,6 +9,8 @@ pub enum NamespaceError {
     CreationError(String),
     #[error("Failed to cleanup namespace: {0}")]
     CleanupError(String),
+    #[error("Failed to setup environment: {0}")]
+    EnvironmentError(String),
 }
 
 /// Container namespace manager
@@ -29,13 +31,6 @@ impl ContainerNamespaces {
     pub async fn initialize(&mut self) -> Result<(), NamespaceError> {
         info!("Initializing container namespaces");
 
-        // Note: Namespaces are typically created when the container process starts
-        // via unshare(2) or clone(2) with namespace flags. This method is mainly
-        // for validation and preparation.
-
-        // Validate namespace configuration
-        self.validate_namespace_config()?;
-
         // Log which namespaces will be used
         self.log_namespace_config();
 
@@ -55,36 +50,21 @@ impl ContainerNamespaces {
         Ok(())
     }
 
-    /// Get unshare flags for the configured namespaces
-    pub fn get_unshare_flags(&self) -> Vec<&'static str> {
-        let mut flags = Vec::new();
+    /// Set up the container environment for command execution
+    /// This creates namespaces based on the configuration
+    pub fn setup_environment(&self) -> Result<(), NamespaceError> {
+        debug!("Setting up container namespaces");
 
-        if self.config.mount {
-            flags.push("--mount");
-        }
-        if self.config.uts {
-            flags.push("--uts");
-        }
-        if self.config.ipc {
-            flags.push("--ipc");
-        }
-        if self.config.network {
-            flags.push("--net");
-        }
-        if self.config.pid {
-            flags.push("--pid");
-        }
-        if self.config.user {
-            flags.push("--user");
-        }
-        if self.config.time {
-            flags.push("--time");
-        }
-        if self.config.cgroup {
-            flags.push("--cgroup");
-        }
+        // Get namespace flags
+        let clone_flags = self.get_clone_flags();
 
-        flags
+        // Create namespaces
+        unshare(clone_flags).map_err(|e| {
+            NamespaceError::EnvironmentError(format!("Failed to create namespaces: {e}"))
+        })?;
+
+        debug!("Container namespaces setup completed");
+        Ok(())
     }
 
     /// Get nix CloneFlags for the configured namespaces
@@ -117,22 +97,6 @@ impl ContainerNamespaces {
         flags
     }
 
-    /// Validate namespace configuration
-    fn validate_namespace_config(&self) -> Result<(), NamespaceError> {
-        // Check for potential conflicts or unsupported combinations
-        if self.config.user && !self.config.pid {
-            warn!("User namespace enabled but PID namespace disabled - this may cause issues");
-        }
-
-        if self.config.network && !self.config.mount {
-            warn!(
-                "Network namespace enabled but mount namespace disabled - this may limit functionality"
-            );
-        }
-
-        Ok(())
-    }
-
     /// Log namespace configuration
     fn log_namespace_config(&self) {
         debug!("Namespace configuration:");
@@ -144,26 +108,6 @@ impl ContainerNamespaces {
         debug!("  User namespace: {}", self.config.user);
         debug!("  Time namespace: {}", self.config.time);
         debug!("  Cgroup namespace: {}", self.config.cgroup);
-    }
-
-    /// Check if a specific namespace is enabled
-    pub fn is_namespace_enabled(&self, namespace: &str) -> bool {
-        match namespace {
-            "mount" => self.config.mount,
-            "uts" => self.config.uts,
-            "ipc" => self.config.ipc,
-            "network" => self.config.network,
-            "pid" => self.config.pid,
-            "user" => self.config.user,
-            "time" => self.config.time,
-            "cgroup" => self.config.cgroup,
-            _ => false,
-        }
-    }
-
-    /// Get the namespace configuration
-    pub fn get_config(&self) -> &NamespaceConfig {
-        &self.config
     }
 
     /// Get a summary of enabled namespaces
@@ -196,17 +140,5 @@ impl ContainerNamespaces {
         }
 
         enabled
-    }
-
-    /// Check if any namespaces are enabled
-    pub fn has_enabled_namespaces(&self) -> bool {
-        self.config.mount
-            || self.config.uts
-            || self.config.ipc
-            || self.config.network
-            || self.config.pid
-            || self.config.user
-            || self.config.time
-            || self.config.cgroup
     }
 }

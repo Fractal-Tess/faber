@@ -49,7 +49,7 @@ impl ExecutorPool {
         })
     }
 
-    pub async fn execute_tasks(
+    pub async fn enqueue(
         &mut self,
         tasks: Vec<Task>,
     ) -> Result<Vec<TaskResult>, Box<dyn std::error::Error + Send + Sync>> {
@@ -60,6 +60,7 @@ impl ExecutorPool {
         );
 
         if self.executors.is_empty() {
+            error!("No executors available");
             return Err("No executors available".into());
         }
 

@@ -1,6 +1,5 @@
 #![allow(unused)]
 #![warn(clippy::unwrap_used)]
-use std::error::Error;
 
 mod api;
 mod cli;
