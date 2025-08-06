@@ -32,8 +32,26 @@ rotation = "hourly" # The log rotation (hourly/daily)
 file_name_prefix = "faber" # The prefix for the log file name (string)
 
 [executor]
-worker_count = 1 # Number of executor threads to process jobs
+executor_count = 1 # Number of executor threads to process jobs
 max_queue_size = 100 # Maximum number of jobs in the queue
+
+[container]
+base_dir = "/tmp/faber/containers" # The base directory for all containers
+work_dir = "/work" # The working directory for the container
+tmp_dir = "/tmp" # The temporary directory for the container
+default_user = 0 # The default user to run commands as (0 = root)
+default_group = 0 # The default group to run commands as (0 = root)
+
+[container.security.namespaces]
+pid = false      # Enable PID namespace isolation (can override with faber_container_PID_NAMESPACE_ENABLED)
+mount = false     # Enable mount namespace isolation
+network = false   # Enable network namespace isolation
+ipc = false       # Enable IPC namespace isolation
+uts = false       # Enable UTS (hostname) namespace isolation
+user = false     # Disable user namespace isolation temporarily
+time = false     # Enable time namespace isolation
+cgroup = false    # Enable cgroup namespace isolationcontainer.security.namespaces]
+
 
 [container.resource_limits]
 memory_limit_kb = 524288 # 512MB
@@ -50,7 +68,7 @@ io_read_limit_kb_s = 10 # 10MB/s
 io_write_limit_kb_s = 10 # 10MB/s
 
 [container.cgroups]
-enabled = true # Enable or disable cgroups support
+enabled = false # Enable or disable cgroups support
 version = 2 # Not configurable for now
 prefix = "faber" # Not configurable for now
 enable_cpu_rate_limit = true # Enable or disable CPU rate limiting (true/false)
@@ -58,51 +76,41 @@ enable_memory_limit = true # Enable or disable memory limiting (true/false)
 enable_process_limit = true # Enable or disable process limiting (true/false)
 
 
-# Format: `mount_name` = ['host_path', 'container_path']
-[container.filesystem.mounts.readable]
-# System binaries and libraries
-bin = ["/bin", "/bin"]
-lib = ["/lib", "/lib"]
-lib64 = ["/lib64", "/lib64"]
-usr = ["/usr", "/usr"]
+# Format: `mount_name` = ['host_path', 'container_path', 'permissions']
+# permissions: 'ro' for read-only (default), 'rw' for read-write
+[container.filesystem.mounts.folders]
+# System binaries and libraries (read-only)
+bin = ["/bin", "/bin", "ro"]
+lib = ["/lib", "/lib", "ro"]
+lib64 = ["/lib64", "/lib64", "ro"]
+usr = ["/usr", "/usr", "ro"]
 # etc_ld_so_cache = ["/etc/ld.so.cache", "/etc/ld.so.cache"]
-# etc_alternatives = ["/etc/alternatives", "/etc/alternatives"]
+etc_alternatives = ["/etc/alternatives", "/etc/alternatives", "ro"]
 # etc_fpc_cfg = ["/etc/fpc.cfg", "/etc/fpc.cfg"]
 # etc_mono = ["/etc/mono", "/etc/mono"]
 # var_lib_ghc = ["/var/lib/ghc", "/var/lib/ghc"]
 # etc_java_17_openjdk = ["/etc/java-17-openjdk", "/etc/java-17-openjdk"]
-
-# Device files (essential for many programs)
-dev_null = ["/dev/null", "/dev/null"]
-dev_random = ["/dev/random", "/dev/random"]
-dev_urandom = ["/dev/urandom", "/dev/urandom"]
-dev_zero = ["/dev/zero", "/dev/zero"]
-dev_full = ["/dev/full", "/dev/full"]
-
-# Essential configuration files
-etc_ld_so_cache = ["/etc/ld.so.cache", "/etc/ld.so.cache"]
-etc_alternatives = ["/etc/alternatives", "/etc/alternatives"]
-
-[container.filesystem.mounts.writable]
-# # Working directory for user code
-# work_dir = ["/tmp/faber/work", "/work"]
-# # Temporary directory
-# tmp_dir = ["/tmp/faber/tmp", "/tmp"]
 
 # Format 'mount_name' = ['host_path', 'options']
 [container.filesystem.mounts.tmpfs]
 work_tmpfs = ["/work", "size=256m,nr_inodes=4k"]
 tmp_tmpfs = ["/tmp", "size=128m,nr_inodes=4k"]
 
-[container.security.namespaces]
-pid = false      # Enable PID namespace isolation (can override with faber_container_PID_NAMESPACE_ENABLED)
-mount = true     # Enable mount namespace isolation
-network = true   # Enable network namespace isolation
-ipc = true       # Enable IPC namespace isolation
-uts = true       # Enable UTS (hostname) namespace isolation
-user = false     # Disable user namespace isolation temporarily
-time = false     # Enable time namespace isolation
-cgroup = false    # Enable cgroup namespace isolation
+# Format: `mount_name` = ['host_path', 'container_path', 'permissions']
+# permissions: 'ro' for read-only (default), 'rw' for read-write
+[container.filesystem.mounts.devices]
+# Essential device files (read-only)
+dev_null = ["/dev/null", "/dev/null", "ro"]
+dev_random = ["/dev/random", "/dev/random", "ro"]
+dev_urandom = ["/dev/urandom", "/dev/urandom", "ro"]
+dev_zero = ["/dev/zero", "/dev/zero", "ro"]
+dev_full = ["/dev/full", "/dev/full", "ro"]
+
+# Format: `mount_name` = ['host_path', 'container_path', 'permissions']
+# permissions: 'ro' for read-only (default), 'rw' for read-write
+[container.filesystem.mounts.files]
+# Essential configuration files (read-only)
+etc_ld_so_cache = ["/etc/ld.so.cache", "/etc/ld.so.cache", "ro"]
 
 
 [container.security.seccomp]

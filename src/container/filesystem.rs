@@ -1,0 +1,553 @@
+use nix::NixPath;
+use nix::mount::{MsFlags, mount as nix_mount, umount};
+use std::path::PathBuf;
+use tokio::fs;
+use tracing::{debug, error, info, warn};
+
+use crate::config::FilesystemConfig;
+
+#[derive(Debug, thiserror::Error)]
+pub enum FilesystemError {
+    #[error("Failed to mount filesystem: {0}")]
+    MountError(String),
+    #[error("Failed to unmount filesystem: {0}")]
+    UnmountError(String),
+    #[error("Failed to create directory: {0}")]
+    DirectoryCreation(#[from] std::io::Error),
+}
+
+/// Container filesystem manager
+pub struct ContainerFilesystem {
+    container_path: PathBuf,
+    config: FilesystemConfig,
+    mounted_paths: Vec<PathBuf>,
+}
+
+impl ContainerFilesystem {
+    pub fn new(container_path: PathBuf, config: FilesystemConfig) -> Self {
+        debug!(
+            "Creating ContainerFilesystem with path: {:?}",
+            container_path
+        );
+        debug!("Filesystem config: {:?}", config);
+        Self {
+            container_path,
+            config,
+            mounted_paths: Vec::new(),
+        }
+    }
+
+    /// Initialize the filesystem with all configured mounts
+    pub async fn initialize(&mut self) -> Result<(), FilesystemError> {
+        info!("Initializing container filesystem");
+        debug!("Container base path: {:?}", self.container_path);
+        debug!("Container path exists: {}", self.container_path.exists());
+        debug!(
+            "Container path is directory: {}",
+            self.container_path.is_dir()
+        );
+
+        // Ensure container base directory exists
+        if !self.container_path.exists() {
+            debug!(
+                "Creating container base directory: {:?}",
+                self.container_path
+            );
+            fs::create_dir_all(&self.container_path).await?;
+            debug!("Container base directory created successfully");
+        }
+
+        // Mount folders (read-only or read-write)
+        debug!(
+            "Processing {} folder mounts",
+            self.config.mounts.folders.len()
+        );
+        let folder_mounts = self.config.mounts.folders.clone();
+        for (i, mount) in folder_mounts.iter().enumerate() {
+            debug!("Processing folder mount {}: {:?}", i, mount);
+            self.mount_folder(mount).await?;
+        }
+
+        // Mount tmpfs directories
+        debug!("Processing {} tmpfs mounts", self.config.mounts.tmpfs.len());
+        let tmpfs_mounts = self.config.mounts.tmpfs.clone();
+        for (i, mount) in tmpfs_mounts.iter().enumerate() {
+            debug!("Processing tmpfs mount {}: {:?}", i, mount);
+            self.mount_tmpfs(mount).await?;
+        }
+
+        // Mount device files
+        debug!(
+            "Processing {} device mounts",
+            self.config.mounts.devices.len()
+        );
+        let device_mounts = self.config.mounts.devices.clone();
+        for (i, mount) in device_mounts.iter().enumerate() {
+            debug!("Processing device mount {}: {:?}", i, mount);
+            self.mount_device(mount).await?;
+        }
+
+        // Mount individual files
+        debug!("Processing {} file mounts", self.config.mounts.files.len());
+        let file_mounts = self.config.mounts.files.clone();
+        for (i, mount) in file_mounts.iter().enumerate() {
+            debug!("Processing file mount {}: {:?}", i, mount);
+            self.mount_file(mount).await?;
+        }
+
+        info!("Container filesystem initialized successfully");
+        debug!("Total mounted paths: {:?}", self.mounted_paths);
+        Ok(())
+    }
+
+    /// Cleanup all mounts
+    pub async fn cleanup(&mut self) -> Result<(), FilesystemError> {
+        info!("Cleaning up container filesystem");
+
+        // Unmount all mounted paths in reverse order
+        for path in self.mounted_paths.iter().rev() {
+            if let Err(e) = self.unmount_path(path).await {
+                error!("Failed to unmount {:?}: {}", path, e);
+            }
+        }
+
+        self.mounted_paths.clear();
+        info!("Container filesystem cleanup completed");
+        Ok(())
+    }
+
+    /// Mount a folder (read-only or read-write)
+    async fn mount_folder(
+        &mut self,
+        mount: &crate::config::ReadOnlyMount,
+    ) -> Result<(), FilesystemError> {
+        debug!("=== Starting folder mount operation ===");
+        debug!("Mount config: {:?}", mount);
+
+        let target_path = self.container_path.join(&mount.target);
+        debug!("Target path: {:?}", target_path);
+        debug!("Target path exists: {}", target_path.exists());
+        debug!("Target path is directory: {}", target_path.is_dir());
+
+        // Create target directory if it doesn't exist
+        if let Some(parent) = target_path.parent() {
+            debug!("Parent directory: {:?}", parent);
+            debug!("Parent exists: {}", parent.exists());
+            debug!("Parent is directory: {}", parent.is_dir());
+
+            if !parent.exists() {
+                debug!("Creating parent directory: {:?}", parent);
+                fs::create_dir_all(parent).await?;
+                debug!("Parent directory created successfully");
+            }
+        }
+
+        // Create the target directory itself if it doesn't exist
+        if !target_path.exists() {
+            debug!("Creating target directory: {:?}", target_path);
+            fs::create_dir_all(&target_path).await?;
+            debug!("Target directory created successfully");
+        }
+
+        debug!("Mounting folder: {} -> {:?}", mount.source, target_path);
+
+        // Check if source exists
+        let source_path = std::path::Path::new(&mount.source);
+        debug!("Source path: {:?}", source_path);
+        debug!("Source exists: {}", source_path.exists());
+        debug!("Source is directory: {}", source_path.is_dir());
+        debug!("Source is file: {}", source_path.is_file());
+
+        if !source_path.exists() {
+            warn!(
+                "Source path {} does not exist, skipping mount",
+                mount.source
+            );
+            return Ok(());
+        }
+
+        // Mount with bind flag
+        debug!("Attempting to mount with bind flag...");
+        let mount_result = nix_mount(
+            Some(mount.source.as_str()),
+            target_path.as_os_str(),
+            None::<&str>,
+            MsFlags::MS_BIND,
+            None::<&str>,
+        );
+
+        match mount_result {
+            Ok(_) => debug!("Successfully mounted {} to {:?}", mount.source, target_path),
+            Err(e) => {
+                error!(
+                    "Failed to mount {} to {:?}: {}",
+                    mount.source, target_path, e
+                );
+                return Err(FilesystemError::MountError(format!(
+                    "Failed to mount {}: {}",
+                    mount.source, e
+                )));
+            }
+        }
+
+        // Make it read-only if specified
+        if matches!(
+            mount.permissions,
+            crate::config::FolderPermissions::ReadOnly
+        ) {
+            debug!("Attempting to make folder read-only...");
+            let remount_result = nix_mount(
+                None::<&str>,
+                target_path.as_os_str(),
+                None::<&str>,
+                MsFlags::MS_BIND | MsFlags::MS_RDONLY | MsFlags::MS_REMOUNT,
+                None::<&str>,
+            );
+
+            match remount_result {
+                Ok(_) => debug!("Successfully made {} read-only", mount.source),
+                Err(e) => {
+                    warn!("Failed to make {} read-only: {}", mount.source, e);
+                    return Err(FilesystemError::MountError(format!(
+                        "Failed to make {} read-only: {}",
+                        mount.source, e
+                    )));
+                }
+            }
+        }
+
+        self.mounted_paths.push(target_path);
+        debug!("=== Completed folder mount operation ===");
+        Ok(())
+    }
+
+    /// Mount a tmpfs directory
+    async fn mount_tmpfs(
+        &mut self,
+        mount: &crate::config::TempfsMount,
+    ) -> Result<(), FilesystemError> {
+        debug!("=== Starting tmpfs mount operation ===");
+        debug!("Mount config: {:?}", mount);
+
+        let target_path = self.container_path.join(&mount.target);
+        debug!("Target path: {:?}", target_path);
+        debug!("Target path exists: {}", target_path.exists());
+        debug!("Target path is directory: {}", target_path.is_dir());
+
+        // Create target directory if it doesn't exist
+        if let Some(parent) = target_path.parent() {
+            debug!("Parent directory: {:?}", parent);
+            debug!("Parent exists: {}", parent.exists());
+            debug!("Parent is directory: {}", parent.is_dir());
+
+            if !parent.exists() {
+                debug!("Creating parent directory: {:?}", parent);
+                fs::create_dir_all(parent).await?;
+                debug!("Parent directory created successfully");
+            }
+        }
+
+        // Create the target directory itself if it doesn't exist
+        if !target_path.exists() {
+            debug!("Creating target directory: {:?}", target_path);
+            fs::create_dir_all(&target_path).await?;
+            debug!("Target directory created successfully");
+        }
+
+        debug!(
+            "Mounting tmpfs: {} -> {:?} with options: {}",
+            mount.target, target_path, mount.options
+        );
+
+        // Mount tmpfs
+        debug!("Attempting to mount tmpfs...");
+        let mount_result = nix_mount(
+            Some("tmpfs"),
+            target_path.as_os_str(),
+            Some("tmpfs"),
+            MsFlags::empty(),
+            Some(mount.options.as_str()),
+        );
+
+        match mount_result {
+            Ok(_) => debug!("Successfully mounted tmpfs to {:?}", target_path),
+            Err(e) => {
+                error!("Failed to mount tmpfs to {:?}: {}", target_path, e);
+                return Err(FilesystemError::MountError(format!(
+                    "Failed to mount tmpfs {}: {}",
+                    mount.target, e
+                )));
+            }
+        }
+
+        self.mounted_paths.push(target_path);
+        debug!("=== Completed tmpfs mount operation ===");
+        Ok(())
+    }
+
+    /// Mount a device file
+    async fn mount_device(
+        &mut self,
+        mount: &crate::config::DeviceMount,
+    ) -> Result<(), FilesystemError> {
+        debug!("=== Starting device mount operation ===");
+        debug!("Mount config: {:?}", mount);
+
+        let target_path = self.container_path.join(&mount.target);
+        debug!("Target path: {:?}", target_path);
+        debug!("Target path exists: {}", target_path.exists());
+        debug!("Target path is directory: {}", target_path.is_dir());
+
+        // Create parent directory if it doesn't exist
+        if let Some(parent) = target_path.parent() {
+            debug!("Parent directory: {:?}", parent);
+            debug!("Parent exists: {}", parent.exists());
+            debug!("Parent is directory: {}", parent.is_dir());
+
+            if !parent.exists() {
+                debug!("Creating parent directory: {:?}", parent);
+                fs::create_dir_all(parent).await?;
+                debug!("Parent directory created successfully");
+            }
+        }
+
+        debug!(
+            "Mounting device: {} -> {:?} ({:?})",
+            mount.source, target_path, mount.permissions
+        );
+
+        // Check if source exists
+        let source_path = std::path::Path::new(&mount.source);
+        debug!("Source path: {:?}", source_path);
+        debug!("Source exists: {}", source_path.exists());
+        debug!("Source is file: {}", source_path.is_file());
+        debug!("Source is directory: {}", source_path.is_dir());
+
+        if !source_path.exists() {
+            warn!(
+                "Source device {} does not exist, skipping mount",
+                mount.source
+            );
+            return Ok(());
+        }
+
+        // Check if target already exists and remove it if it's a file
+        if target_path.exists() && target_path.is_file() {
+            debug!("Removing existing target file: {:?}", target_path);
+            if let Err(e) = std::fs::remove_file(&target_path) {
+                warn!(
+                    "Failed to remove existing target file {:?}: {}",
+                    target_path, e
+                );
+            }
+        }
+
+        // Create the target file if it doesn't exist (required for bind mount)
+        if !target_path.exists() {
+            debug!("Creating target device file: {:?}", target_path);
+            // Create an empty file that will be replaced by the bind mount
+            if let Err(e) = std::fs::File::create(&target_path) {
+                error!(
+                    "Failed to create target device file {:?}: {}",
+                    target_path, e
+                );
+                return Err(FilesystemError::MountError(format!(
+                    "Failed to create target device file {}: {}",
+                    mount.target, e
+                )));
+            }
+            debug!("Target device file created successfully");
+        }
+
+        // Mount with bind flag
+        debug!("Attempting to mount device with bind flag...");
+        let mount_result = nix_mount(
+            Some(mount.source.as_str()),
+            target_path.as_os_str(),
+            None::<&str>,
+            MsFlags::MS_BIND,
+            None::<&str>,
+        );
+
+        match mount_result {
+            Ok(_) => debug!(
+                "Successfully mounted device {} to {:?}",
+                mount.source, target_path
+            ),
+            Err(e) => {
+                error!(
+                    "Failed to mount device {} to {:?}: {}",
+                    mount.source, target_path, e
+                );
+                return Err(FilesystemError::MountError(format!(
+                    "Failed to mount device {}: {}",
+                    mount.source, e
+                )));
+            }
+        }
+
+        // Make it read-only if specified
+        if matches!(
+            mount.permissions,
+            crate::config::DevicePermissions::ReadOnly
+        ) {
+            debug!("Attempting to make device read-only...");
+            let remount_result = nix_mount(
+                None::<&str>,
+                target_path.as_os_str(),
+                None::<&str>,
+                MsFlags::MS_BIND | MsFlags::MS_RDONLY | MsFlags::MS_REMOUNT,
+                None::<&str>,
+            );
+
+            match remount_result {
+                Ok(_) => debug!("Successfully made device {} read-only", mount.source),
+                Err(e) => {
+                    warn!("Failed to make device {} read-only: {}", mount.source, e);
+                    return Err(FilesystemError::MountError(format!(
+                        "Failed to make device {} read-only: {}",
+                        mount.source, e
+                    )));
+                }
+            }
+        }
+
+        self.mounted_paths.push(target_path);
+        debug!("=== Completed device mount operation ===");
+        Ok(())
+    }
+
+    /// Mount an individual file
+    async fn mount_file(
+        &mut self,
+        mount: &crate::config::FileMount,
+    ) -> Result<(), FilesystemError> {
+        debug!("=== Starting file mount operation ===");
+        debug!("Mount config: {:?}", mount);
+
+        let target_path = self.container_path.join(&mount.target);
+        debug!("Target path: {:?}", target_path);
+        debug!("Target path exists: {}", target_path.exists());
+        debug!("Target path is directory: {}", target_path.is_dir());
+
+        // Check if source exists
+        let source_path = std::path::Path::new(&mount.source);
+        debug!("Source path: {:?}", source_path);
+        debug!("Source exists: {}", source_path.exists());
+        debug!("Source is file: {}", source_path.is_file());
+        debug!("Source is directory: {}", source_path.is_dir());
+
+        if !source_path.exists() {
+            warn!(
+                "Source file {} does not exist, skipping mount",
+                mount.source
+            );
+            return Ok(());
+        }
+
+        // Create parent directory if it doesn't exist
+        if let Some(parent) = target_path.parent() {
+            debug!("Parent directory: {:?}", parent);
+            debug!("Parent exists: {}", parent.exists());
+            debug!("Parent is directory: {}", parent.is_dir());
+
+            if !parent.exists() {
+                debug!("Creating parent directory: {:?}", parent);
+                fs::create_dir_all(parent).await?;
+                debug!("Parent directory created successfully");
+            }
+        }
+
+        // Remove target if it exists (whether file or directory)
+        if target_path.exists() {
+            debug!("Target exists, removing: {:?}", target_path);
+            if target_path.is_dir() {
+                fs::remove_dir_all(&target_path).await?;
+            } else {
+                fs::remove_file(&target_path).await?;
+            }
+            debug!("Target removed successfully");
+        }
+
+        // Create the target file if it doesn't exist (required for bind mount)
+        if !target_path.exists() {
+            debug!("Creating target file: {:?}", target_path);
+            // Create an empty file that will be replaced by the bind mount
+            if let Err(e) = std::fs::File::create(&target_path) {
+                error!("Failed to create target file {:?}: {}", target_path, e);
+                return Err(FilesystemError::MountError(format!(
+                    "Failed to create target file {}: {}",
+                    mount.target, e
+                )));
+            }
+            debug!("Target file created successfully");
+        }
+
+        debug!("Mounting file: {} -> {:?}", mount.source, target_path);
+
+        // Mount with bind flag
+        debug!("Attempting to mount file with bind flag...");
+        let mount_result = nix_mount(
+            Some(mount.source.as_str()),
+            target_path.as_os_str(),
+            None::<&str>,
+            MsFlags::MS_BIND,
+            None::<&str>,
+        );
+
+        match mount_result {
+            Ok(_) => debug!(
+                "Successfully mounted file {} to {:?}",
+                mount.source, target_path
+            ),
+            Err(e) => {
+                error!(
+                    "Failed to mount file {} to {:?}: {}",
+                    mount.source, target_path, e
+                );
+                return Err(FilesystemError::MountError(format!(
+                    "Failed to mount file {}: {}",
+                    mount.source, e
+                )));
+            }
+        }
+
+        // Make it read-only if specified
+        if matches!(mount.permissions, crate::config::FilePermissions::ReadOnly) {
+            debug!("Attempting to make file read-only...");
+            let remount_result = nix_mount(
+                None::<&str>,
+                target_path.as_os_str(),
+                None::<&str>,
+                MsFlags::MS_BIND | MsFlags::MS_RDONLY | MsFlags::MS_REMOUNT,
+                None::<&str>,
+            );
+
+            match remount_result {
+                Ok(_) => debug!("Successfully made file {} read-only", mount.source),
+                Err(e) => {
+                    warn!("Failed to make file {} read-only: {}", mount.source, e);
+                    return Err(FilesystemError::MountError(format!(
+                        "Failed to make file {} read-only: {}",
+                        mount.source, e
+                    )));
+                }
+            }
+        }
+
+        self.mounted_paths.push(target_path);
+        debug!("=== Completed file mount operation ===");
+        Ok(())
+    }
+
+    /// Unmount a path
+    async fn unmount_path(&self, path: &PathBuf) -> Result<(), FilesystemError> {
+        debug!("Unmounting: {:?}", path);
+
+        umount(path.as_os_str()).map_err(|e| {
+            FilesystemError::UnmountError(format!("Failed to unmount {:?}: {}", path, e))
+        })?;
+
+        Ok(())
+    }
+}

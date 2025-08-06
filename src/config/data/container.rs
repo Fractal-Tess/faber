@@ -2,6 +2,11 @@ use serde::{Deserialize, Deserializer};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ContainerConfig {
+    pub base_dir: String,
+    pub work_dir: String,
+    pub tmp_dir: String,
+    pub default_user: u32,
+    pub default_group: u32,
     pub resource_limits: ResourceLimitsConfig,
     pub cgroups: CgroupsConfig,
     pub filesystem: super::filesystem::FilesystemConfig,

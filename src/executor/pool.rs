@@ -20,7 +20,7 @@ impl ExecutorPool {
     pub async fn new(
         config: Arc<FaberConfig>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let executor_count = config.executor.worker_count;
+        let executor_count = config.executor.executor_count;
         info!("Creating executor pool with {} executors", executor_count);
 
         let mut executors = Vec::with_capacity(executor_count.into());
@@ -105,11 +105,6 @@ impl ExecutorPool {
                 Err(format!("Failed to receive batch results: {e}").into())
             }
         }
-    }
-
-    /// Get the number of executors in the pool
-    pub fn executor_count(&self) -> usize {
-        self.executors.len()
     }
 
     /// Shutdown all executors gracefully

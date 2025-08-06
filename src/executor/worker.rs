@@ -1,5 +1,10 @@
 use crate::config::FaberConfig;
+use crate::container::Container;
 use crate::executor::task::{Task, TaskResult};
+use nix::libc::{gid_t, uid_t};
+use nix::sched::unshare;
+use nix::unistd::{setgid, setuid};
+use std::process::Command;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::mpsc::{self, Receiver, Sender};
@@ -34,6 +39,7 @@ pub struct Worker {
     id: u16,
     state: WorkerState,
     config: Arc<FaberConfig>,
+    container: Option<Container>,
     receiver: Receiver<WorkerMessage>,
 }
 
@@ -43,6 +49,7 @@ impl Worker {
             id,
             state: WorkerState::Initializing,
             config,
+            container: None,
             receiver,
         }
     }
@@ -160,24 +167,17 @@ impl Worker {
         info!("Worker {} beginning initialization", self.id);
         self.state = WorkerState::Initializing;
 
-        // TODO: Add worker-specific initialization tasks here
-        // For example:
-        // - Set up container environment
-        // - Prepare file system
-        // - Initialize security context
-        // - Set up networking
+        // Create and initialize container
+        debug!("Worker {} creating container", self.id);
+        let mut container = Container::new(self.config.clone());
 
-        debug!("Worker {} setting up container environment", self.id);
-        // Simulate container setup
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        if let Err(e) = container.initialize().await {
+            error!("Worker {} failed to initialize container: {}", self.id, e);
+            return Err(Box::new(e));
+        }
 
-        debug!("Worker {} preparing file system", self.id);
-        // Simulate filesystem preparation
-        tokio::time::sleep(tokio::time::Duration::from_millis(30)).await;
-
-        debug!("Worker {} initializing security context", self.id);
-        // Simulate security initialization
-        tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+        self.container = Some(container);
+        debug!("Worker {} container initialized successfully", self.id);
 
         self.state = WorkerState::Ready;
         info!("Worker {} initialization completed successfully", self.id);
@@ -224,45 +224,67 @@ impl Worker {
         &self,
         task: &Task,
     ) -> Result<(String, String, i32), Box<dyn std::error::Error + Send + Sync>> {
-        // TODO: Implement actual command execution
+        // Get container reference
+        let container = self.container.as_ref().ok_or("Container not initialized")?;
 
-        debug!(
-            "Worker {} setting up container environment for command",
-            self.id
-        );
-        // Simulate container setup
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        debug!("Worker {} executing command in container", self.id);
 
-        if let Some(env_vars) = &task.env {
-            debug!(
-                "Worker {} applying {} environment variables",
-                self.id,
-                env_vars.len()
-            );
-        }
+        // Get container root path and namespace flags
+        let root_path = container
+            .get_root_path()
+            .map_err(|e| format!("Failed to get container root path: {}", e))?;
+        let clone_flags = container
+            .get_clone_flags()
+            .map_err(|e| format!("Failed to get namespace flags: {}", e))?;
 
-        if let Some(files) = &task.files {
-            debug!("Worker {} creating {} files", self.id, files.len());
-        }
-
-        // Placeholder implementation
+        // Prepare command arguments
         let empty_args = vec![];
         let args = task.args.as_ref().unwrap_or(&empty_args);
-        let cmd_with_args = format!("{} {}", task.cmd, args.join(" "));
+        let args_strings: Vec<String> = args.iter().map(|s| s.to_string()).collect();
 
-        debug!("Worker {} executing command: {}", self.id, cmd_with_args);
+        // Build command with namespace isolation
+        let mut command = Command::new("unshare");
 
-        // Simulate execution
-        tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
+        // Add namespace flags based on clone_flags
+        if clone_flags.contains(nix::sched::CloneFlags::CLONE_NEWNS) {
+            command.arg("--mount");
+        }
+        if clone_flags.contains(nix::sched::CloneFlags::CLONE_NEWUTS) {
+            command.arg("--uts");
+        }
+        if clone_flags.contains(nix::sched::CloneFlags::CLONE_NEWIPC) {
+            command.arg("--ipc");
+        }
+        if clone_flags.contains(nix::sched::CloneFlags::CLONE_NEWNET) {
+            command.arg("--net");
+        }
+        if clone_flags.contains(nix::sched::CloneFlags::CLONE_NEWPID) {
+            command.arg("--pid");
+        }
+        if clone_flags.contains(nix::sched::CloneFlags::CLONE_NEWUSER) {
+            command.arg("--user");
+        }
+        if clone_flags.contains(nix::sched::CloneFlags::CLONE_NEWCGROUP) {
+            command.arg("--cgroup");
+        }
+
+        command.arg("--root").arg(root_path);
+        command.arg("--wd").arg(&self.config.container.work_dir);
+        command.arg(&task.cmd);
+        command.args(&args_strings);
+
+        // Execute command
+        let output = command
+            .output()
+            .map_err(|e| format!("Failed to execute command: {e}"))?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let exit_code = output.status.code().unwrap_or(-1);
 
         debug!("Worker {} command execution completed", self.id);
 
-        // Simulate success
-        Ok((
-            format!("Command executed successfully: {}", cmd_with_args),
-            "No errors".to_string(),
-            0,
-        ))
+        Ok((stdout, stderr, exit_code))
     }
 
     /// Cleanup and reinitialize the worker
@@ -272,24 +294,13 @@ impl Worker {
         info!("Worker {} beginning cleanup process", self.id);
         self.state = WorkerState::CleaningUp;
 
-        // TODO: Add cleanup tasks here
-        // For example:
-        // - Clean up container resources
-        // - Remove temporary files
-        // - Reset security context
-        // - Clean up networking
-
-        debug!("Worker {} cleaning up container resources", self.id);
-        // Simulate container cleanup
-        tokio::time::sleep(tokio::time::Duration::from_millis(25)).await;
-
-        debug!("Worker {} removing temporary files", self.id);
-        // Simulate file cleanup
-        tokio::time::sleep(tokio::time::Duration::from_millis(15)).await;
-
-        debug!("Worker {} resetting security context", self.id);
-        // Simulate security reset
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        // Cleanup container
+        if let Some(mut container) = self.container.take() {
+            debug!("Worker {} cleaning up container", self.id);
+            if let Err(e) = container.cleanup().await {
+                error!("Worker {} failed to cleanup container: {}", self.id, e);
+            }
+        }
 
         info!("Worker {} cleanup completed, reinitializing", self.id);
 

@@ -7,7 +7,7 @@ use std::fmt;
 #[derive(Debug, Clone)]
 pub struct ExecutorConfig {
     /// Number of executor threads to process jobs
-    pub worker_count: u16,
+    pub executor_count: u16,
     /// Maximum number of jobs in the queue
     pub max_queue_size: u16,
 }
@@ -19,12 +19,12 @@ impl<'de> Deserialize<'de> for ExecutorConfig {
     {
         #[derive(Deserialize)]
         struct RawQueueConfig {
-            worker_count: u16,
+            executor_count: u16,
             max_queue_size: u16,
         }
 
         let raw = RawQueueConfig::deserialize(deserializer)?;
-        if raw.worker_count == 0 {
+        if raw.executor_count == 0 {
             return Err(de::Error::custom(
                 "QueueConfig: worker_count must be greater than 0",
             ));
@@ -35,7 +35,7 @@ impl<'de> Deserialize<'de> for ExecutorConfig {
             ));
         }
         Ok(ExecutorConfig {
-            worker_count: raw.worker_count,
+            executor_count: raw.executor_count,
             max_queue_size: raw.max_queue_size,
         })
     }

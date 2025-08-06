@@ -5,6 +5,7 @@ use std::error::Error;
 mod api;
 mod cli;
 mod config;
+mod container;
 mod executor;
 mod logging;
 
