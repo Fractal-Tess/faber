@@ -13,7 +13,7 @@ use super::create_router;
 pub async fn serve(config: Arc<FaberConfig>) -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting 🦊 Faber... ");
 
-    let app = create_router(Arc::clone(&config));
+    let app = create_router(Arc::clone(&config)).await;
 
     let shutdown_signal = async move {
         let sigint = tokio::signal::ctrl_c();

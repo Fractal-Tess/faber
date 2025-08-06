@@ -6,10 +6,11 @@ mod api;
 mod cli;
 mod config;
 mod logging;
+mod worker;
 
 use cli::run;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    run().await
+async fn main() {
+    run().await;
 }

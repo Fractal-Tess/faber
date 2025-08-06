@@ -33,7 +33,7 @@ pub enum Commands {
     },
 }
 
-pub async fn run() -> Result<(), Box<dyn Error>> {
+pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Platform check - only allow Linux to run
     #[cfg(not(target_os = "linux"))]
     {
