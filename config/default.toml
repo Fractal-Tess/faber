@@ -39,23 +39,12 @@ max_queue_size = 100 # Maximum number of jobs in the queue
 base_dir = "/tmp/faber/containers" # The base directory for all containers
 work_dir = "/work" # The working directory for the container 
 tmp_dir = "/tmp" # The temporary directory for the container
-default_user = 1536 # The default user to run commands as 
-default_group = 1536 # The default group to run commands as 
+default_user = 65534 # The default user to run commands as (nobody)
+default_group = 65534 # The default group to run commands as (nogroup or nobody)
 host_name = "faber" # Container hostname
 domain_name = "faber" # Container domain name
 
 [container.security.namespaces]
-# Namespace isolation settings
-# Each namespace provides different levels of isolation:
-# - mount: Isolates filesystem mounts (recommended for most use cases)
-# - uts: Isolates hostname and domain name
-# - ipc: Isolates inter-process communication (System V IPC, POSIX message queues)
-# - network: Isolates network interfaces, routing tables, firewall rules
-# - pid: Isolates process IDs (requires mount namespace for full isolation)
-# - user: Isolates user and group IDs (requires careful configuration)
-# - time: Isolates system time (Linux 5.6+)
-# - cgroup: Isolates cgroup hierarchy
-
 pid = true      # Enable PID namespace isolation (recommended with mount namespace)
 mount = true     # Enable mount namespace isolation (recommended for most use cases)
 network = false   # Enable network namespace isolation (isolates network completely)
@@ -90,22 +79,22 @@ enable_process_limit = true # Enable or disable process limiting (true/false)
 # Format: `mount_name` = ['host_path', 'container_path', 'permissions']
 # permissions: 'ro' for read-only (default), 'rw' for read-write
 [container.filesystem.mounts.folders]
-# Basic system binaries and libraries (read-only)
+# Basic system binaries and libraries (read-only) - only mount if they exist
 bin = ["/bin", "/bin", "ro"]
 lib = ["/lib", "/lib", "ro"]
 lib64 = ["/lib64", "/lib64", "ro"]
 usr = ["/usr", "/usr", "ro"]
 
-# Compiler-specific configurations (read-only)
-etc_alternatives = ["/etc/alternatives", "/etc/alternatives", "ro"]
-etc_fpc_cfg = ["/etc/fpc.cfg", "/etc/fpc.cfg", "ro"]
-etc_mono = ["/etc/mono", "/etc/mono", "ro"]
-var_lib_ghc = ["/var/lib/ghc", "/var/lib/ghc", "ro"]
-etc_java_17_openjdk = ["/etc/java-17-openjdk", "/etc/java-17-openjdk", "ro"]
+# Compiler-specific configurations (read-only) - commented out as they may not exist in all environments
+# etc_alternatives = ["/etc/alternatives", "/etc/alternatives", "ro"]
+# etc_fpc_cfg = ["/etc/fpc.cfg", "/etc/fpc.cfg", "ro"]
+# etc_mono = ["/etc/mono", "/etc/mono", "ro"]
+# var_lib_ghc = ["/var/lib/ghc", "/var/lib/ghc", "ro"]
+# etc_java_17_openjdk = ["/etc/java-17-openjdk", "/etc/java-17-openjdk", "ro"]
 
-# Format 'mount_name' = ['host_path', 'options']
+# Format 'mount_name' = ['container_path', 'options']
 [container.filesystem.mounts.tmpfs]
-work_tmpfs = ["/w", "size=128m,nr_inodes=4k"]
+work_tmpfs = ["/work", "size=128m,nr_inodes=4k"]  # Work directory for user code execution
 tmp_tmpfs = ["/tmp", "size=128m,nr_inodes=4k"]
 
 # Format: `mount_name` = ['host_path', 'container_path', 'permissions']
@@ -121,8 +110,8 @@ dev_full = ["/dev/full", "/dev/full", "rw"]
 # Format: `mount_name` = ['host_path', 'container_path', 'permissions']
 # permissions: 'ro' for read-only (default), 'rw' for read-write
 [container.filesystem.mounts.files]
-# Essential configuration files (read-only)
-etc_ld_so_cache = ["/etc/ld.so.cache", "/etc/ld.so.cache", "ro"]
+# Essential configuration files (read-only) - commented out as it may not exist in all environments
+# etc_ld_so_cache = ["/etc/ld.so.cache", "/etc/ld.so.cache", "ro"]
 
 [container.security.seccomp]
 enabled = false
@@ -140,3 +129,21 @@ architectures = [
 
 #TODO: Add disallowed syscalls
 blocked = []
+
+[container.security.capabilities]
+enabled = true
+drop_all = true
+# Minimal set of capabilities that might be needed for basic operations
+# These are only used if drop_all = false
+allowed = [
+    "CAP_CHOWN",      # Change file ownership
+    "CAP_FOWNER",     # Override file permissions
+    "CAP_FSETID",     # Set setuid/setgid bits
+    "CAP_KILL",       # Send signals to processes
+    "CAP_SETGID",     # Set group ID
+    "CAP_SETUID",     # Set user ID
+    "CAP_SETPCAP",    # Set process capabilities
+    "CAP_NET_BIND_SERVICE", # Bind to privileged ports
+    "CAP_SYS_CHROOT", # Use chroot
+    "CAP_SETFCAP",    # Set file capabilities
+]

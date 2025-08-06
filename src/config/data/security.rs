@@ -4,6 +4,7 @@ use serde::Deserialize;
 pub struct SecurityConfig {
     pub namespaces: NamespaceConfig,
     pub seccomp: SeccompConfig,
+    pub capabilities: CapabilityConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -31,4 +32,13 @@ pub struct SyscallsConfig {
     #[serde(default)]
     pub allowed: Vec<String>,
     pub blocked: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CapabilityConfig {
+    pub enabled: bool,
+    #[serde(default)]
+    pub allowed: Vec<String>,
+    #[serde(default)]
+    pub drop_all: bool,
 }

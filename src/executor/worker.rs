@@ -1,6 +1,8 @@
 use crate::config::FaberConfig;
 use crate::container::{Container, ContainerNamespaces};
 use crate::executor::task::{Task, TaskResult};
+use caps::{CapSet, Capability};
+use nix::unistd::Gid;
 
 use std::process::Command;
 use std::sync::Arc;
@@ -233,14 +235,22 @@ impl Worker {
             (fds[0], fds[1])
         };
 
+        debug!("===== Container root: {:?}", container_root);
+        debug!(
+            "===== Work dir: {:?}",
+            self.config.container.work_dir.as_str()
+        );
+
         // Fork the process
         match unsafe { fork() } {
             Ok(ForkResult::Child) => {
                 // This is the child process
 
+                use nix::unistd::{chdir, chroot};
+
                 // Change root to container filesystem
-                nix::unistd::chroot(container_root).ok();
-                nix::unistd::chdir("/").ok();
+                chroot(container_root).expect("Failed to chroot");
+                chdir(self.config.container.work_dir.as_str()).expect("Failed to change directory");
 
                 // Close the read ends of the pipes in the child
                 unsafe {
@@ -260,8 +270,14 @@ impl Worker {
                     nix::libc::close(stderr_write_fd);
                 }
 
+                // Drop capabilities for security (after container setup)
+                // self.drop_capabilities()?;
+
+                // Drop privillages
+                self.drop_privileges().expect("Failed to drop privileges");
+
                 // Prepare command and arguments for exec
-                let cmd_cstr = CString::new(task.cmd.as_str()).unwrap();
+                let cmd_cstr = CString::new(task.cmd.as_str()).expect("cmd_string failed");
 
                 // Build the full argument list: [cmd, ...args]
                 let mut all_args = vec![task.cmd.clone()];
@@ -271,7 +287,7 @@ impl Worker {
 
                 let args_cstr: Vec<CString> = all_args
                     .iter()
-                    .map(|arg| CString::new(arg.as_str()).unwrap())
+                    .map(|arg| CString::new(arg.as_str()).expect("args_cstr failed"))
                     .collect();
 
                 // Execute the command with the full argument list
@@ -324,5 +340,65 @@ impl Worker {
             }
             Err(e) => Err(format!("Failed to fork process: {e}").into()),
         }
+    }
+
+    /// Drop process capabilities for security
+    fn drop_capabilities(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let config = &self.config.container.security.capabilities;
+
+        // Try to drop capabilities, but don't fail the entire process if it doesn't work
+        if config.drop_all {
+            // Drop all capabilities from all capability sets
+            for cap_set in &[CapSet::Effective, CapSet::Permitted, CapSet::Inheritable] {
+                if let Err(e) = caps::clear(None, *cap_set) {
+                    debug!(
+                        "Worker {} failed to clear {:?} capabilities: {}",
+                        self.id, cap_set, e
+                    );
+                }
+            }
+        } else {
+            // Drop all capabilities except those explicitly allowed
+            let allowed_caps: Result<Vec<Capability>, _> = config
+                .allowed
+                .iter()
+                .map(|cap_name| cap_name.parse::<Capability>())
+                .collect();
+
+            if let Ok(allowed_caps) = allowed_caps {
+                // Get all available capabilities
+                let all_caps = caps::all();
+
+                // Drop capabilities not in the allowed list
+                for cap in all_caps {
+                    if !allowed_caps.contains(&cap) {
+                        for cap_set in &[CapSet::Effective, CapSet::Permitted, CapSet::Inheritable]
+                        {
+                            if let Err(e) = caps::drop(None, *cap_set, cap) {}
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Drop additional privileges (supplementary groups, effective user/group)
+    fn drop_privileges(&self) -> Result<(), Box<dyn std::error::Error>> {
+        // Drop supplementary groups
+        nix::unistd::setgroups(&[])?;
+
+        // Set effective group to unprivileged
+        nix::unistd::setgid(nix::unistd::Gid::from_raw(
+            self.config.container.default_group,
+        ))?;
+
+        // Set effective user to unprivileged
+        nix::unistd::setuid(nix::unistd::Uid::from_raw(
+            self.config.container.default_user,
+        ))?;
+
+        Ok(())
     }
 }
