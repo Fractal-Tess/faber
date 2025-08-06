@@ -37,10 +37,10 @@ max_queue_size = 100 # Maximum number of jobs in the queue
 
 [container]
 base_dir = "/tmp/faber/containers" # The base directory for all containers
-work_dir = "/w" # The working directory for the container (matching go-judge)
+work_dir = "/work" # The working directory for the container 
 tmp_dir = "/tmp" # The temporary directory for the container
-default_user = 1536 # The default user to run commands as (matching go-judge)
-default_group = 1536 # The default group to run commands as (matching go-judge)
+default_user = 1536 # The default user to run commands as 
+default_group = 1536 # The default group to run commands as 
 host_name = "faber" # Container hostname
 domain_name = "faber" # Container domain name
 
