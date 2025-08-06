@@ -20,7 +20,7 @@ impl ExecutorPool {
     pub async fn new(
         config: Arc<FaberConfig>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let executor_count = config.queue.executor_count;
+        let executor_count = config.executor.worker_count;
         info!("Creating executor pool with {} executors", executor_count);
 
         let mut executors = Vec::with_capacity(executor_count.into());

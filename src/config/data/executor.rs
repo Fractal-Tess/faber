@@ -5,28 +5,28 @@ use serde::de::{self, Deserializer, MapAccess, Visitor};
 use std::fmt;
 
 #[derive(Debug, Clone)]
-pub struct QueueConfig {
+pub struct ExecutorConfig {
     /// Number of executor threads to process jobs
-    pub executor_count: u16,
+    pub worker_count: u16,
     /// Maximum number of jobs in the queue
     pub max_queue_size: u16,
 }
 
-impl<'de> Deserialize<'de> for QueueConfig {
+impl<'de> Deserialize<'de> for ExecutorConfig {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
         #[derive(Deserialize)]
         struct RawQueueConfig {
-            executor_count: u16,
+            worker_count: u16,
             max_queue_size: u16,
         }
 
         let raw = RawQueueConfig::deserialize(deserializer)?;
-        if raw.executor_count == 0 {
+        if raw.worker_count == 0 {
             return Err(de::Error::custom(
-                "QueueConfig: executor_count must be greater than 0",
+                "QueueConfig: worker_count must be greater than 0",
             ));
         }
         if raw.max_queue_size == 0 {
@@ -34,8 +34,8 @@ impl<'de> Deserialize<'de> for QueueConfig {
                 "QueueConfig: max_queue_size must be greater than 0",
             ));
         }
-        Ok(QueueConfig {
-            executor_count: raw.executor_count,
+        Ok(ExecutorConfig {
+            worker_count: raw.worker_count,
             max_queue_size: raw.max_queue_size,
         })
     }

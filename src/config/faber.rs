@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use super::{ApiConfig, ContainerConfig, LoggingConfig, QueueConfig};
+use super::{ApiConfig, ContainerConfig, ExecutorConfig, LoggingConfig};
 use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
@@ -25,7 +25,7 @@ fn extract_toml_error_message(error: &toml::de::Error) -> String {
 pub struct FaberConfig {
     pub api: ApiConfig,
     pub container: ContainerConfig,
-    pub queue: QueueConfig,
+    pub executor: ExecutorConfig,
     pub logging: LoggingConfig,
 }
 

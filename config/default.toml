@@ -31,8 +31,8 @@ level = "info" # The log level (error/warn/info/debug/trace)
 rotation = "hourly" # The log rotation (hourly/daily)
 file_name_prefix = "faber" # The prefix for the log file name (string)
 
-[queue]
-executor_count = 1 # Number of executor threads to process jobs
+[executor]
+worker_count = 1 # Number of executor threads to process jobs
 max_queue_size = 100 # Maximum number of jobs in the queue
 
 [container.resource_limits]
