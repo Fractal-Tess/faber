@@ -5,8 +5,8 @@ use std::error::Error;
 mod api;
 mod cli;
 mod config;
+mod executor;
 mod logging;
-mod worker;
 
 use cli::run;
 

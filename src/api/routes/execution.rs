@@ -1,5 +1,5 @@
 use crate::config::FaberConfig;
-use crate::worker::{Task, TaskResult, WorkerPool};
+use crate::executor::{ExecutorPool, Task, TaskResult};
 use axum::{Extension, Json, http::StatusCode};
 use serde::Serialize;
 use std::sync::Arc;
@@ -11,7 +11,7 @@ type ExecutionResponse = Vec<TaskResult>;
 #[axum::debug_handler]
 pub async fn execution(
     Extension(config): Extension<Arc<FaberConfig>>,
-    Extension(worker_pool): Extension<Arc<tokio::sync::Mutex<WorkerPool>>>,
+    Extension(executor_pool): Extension<Arc<tokio::sync::Mutex<ExecutorPool>>>,
     Json(request): Json<ExecutionRequest>,
 ) -> Result<Json<ExecutionResponse>, (StatusCode, Json<String>)> {
     debug!("Received execution request with {} tasks", request.len());
@@ -23,8 +23,8 @@ pub async fn execution(
         ));
     }
 
-    // Execute tasks using the worker pool
-    let mut pool = worker_pool.lock().await;
+    // Execute tasks using the executor pool
+    let mut pool = executor_pool.lock().await;
     match pool.execute_tasks(request).await {
         Ok(results) => {
             debug!("Successfully executed {} tasks", results.len());

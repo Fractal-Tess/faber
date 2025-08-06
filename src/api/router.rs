@@ -3,7 +3,7 @@ use std::sync::Arc;
 use super::middlewares::{auth_middleware, request_id_middleware, timing_middleware};
 use super::routes::{execution, health};
 use crate::config::FaberConfig;
-use crate::worker::WorkerPool;
+use crate::executor::ExecutorPool;
 
 use axum::middleware;
 use axum::{
@@ -15,10 +15,10 @@ pub async fn create_router(config: Arc<FaberConfig>) -> Router {
     let config_extension = Extension(Arc::clone(&config));
 
     // Create worker pool
-    let worker_pool = WorkerPool::new(Arc::clone(&config))
+    let executor_pool = ExecutorPool::new(Arc::clone(&config))
         .await
-        .expect("Failed to create worker pool");
-    let worker_pool_extension = Extension(Arc::new(tokio::sync::Mutex::new(worker_pool)));
+        .expect("Failed to create executor pool");
+    let executor_pool_extension = Extension(Arc::new(tokio::sync::Mutex::new(executor_pool)));
 
     let public_routes = Router::new().route(&config.api.endpoints.health_endpoint, get(health));
 
@@ -34,5 +34,5 @@ pub async fn create_router(config: Arc<FaberConfig>) -> Router {
         .layer(middleware::from_fn(auth_middleware))
         .layer(middleware::from_fn(request_id_middleware))
         .layer(config_extension)
-        .layer(worker_pool_extension)
+        .layer(executor_pool_extension)
 }

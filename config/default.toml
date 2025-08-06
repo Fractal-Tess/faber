@@ -32,7 +32,7 @@ rotation = "hourly" # The log rotation (hourly/daily)
 file_name_prefix = "faber" # The prefix for the log file name (string)
 
 [queue]
-worker_count = 1 # Number of worker threads to process jobs
+executor_count = 1 # Number of executor threads to process jobs
 max_queue_size = 100 # Maximum number of jobs in the queue
 
 [container.resource_limits]

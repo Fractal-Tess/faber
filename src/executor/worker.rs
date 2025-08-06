@@ -1,5 +1,5 @@
 use crate::config::FaberConfig;
-use crate::worker::task::{Task, TaskResult};
+use crate::executor::task::{Task, TaskResult};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::mpsc::{self, Receiver, Sender};
@@ -225,13 +225,6 @@ impl Worker {
         task: &Task,
     ) -> Result<(String, String, i32), Box<dyn std::error::Error + Send + Sync>> {
         // TODO: Implement actual command execution
-        // This should:
-        // 1. Set up the container environment
-        // 2. Apply environment variables
-        // 3. Create files if specified
-        // 4. Execute the command
-        // 5. Capture stdout/stderr
-        // 6. Return results
 
         debug!(
             "Worker {} setting up container environment for command",
