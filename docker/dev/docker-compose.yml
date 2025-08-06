@@ -3,16 +3,14 @@ services:
     container_name: faber-dev
     build:
       context: ../../
-      dockerfile: docker/Dockerfile.dev
+      dockerfile: docker/dev/Dockerfile
     volumes:
       - ../../.cargo:/faber/.cargo:ro
       - ../../config:/faber/config:ro
-      - ../../crates:/faber/crates:ro
+      - ../../src:/faber/src:ro
       - ../../logs:/var/log/faber:rw
-      - ../../scripts:/faber/scripts:ro
       - ../../tests:/faber/tests:ro
       - ../../Cargo.toml:/faber/Cargo.toml:ro
-
       - cargo-target:/faber/target
     privileged: true
     network_mode: 'host'
