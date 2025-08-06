@@ -1,8 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
-
+use crate::config::FaberConfig;
 use axum::{Extension, Json, http::StatusCode};
-use faber_config::FaberConfig;
 use serde::Deserialize;
+use std::{collections::HashMap, sync::Arc};
 use tracing::debug;
 
 type ExecutionRequest = Vec<Task>;

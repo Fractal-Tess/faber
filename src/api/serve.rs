@@ -1,16 +1,14 @@
-mod middlewares;
-mod router;
-mod routes;
-
 use std::sync::Arc;
 
-use faber_config::FaberConfig;
-pub use router::create_router;
 use tokio::{
     net::TcpListener,
     signal::unix::{SignalKind, signal},
 };
 use tracing::info;
+
+use crate::config::FaberConfig;
+
+use super::create_router;
 
 pub async fn serve(config: Arc<FaberConfig>) -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting 🦊 Faber... ");

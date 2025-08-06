@@ -4,8 +4,8 @@ use serde::{Deserialize, Deserializer};
 pub struct ContainerConfig {
     pub resource_limits: ResourceLimitsConfig,
     pub cgroups: CgroupsConfig,
-    pub filesystem: crate::filesystem::FilesystemConfig,
-    pub security: crate::security::SecurityConfig,
+    pub filesystem: super::filesystem::FilesystemConfig,
+    pub security: super::security::SecurityConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]

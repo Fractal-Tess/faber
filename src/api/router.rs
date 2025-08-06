@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
-use crate::middlewares::{auth_middleware, request_id_middleware, timing_middleware};
-use crate::routes::{execution, health};
-
-use faber_config::FaberConfig;
+use super::middlewares::{auth_middleware, request_id_middleware, timing_middleware};
+use super::routes::{execution, health};
+use crate::config::FaberConfig;
 
 use axum::middleware;
 use axum::{

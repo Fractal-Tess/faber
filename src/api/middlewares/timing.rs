@@ -1,9 +1,8 @@
-use std::time::Instant;
-
 use axum::{extract::Request, http::HeaderValue, middleware::Next, response::Response};
+use std::time::Instant;
 use tracing::{debug, warn};
 
-use crate::middlewares::request_id::RequestId;
+use crate::api::middlewares::request_id::RequestId;
 
 pub async fn timing_middleware(request: Request, next: Next) -> Response {
     let start = Instant::now();

@@ -1,6 +1,5 @@
+use crate::config::{FaberConfig, LogRotation};
 use std::sync::Arc;
-
-use faber_config::{FaberConfig, logging::LogRotation};
 use tracing::{Level, subscriber::set_global_default};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 

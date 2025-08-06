@@ -1,14 +1,39 @@
 use std::sync::Arc;
 
-use clap::{CommandFactory, Parser};
-use faber_api::serve;
-use faber_cli::{Cli, Commands, init_logging};
-use faber_config::FaberConfig;
+use crate::config::FaberConfig;
+use crate::{api::serve, logging::init_logging};
 use std::error::Error;
 use std::process::exit;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+use clap::{CommandFactory, Parser, Subcommand};
+
+#[derive(Parser, Debug)]
+#[command(name = "faber")]
+#[command(about = "A secure containerized task execution service")]
+#[command(version)]
+#[command(propagate_version = true)]
+pub struct Cli {
+    /// Configuration file path
+    #[arg(short, long, default_value = "/faber/config/default.toml")]
+    pub config: String,
+
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Commands {
+    /// Start the Faber server
+    Serve {},
+    /// Validate configuration, optionally display the parsed config
+    ValidateConfig {
+        /// Display the parsed configuration after validation
+        #[arg(short, long)]
+        display: bool,
+    },
+}
+
+pub async fn run() -> Result<(), Box<dyn Error>> {
     // Platform check - only allow Linux to run
     #[cfg(not(target_os = "linux"))]
     {

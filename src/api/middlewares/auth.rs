@@ -1,10 +1,10 @@
+use crate::config::FaberConfig;
 use axum::{
     extract::{Extension, Request},
     http::{HeaderMap, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use faber_config::FaberConfig;
 use std::sync::Arc;
 
 // Authentication middleware to check if the request has a valid API key
