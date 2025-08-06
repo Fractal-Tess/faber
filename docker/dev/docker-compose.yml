@@ -2,16 +2,16 @@ services:
   faber:
     container_name: faber-dev
     build:
-      context: ../
+      context: ../../
       dockerfile: docker/Dockerfile.dev
     volumes:
-      - ../.cargo:/faber/.cargo:ro
-      - ../config:/faber/config:ro
-      - ../crates:/faber/crates:ro
-      - ../logs:/var/log/faber:rw
-      - ../scripts:/faber/scripts:ro
-      - ../tests:/faber/tests:ro
-      - ../Cargo.toml:/faber/Cargo.toml:ro
+      - ../../.cargo:/faber/.cargo:ro
+      - ../../config:/faber/config:ro
+      - ../../crates:/faber/crates:ro
+      - ../../logs:/var/log/faber:rw
+      - ../../scripts:/faber/scripts:ro
+      - ../../tests:/faber/tests:ro
+      - ../../Cargo.toml:/faber/Cargo.toml:ro
 
       - cargo-target:/faber/target
     privileged: true

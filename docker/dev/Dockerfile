@@ -1,7 +1,5 @@
 FROM debian:latest
 
-
-# Install g++ compiler, LLDB, Rust, and debugging tools
 RUN apt update && apt install -y \
     curl \
     g++ \
@@ -10,11 +8,11 @@ RUN apt update && apt install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Rust using rustup (official recommended way)
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain stable
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 RUN cargo install cargo-watch
+COPY docker/dev/lldb-start.sh /faber/scripts/lldb-start.sh
 
 WORKDIR /faber
 

@@ -1,0 +1,6 @@
+services:
+  faber:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile.prod
+    # TODO....
