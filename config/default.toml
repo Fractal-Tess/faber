@@ -37,10 +37,12 @@ max_queue_size = 100 # Maximum number of jobs in the queue
 
 [container]
 base_dir = "/tmp/faber/containers" # The base directory for all containers
-work_dir = "/work" # The working directory for the container
+work_dir = "/w" # The working directory for the container (matching go-judge)
 tmp_dir = "/tmp" # The temporary directory for the container
-default_user = 0 # The default user to run commands as (0 = root)
-default_group = 0 # The default group to run commands as (0 = root)
+default_user = 1536 # The default user to run commands as (matching go-judge)
+default_group = 1536 # The default group to run commands as (matching go-judge)
+host_name = "faber" # Container hostname
+domain_name = "faber" # Container domain name
 
 [container.security.namespaces]
 # Namespace isolation settings
@@ -61,8 +63,7 @@ ipc = true       # Enable IPC namespace isolation (isolates inter-process commun
 uts = true       # Enable UTS namespace isolation (isolates hostname/domain)
 user = false     # Enable user namespace isolation (requires careful configuration)
 time = false     # Enable time namespace isolation (Linux 5.6+)
-cgroup = false    # Enable cgroup namespace isolation (isolates cgroup hierarchy)
-
+cgroup = true    # Enable cgroup namespace isolation (isolates cgroup hierarchy)
 
 [container.resource_limits]
 memory_limit_kb = 524288 # 512MB
@@ -71,59 +72,57 @@ max_cpu_cores = 1 # 1 core
 wall_time_limit_ms = 30000 # 30 seconds
 max_processes = 50 # 50 processes
 max_fds = 256 # 256 file descriptors
-stack_limit_kb = 4 # 4MB
-data_segment_limit_kb = 256 # 256MB
-address_space_limit_kb = 1024 # 1GB
+stack_limit_kb = 4096 # 4MB
+data_segment_limit_kb = 262144 # 256MB
+address_space_limit_kb = 1048576 # 1GB
 cpu_rate_limit_percent = 50 # 50%
-io_read_limit_kb_s = 10 # 10MB/s
-io_write_limit_kb_s = 10 # 10MB/s
+io_read_limit_kb_s = 10240 # 10MB/s
+io_write_limit_kb_s = 10240 # 10MB/s
 
 [container.cgroups]
-enabled = false # Enable or disable cgroups support
+enabled = true # Enable or disable cgroups support
 version = 2 # Not configurable for now
 prefix = "faber" # Not configurable for now
 enable_cpu_rate_limit = true # Enable or disable CPU rate limiting (true/false)
 enable_memory_limit = true # Enable or disable memory limiting (true/false)
 enable_process_limit = true # Enable or disable process limiting (true/false)
 
-
 # Format: `mount_name` = ['host_path', 'container_path', 'permissions']
 # permissions: 'ro' for read-only (default), 'rw' for read-write
 [container.filesystem.mounts.folders]
-# System binaries and libraries (read-only)
-# These paths should exist in most Linux distributions including Debian
+# Basic system binaries and libraries (read-only)
 bin = ["/bin", "/bin", "ro"]
 lib = ["/lib", "/lib", "ro"]
 lib64 = ["/lib64", "/lib64", "ro"]
 usr = ["/usr", "/usr", "ro"]
-# etc_ld_so_cache = ["/etc/ld.so.cache", "/etc/ld.so.cache"]
+
+# Compiler-specific configurations (read-only)
 etc_alternatives = ["/etc/alternatives", "/etc/alternatives", "ro"]
-# etc_fpc_cfg = ["/etc/fpc.cfg", "/etc/fpc.cfg"]
-# etc_mono = ["/etc/mono", "/etc/mono"]
-# var_lib_ghc = ["/var/lib/ghc", "/var/lib/ghc"]
-# etc_java_17_openjdk = ["/etc/java-17-openjdk", "/etc/java-17-openjdk"]
+etc_fpc_cfg = ["/etc/fpc.cfg", "/etc/fpc.cfg", "ro"]
+etc_mono = ["/etc/mono", "/etc/mono", "ro"]
+var_lib_ghc = ["/var/lib/ghc", "/var/lib/ghc", "ro"]
+etc_java_17_openjdk = ["/etc/java-17-openjdk", "/etc/java-17-openjdk", "ro"]
 
 # Format 'mount_name' = ['host_path', 'options']
 [container.filesystem.mounts.tmpfs]
-work_tmpfs = ["/work", "size=256m,nr_inodes=4k"]
+work_tmpfs = ["/w", "size=128m,nr_inodes=4k"]
 tmp_tmpfs = ["/tmp", "size=128m,nr_inodes=4k"]
 
 # Format: `mount_name` = ['host_path', 'container_path', 'permissions']
 # permissions: 'ro' for read-only (default), 'rw' for read-write
 [container.filesystem.mounts.devices]
-# Essential device files (read-only)
-dev_null = ["/dev/null", "/dev/null", "ro"]
-dev_random = ["/dev/random", "/dev/random", "ro"]
-dev_urandom = ["/dev/urandom", "/dev/urandom", "ro"]
-dev_zero = ["/dev/zero", "/dev/zero", "ro"]
-dev_full = ["/dev/full", "/dev/full", "ro"]
+# Essential device files (read-write for most)
+dev_null = ["/dev/null", "/dev/null", "rw"]
+dev_random = ["/dev/random", "/dev/random", "rw"]
+dev_urandom = ["/dev/urandom", "/dev/urandom", "rw"]
+dev_zero = ["/dev/zero", "/dev/zero", "rw"]
+dev_full = ["/dev/full", "/dev/full", "rw"]
 
 # Format: `mount_name` = ['host_path', 'container_path', 'permissions']
 # permissions: 'ro' for read-only (default), 'rw' for read-write
 [container.filesystem.mounts.files]
 # Essential configuration files (read-only)
 etc_ld_so_cache = ["/etc/ld.so.cache", "/etc/ld.so.cache", "ro"]
-
 
 [container.security.seccomp]
 enabled = false

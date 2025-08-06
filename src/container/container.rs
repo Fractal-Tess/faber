@@ -60,6 +60,11 @@ impl Container {
         Ok(())
     }
 
+    /// Get the container root path
+    pub fn container_root(&self) -> &PathBuf {
+        &self.container_root
+    }
+
     /// Cleanup and destroy the container
     pub async fn cleanup(&mut self) -> Result<(), ContainerError> {
         if !self.initialized {

@@ -14,9 +14,8 @@ use clap::{CommandFactory, Parser, Subcommand};
 #[command(version)]
 #[command(propagate_version = true)]
 pub struct Cli {
-    /// Configuration file path
     #[arg(short, long, default_value = "/faber/config/default.toml")]
-    pub config: String,
+    pub config: Option<String>,
 
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -25,9 +24,16 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Start the Faber server
-    Serve {},
+    Serve {
+        /// Configuration file path
+        #[arg(short, long, default_value = "config/default.toml")]
+        config: String,
+    },
     /// Validate configuration, optionally display the parsed config
     ValidateConfig {
+        /// Configuration file path
+        #[arg(short, long, default_value = "config/default.toml")]
+        config: String,
         /// Display the parsed configuration after validation
         #[arg(short, long)]
         display: bool,
@@ -55,23 +61,28 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         exit(0);
     });
 
-    let config = match FaberConfig::load_from_path(&cli.config) {
-        Ok(config) => config,
-        Err(e) => {
-            eprintln!("Failed to load configuration from {}: {}", cli.config, e);
-            exit(1);
-        }
-    };
-
-    let config = Arc::new(config);
-
     match command {
-        Commands::Serve {} => {
+        Commands::Serve { config } => {
+            let config = match FaberConfig::load_from_path(&config) {
+                Ok(config) => config,
+                Err(e) => {
+                    eprintln!("Failed to load configuration from {}: {}", config, e);
+                    exit(1);
+                }
+            };
+            let config = Arc::new(config);
             init_logging(Arc::clone(&config))?;
             serve(config).await?;
         }
 
-        Commands::ValidateConfig { display } => {
+        Commands::ValidateConfig { config, display } => {
+            let config = match FaberConfig::load_from_path(&config) {
+                Ok(config) => config,
+                Err(e) => {
+                    eprintln!("Failed to load configuration from {}: {}", config, e);
+                    exit(1);
+                }
+            };
             info!("Validating configuration...");
             if display {
                 println!("{config:#?}");

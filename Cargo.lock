@@ -275,6 +275,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "clap",
+ "libc",
  "nix",
  "serde",
  "thiserror 2.0.12",

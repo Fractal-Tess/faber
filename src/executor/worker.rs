@@ -203,39 +203,126 @@ impl Worker {
         &self,
         task: &Task,
     ) -> Result<(String, String, i32), Box<dyn std::error::Error + Send + Sync>> {
+        use nix::sys::wait::waitpid;
+        use nix::unistd::{ForkResult, execvp, fork};
+        use std::ffi::CString;
+        use std::os::fd::{AsRawFd, FromRawFd};
+        use std::path::PathBuf;
+
         // Get container reference
         let container = self.container.as_ref().ok_or("Container not initialized")?;
-        // Namespaces are temporarily disabled to fix EINVAL issue
-        // let namespaces = self
-        //     .namespaces
-        //     .as_ref()
-        //     .ok_or("Namespaces not initialized")?;
+        let container_root = container.container_root();
 
         debug!("Worker {} executing command in container", self.id);
+        debug!("Worker {} container root: {:?}", self.id, container_root);
 
-        // Prepare command arguments
-        let empty_args = vec![];
-        let args = task.args.as_ref().unwrap_or(&empty_args);
-        let args_strings: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        // Create pipes for output capture using raw file descriptors
+        let (stdout_read_fd, stdout_write_fd) = unsafe {
+            let mut fds = [0; 2];
+            if nix::libc::pipe(fds.as_mut_ptr()) != 0 {
+                return Err("Failed to create stdout pipe".into());
+            }
+            (fds[0], fds[1])
+        };
 
-        // For now, execute without namespace isolation to fix the EINVAL issue
-        // TODO: Implement proper namespace isolation using fork/exec
-        debug!(
-            "Worker {} executing command without namespace isolation",
-            self.id
-        );
+        let (stderr_read_fd, stderr_write_fd) = unsafe {
+            let mut fds = [0; 2];
+            if nix::libc::pipe(fds.as_mut_ptr()) != 0 {
+                return Err("Failed to create stderr pipe".into());
+            }
+            (fds[0], fds[1])
+        };
 
-        // Execute the command directly in the current process
-        let output = Command::new(&task.cmd)
-            .args(&args_strings)
-            .current_dir(&self.config.container.work_dir)
-            .output()
-            .map_err(|e| format!("Failed to execute command: {e}"))?;
+        // Fork the process
+        match unsafe { fork() } {
+            Ok(ForkResult::Child) => {
+                // This is the child process
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let exit_code = output.status.code().unwrap_or(-1);
+                // Change root to container filesystem
+                nix::unistd::chroot(container_root).ok();
+                nix::unistd::chdir("/").ok();
 
-        Ok((stdout, stderr, exit_code))
+                // Close the read ends of the pipes in the child
+                unsafe {
+                    nix::libc::close(stdout_read_fd);
+                    nix::libc::close(stderr_read_fd);
+                }
+
+                // Redirect stdout and stderr to our pipes
+                unsafe {
+                    nix::libc::dup2(stdout_write_fd, 1);
+                    nix::libc::dup2(stderr_write_fd, 2);
+                }
+
+                // Close the write ends after redirection
+                unsafe {
+                    nix::libc::close(stdout_write_fd);
+                    nix::libc::close(stderr_write_fd);
+                }
+
+                // Prepare command and arguments for exec
+                let cmd_cstr = CString::new(task.cmd.as_str()).unwrap();
+
+                // Build the full argument list: [cmd, ...args]
+                let mut all_args = vec![task.cmd.clone()];
+                if let Some(args) = &task.args {
+                    all_args.extend(args.clone());
+                }
+
+                let args_cstr: Vec<CString> = all_args
+                    .iter()
+                    .map(|arg| CString::new(arg.as_str()).unwrap())
+                    .collect();
+
+                // Execute the command with the full argument list
+                let _ = execvp(&cmd_cstr, &args_cstr);
+
+                // If we get here, exec failed
+                std::process::exit(1);
+            }
+            Ok(ForkResult::Parent { child }) => {
+                // This is the parent process
+
+                // Close the write ends of the pipes in the parent
+                unsafe {
+                    nix::libc::close(stdout_write_fd);
+                    nix::libc::close(stderr_write_fd);
+                }
+
+                // Read from the pipes
+                let mut stdout_buf = Vec::new();
+                let mut stderr_buf = Vec::new();
+
+                // Read stdout
+                let mut stdout_file = unsafe { std::fs::File::from_raw_fd(stdout_read_fd) };
+                std::io::Read::read_to_end(&mut stdout_file, &mut stdout_buf).ok();
+                // Drop the file to close the fd
+                drop(stdout_file);
+
+                // Read stderr
+                let mut stderr_file = unsafe { std::fs::File::from_raw_fd(stderr_read_fd) };
+                std::io::Read::read_to_end(&mut stderr_file, &mut stderr_buf).ok();
+                // Drop the file to close the fd
+                drop(stderr_file);
+
+                let stdout_str = String::from_utf8_lossy(&stdout_buf).to_string();
+                let stderr_str = String::from_utf8_lossy(&stderr_buf).to_string();
+
+                debug!("Worker {} read stdout: '{}'", self.id, stdout_str);
+                debug!("Worker {} read stderr: '{}'", self.id, stderr_str);
+
+                // Wait for child process to complete
+                let wait_result = waitpid(Some(child), None);
+
+                let exit_code = match wait_result {
+                    Ok(nix::sys::wait::WaitStatus::Exited(_, code)) => code,
+                    Ok(nix::sys::wait::WaitStatus::Signaled(_, signal, _)) => signal as i32,
+                    _ => -1,
+                };
+
+                Ok((stdout_str, stderr_str, exit_code))
+            }
+            Err(e) => Err(format!("Failed to fork process: {e}").into()),
+        }
     }
 }

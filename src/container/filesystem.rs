@@ -111,6 +111,12 @@ impl ContainerFilesystem {
         // Create container configuration files
         self.create_container_config_files().await?;
 
+        // Create symlinks for standard I/O
+        self.create_standard_symlinks().await?;
+
+        // Setup proc filesystem
+        self.setup_proc_filesystem().await?;
+
         info!("Container filesystem initialized successfully");
         debug!("Total mounted paths: {:?}", self.mounted_paths);
         Ok(())
@@ -183,6 +189,84 @@ impl ContainerFilesystem {
         Ok(())
     }
 
+    /// Create standard symlinks for /dev/fd, /dev/stdin, /dev/stdout, /dev/stderr
+    async fn create_standard_symlinks(&self) -> Result<(), FilesystemError> {
+        debug!("Creating standard symlinks");
+
+        let dev_path = self.container_path.join("dev");
+        fs::create_dir_all(&dev_path).await?;
+
+        // Create symlinks for standard I/O (matching go-judge)
+        let symlinks = [
+            ("fd", "/proc/self/fd"),
+            ("stdin", "/proc/self/fd/0"),
+            ("stdout", "/proc/self/fd/1"),
+            ("stderr", "/proc/self/fd/2"),
+        ];
+
+        for (name, target) in &symlinks {
+            let link_path = dev_path.join(name);
+
+            // Remove existing symlink if it exists
+            if link_path.exists() {
+                fs::remove_file(&link_path).await?;
+            }
+
+            // Create symlink
+            match std::os::unix::fs::symlink(target, &link_path) {
+                Ok(_) => {
+                    debug!("Successfully created symlink {} -> {}", name, target);
+                }
+                Err(e) => {
+                    warn!("Failed to create symlink {} -> {}: {}", name, target, e);
+                    // Continue with other symlinks
+                }
+            }
+        }
+
+        debug!("Standard symlinks creation completed");
+        Ok(())
+    }
+
+    /// Setup proc filesystem
+    async fn setup_proc_filesystem(&mut self) -> Result<(), FilesystemError> {
+        debug!("Setting up proc filesystem");
+
+        let proc_path = self.container_path.join("proc");
+
+        // Create proc directory if it doesn't exist
+        if !proc_path.exists() {
+            fs::create_dir_all(&proc_path).await?;
+        }
+
+        // Mount proc filesystem
+        let source = "proc";
+        let target = proc_path.to_string_lossy();
+        let fstype = "proc";
+        let flags = MsFlags::empty();
+        let data = "";
+
+        match nix_mount(
+            Some(source),
+            target.as_ref(),
+            Some(fstype),
+            flags,
+            Some(data),
+        ) {
+            Ok(_) => {
+                debug!("Successfully mounted proc filesystem at {}", target);
+                self.mounted_paths.push(proc_path);
+            }
+            Err(e) => {
+                warn!("Failed to mount proc filesystem: {}", e);
+                // Continue without proc filesystem
+            }
+        }
+
+        debug!("Proc filesystem setup completed");
+        Ok(())
+    }
+
     /// Create basic container configuration files
     async fn create_container_config_files(&self) -> Result<(), FilesystemError> {
         debug!("Creating container configuration files");
@@ -190,13 +274,13 @@ impl ContainerFilesystem {
         let etc_path = self.container_path.join("etc");
         fs::create_dir_all(&etc_path).await?;
 
-        // Create passwd file
+        // Create passwd file (matching go-judge UID/GID 1536)
         let passwd_content =
-            "root:x:0:0:root:/:/bin/sh\nuser:x:1000:1000:Container User:/work:/bin/sh\n";
+            "root:x:0:0:root:/:/bin/sh\nuser:x:1536:1536:Container User:/w:/bin/sh\n";
         fs::write(etc_path.join("passwd"), passwd_content).await?;
 
-        // Create group file
-        let group_content = "root:x:0:\nuser:x:1000:\n";
+        // Create group file (matching go-judge UID/GID 1536)
+        let group_content = "root:x:0:\nuser:x:1536:\n";
         fs::write(etc_path.join("group"), group_content).await?;
 
         // Create hostname file
