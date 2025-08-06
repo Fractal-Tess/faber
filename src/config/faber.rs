@@ -35,5 +35,5 @@ pub struct FaberConfigOverrides {
     pub host: Option<String>,
     pub port: Option<u16>,
     pub auth_enabled: Option<bool>,
-    pub workers: Option<usize>,
+    pub workers: Option<u16>,
 }

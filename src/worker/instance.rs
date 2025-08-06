@@ -22,6 +22,10 @@ pub enum WorkerMessage {
         task: Task,
         response_sender: oneshot::Sender<TaskResult>,
     },
+    ExecuteBatch {
+        tasks: Vec<Task>,
+        response_sender: oneshot::Sender<Vec<TaskResult>>,
+    },
     Shutdown,
 }
 
@@ -84,6 +88,62 @@ impl Worker {
                     }
 
                     info!("Worker {} ready for next task", self.id);
+                }
+                WorkerMessage::ExecuteBatch {
+                    tasks,
+                    response_sender,
+                } => {
+                    self.state = WorkerState::Executing;
+                    let task_count = tasks.len();
+                    info!(
+                        "Worker {} starting batch execution of {} tasks",
+                        self.id, task_count
+                    );
+
+                    let mut results = Vec::with_capacity(task_count);
+
+                    // Execute all tasks in the batch
+                    for (index, task) in tasks.into_iter().enumerate() {
+                        info!(
+                            "Worker {} executing task {}/{}: {:?}",
+                            self.id,
+                            index + 1,
+                            task_count,
+                            task
+                        );
+
+                        let result = self.execute_task(task).await;
+                        info!(
+                            "Worker {} completed task {}/{} with result: {:?}",
+                            self.id,
+                            index + 1,
+                            task_count,
+                            result
+                        );
+                        results.push(result);
+                    }
+
+                    info!(
+                        "Worker {} completed batch execution of {} tasks",
+                        self.id,
+                        results.len()
+                    );
+
+                    // Send all results back to the API
+                    if let Err(e) = response_sender.send(results) {
+                        error!("Worker {} failed to send batch results: {:?}", self.id, e);
+                    }
+
+                    // Cleanup and reinitialize after the entire batch
+                    if let Err(e) = self.cleanup_and_reinitialize().await {
+                        error!(
+                            "Worker {} failed to cleanup/reinitialize after batch: {}",
+                            self.id, e
+                        );
+                        break;
+                    }
+
+                    info!("Worker {} ready for next batch", self.id);
                 }
                 WorkerMessage::Shutdown => {
                     info!("Worker {} received shutdown signal", self.id);
