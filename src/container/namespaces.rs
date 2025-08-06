@@ -160,4 +160,53 @@ impl ContainerNamespaces {
             _ => false,
         }
     }
+
+    /// Get the namespace configuration
+    pub fn get_config(&self) -> &NamespaceConfig {
+        &self.config
+    }
+
+    /// Get a summary of enabled namespaces
+    pub fn get_enabled_namespaces(&self) -> Vec<&'static str> {
+        let mut enabled = Vec::new();
+
+        if self.config.mount {
+            enabled.push("mount");
+        }
+        if self.config.uts {
+            enabled.push("uts");
+        }
+        if self.config.ipc {
+            enabled.push("ipc");
+        }
+        if self.config.network {
+            enabled.push("network");
+        }
+        if self.config.pid {
+            enabled.push("pid");
+        }
+        if self.config.user {
+            enabled.push("user");
+        }
+        if self.config.time {
+            enabled.push("time");
+        }
+        if self.config.cgroup {
+            enabled.push("cgroup");
+        }
+
+        enabled
+    }
+
+    /// Check if any namespaces are enabled
+    pub fn has_enabled_namespaces(&self) -> bool {
+        self.config.mount
+            || self.config.uts
+            || self.config.ipc
+            || self.config.network
+            || self.config.pid
+            || self.config.user
+            || self.config.time
+            || self.config.cgroup
+    }
 }

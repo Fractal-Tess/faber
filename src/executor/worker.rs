@@ -229,13 +229,30 @@ impl Worker {
 
         debug!("Worker {} executing command in container", self.id);
 
-        // Get container root path and namespace flags
+        // Get container root path and namespace configuration
         let root_path = container
             .get_root_path()
-            .map_err(|e| format!("Failed to get container root path: {}", e))?;
-        let clone_flags = container
-            .get_clone_flags()
-            .map_err(|e| format!("Failed to get namespace flags: {}", e))?;
+            .map_err(|e| format!("Failed to get container root path: {e}"))?;
+
+        // Get namespace configuration for logging and validation
+        let namespace_config = container
+            .get_namespace_config()
+            .map_err(|e| format!("Failed to get namespace config: {e}"))?;
+
+        // Get namespace flags directly from configuration
+        let namespace_flags = container
+            .get_namespace_flags()
+            .map_err(|e| format!("Failed to get namespace flags: {e}"))?;
+
+        // Log namespace configuration for debugging
+        debug!(
+            "Worker {} namespace configuration: {:?}",
+            self.id, namespace_config
+        );
+        debug!("Worker {} namespace flags: {:?}", self.id, namespace_flags);
+
+        // Validate namespace configuration
+        self.validate_namespace_config(namespace_config)?;
 
         // Prepare command arguments
         let empty_args = vec![];
@@ -245,27 +262,9 @@ impl Worker {
         // Build command with namespace isolation
         let mut command = Command::new("unshare");
 
-        // Add namespace flags based on clone_flags
-        if clone_flags.contains(nix::sched::CloneFlags::CLONE_NEWNS) {
-            command.arg("--mount");
-        }
-        if clone_flags.contains(nix::sched::CloneFlags::CLONE_NEWUTS) {
-            command.arg("--uts");
-        }
-        if clone_flags.contains(nix::sched::CloneFlags::CLONE_NEWIPC) {
-            command.arg("--ipc");
-        }
-        if clone_flags.contains(nix::sched::CloneFlags::CLONE_NEWNET) {
-            command.arg("--net");
-        }
-        if clone_flags.contains(nix::sched::CloneFlags::CLONE_NEWPID) {
-            command.arg("--pid");
-        }
-        if clone_flags.contains(nix::sched::CloneFlags::CLONE_NEWUSER) {
-            command.arg("--user");
-        }
-        if clone_flags.contains(nix::sched::CloneFlags::CLONE_NEWCGROUP) {
-            command.arg("--cgroup");
+        // Add namespace flags based on configuration
+        for flag in namespace_flags {
+            command.arg(flag);
         }
 
         command.arg("--root").arg(root_path);
@@ -306,6 +305,49 @@ impl Worker {
 
         // Reinitialize
         self.initialize().await?;
+
+        Ok(())
+    }
+
+    /// Validate namespace configuration before command execution
+    fn validate_namespace_config(
+        &self,
+        namespace_config: &crate::config::NamespaceConfig,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Check for potentially problematic namespace combinations
+        if namespace_config.user && !namespace_config.pid {
+            warn!(
+                "Worker {}: User namespace enabled but PID namespace disabled - this may cause issues",
+                self.id
+            );
+        }
+
+        if namespace_config.network && !namespace_config.mount {
+            warn!(
+                "Worker {}: Network namespace enabled but mount namespace disabled - this may limit functionality",
+                self.id
+            );
+        }
+
+        // Log enabled namespaces for debugging
+        let enabled_namespaces: Vec<&str> = [
+            ("mount", namespace_config.mount),
+            ("uts", namespace_config.uts),
+            ("ipc", namespace_config.ipc),
+            ("network", namespace_config.network),
+            ("pid", namespace_config.pid),
+            ("user", namespace_config.user),
+            ("time", namespace_config.time),
+            ("cgroup", namespace_config.cgroup),
+        ]
+        .iter()
+        .filter_map(|(name, enabled)| if *enabled { Some(*name) } else { None })
+        .collect();
+
+        debug!(
+            "Worker {}: Enabled namespaces: {:?}",
+            self.id, enabled_namespaces
+        );
 
         Ok(())
     }

@@ -11,6 +11,7 @@ use tracing::{debug, error, info, warn};
 use super::filesystem::ContainerFilesystem;
 use super::namespaces::ContainerNamespaces;
 use crate::config::FaberConfig;
+use crate::config::NamespaceConfig;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ContainerError {
@@ -163,6 +164,32 @@ impl Container {
 
         if let Some(namespaces) = &self.namespaces {
             Ok(namespaces.get_unshare_flags())
+        } else {
+            Err(ContainerError::NotInitialized)
+        }
+    }
+
+    /// Get namespace configuration for debugging and validation
+    pub fn get_namespace_config(&self) -> Result<&NamespaceConfig, ContainerError> {
+        if !self.initialized {
+            return Err(ContainerError::NotInitialized);
+        }
+
+        if let Some(namespaces) = &self.namespaces {
+            Ok(namespaces.get_config())
+        } else {
+            Err(ContainerError::NotInitialized)
+        }
+    }
+
+    /// Get enabled namespaces for debugging
+    pub fn get_enabled_namespaces(&self) -> Result<Vec<&'static str>, ContainerError> {
+        if !self.initialized {
+            return Err(ContainerError::NotInitialized);
+        }
+
+        if let Some(namespaces) = &self.namespaces {
+            Ok(namespaces.get_enabled_namespaces())
         } else {
             Err(ContainerError::NotInitialized)
         }

@@ -9,6 +9,7 @@ RUN apt update && apt install -y \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain stable
+RUN rustup target add x86_64-unknown-linux-musl
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 RUN cargo install cargo-watch
