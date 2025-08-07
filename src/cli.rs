@@ -41,7 +41,7 @@ pub enum Commands {
 }
 
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    // Platform check - only allow Linux to run
+    // Disallow non-Linux platforms
     #[cfg(not(target_os = "linux"))]
     {
         eprintln!("Error: Faber is only supported on Linux.");
@@ -66,12 +66,18 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             let config = match FaberConfig::load_from_path(&config) {
                 Ok(config) => config,
                 Err(e) => {
-                    eprintln!("Failed to load configuration from {}: {}", config, e);
+                    eprintln!("Failed to load configuration from {config}: {e}");
                     exit(1);
                 }
             };
+
+            // Create an Arc for the global config - this will be shared throughout the application
             let config = Arc::new(config);
+
+            // Initialize logging
             init_logging(Arc::clone(&config))?;
+
+            // Start the server
             serve(config).await?;
         }
 
@@ -79,7 +85,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             let config = match FaberConfig::load_from_path(&config) {
                 Ok(config) => config,
                 Err(e) => {
-                    eprintln!("Failed to load configuration from {}: {}", config, e);
+                    eprintln!("Failed to load configuration from {config}: {e}");
                     exit(1);
                 }
             };
