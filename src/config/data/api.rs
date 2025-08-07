@@ -5,7 +5,6 @@ pub struct ApiConfig {
     pub host: String,
     pub port: u16,
     pub cors: CorsConfig,
-    pub request: RequestConfig,
     pub auth: AuthConfig,
     pub endpoints: EndpointsConfig,
 }
@@ -17,11 +16,6 @@ pub struct CorsConfig {
     pub cors_allowed_methods: String,
     pub cors_allowed_headers: String,
     pub cors_allow_credentials: bool,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct RequestConfig {
-    pub max_request_size_kb: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]

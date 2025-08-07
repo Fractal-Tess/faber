@@ -22,6 +22,7 @@
             # (pkgs.lib.optionals pkgs.stdenv.isLinux pkgs.mold)
             cargo-watch
             bun
+            go
           ];
           buildInputs = with pkgs;
             [

@@ -1,64 +1,55 @@
+use serde::de::Error as DeError;
 use serde::{Deserialize, Deserializer};
+
+use super::MountsConfig;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ContainerConfig {
-    pub base_dir: String,
-    pub work_dir: String,
-    pub tmp_dir: String,
-    pub default_user: u32,
-    pub default_group: u32,
-    pub resource_limits: ResourceLimitsConfig,
-    pub cgroups: CgroupsConfig,
-    pub filesystem: super::filesystem::FilesystemConfig,
-    pub security: super::security::SecurityConfig,
+    pub cgroups: ContainerCgroupsConfig,
+    pub syscall_blocklist: SyscallBlocklistConfig,
+    pub filesystem: ContainerFilesystemConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct ResourceLimitsConfig {
-    pub memory_limit_kb: u32,
-    pub cpu_time_limit_ms: u32,
-    pub max_cpu_cores: u32,
-    pub wall_time_limit_ms: u32,
-    pub max_processes: u32,
-    pub max_fds: u32,
-    pub stack_limit_kb: u32,
-    pub data_segment_limit_kb: u32,
-    pub address_space_limit_kb: u32,
-    pub cpu_rate_limit_percent: u32,
-    pub io_read_limit_kb_s: u32,
-    pub io_write_limit_kb_s: u32,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct CgroupsConfig {
+pub struct ContainerCgroupsConfig {
     pub enabled: bool,
-    pub prefix: String,
-    pub version: CgroupVersion,
-    pub enable_cpu_rate_limit: bool,
-    pub enable_memory_limit: bool,
-    pub enable_process_limit: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SyscallBlocklistConfig {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ContainerFilesystemConfig {
+    pub base_dir: String,
+    #[serde(deserialize_with = "deserialize_tempfs_dir")]
+    pub work_dir: TempfsDir,
+    #[serde(deserialize_with = "deserialize_tempfs_dir")]
+    pub tmp_dir: TempfsDir,
+    pub mounts: MountsConfig,
 }
 
 #[derive(Debug, Clone)]
-pub enum CgroupVersion {
-    V1,
-    V2,
+pub struct TempfsDir {
+    pub target: String,
+    pub options: String,
 }
 
-impl<'de> Deserialize<'de> for CgroupVersion {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s = u8::deserialize(deserializer)?;
-        match s {
-            1 => Err(serde::de::Error::custom(
-                "Cgroup version 1 is not supported",
-            )),
-            2 => Ok(CgroupVersion::V2),
-            _ => Err(serde::de::Error::custom(format!(
-                "Invalid cgroup version: {s}"
-            ))),
-        }
+fn deserialize_tempfs_dir<'de, D>(deserializer: D) -> Result<TempfsDir, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let values: Vec<String> = Vec::<String>::deserialize(deserializer)?;
+    if values.len() != 2 {
+        return Err(DeError::custom(format!(
+            "tempfs dir must have exactly 2 elements [target, options], got {}",
+            values.len()
+        )));
     }
+
+    Ok(TempfsDir {
+        target: values[0].clone().trim_start_matches('/').to_string(),
+        options: values[1].clone(),
+    })
 }

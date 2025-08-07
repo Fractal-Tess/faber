@@ -15,6 +15,14 @@
       "cargo": {
         "args": ["build"]
       }
+    },
+    {
+      "name": "Remote Debug (GO)",
+      "type": "go",
+      "request": "attach",
+      "mode": "remote",
+      "port": 2345,
+      "host": "0.0.0.0"
     }
   ]
 }

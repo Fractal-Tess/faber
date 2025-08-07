@@ -15,7 +15,7 @@ pub struct MountsConfig {
     pub tmpfs: Vec<TempfsMount>,
     #[serde(deserialize_with = "deserialize_device_mounts")]
     pub devices: Vec<DeviceMount>,
-    #[serde(deserialize_with = "deserialize_file_mounts")]
+    #[serde(default, deserialize_with = "deserialize_file_mounts")]
     pub files: Vec<FileMount>,
 }
 
