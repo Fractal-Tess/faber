@@ -1,6 +1,7 @@
 [api]
 host = "0.0.0.0" # The host address for the API server (string)
 port = 3000 # The port number for the API server (number)
+max_concurrency = 1 # Maximum number of concurrent in-flight requests globally (number)
 
 [api.auth]
 enable = false
@@ -18,7 +19,7 @@ health_endpoint = "/health" # The health check endpoint path (string)
 task_execution_endpoint = "/execute" # The endpoint path for executing tasks (string)
 
 [logging]
-level = "debug" # The log level (error/warn/info/debug/trace)
+level = "info" # The log level (error/warn/info/debug/trace)
 dir = "/var/log/faber" # The directory to store logs (string)
 rotation = "hourly" # The log rotation (hourly/daily)
 file_name_prefix = "faber" # The prefix for the log file name (string)
