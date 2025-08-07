@@ -18,11 +18,7 @@ services:
       - RUST_LOG=debug
       - RUST_BACKTRACE=1
       - CARGO_HOME=/usr/local/cargo
-    healthcheck:
-      test: ['CMD', 'curl', '-f', 'http://localhost:3000/health']
-      interval: 30s
-      timeout: 5s
-      retries: 5
+
 volumes:
   cargo-cache:
   cargo-target:
