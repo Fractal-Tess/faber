@@ -1,11 +1,28 @@
 use crate::api::middlewares::RequestId;
 use crate::config::FaberConfig;
-use crate::executor::{ExecutorPool, Task, TaskResult};
 use axum::extract::Request;
 use axum::{Extension, Json, http::StatusCode};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::debug;
+use tokio::sync::Semaphore;
+use tracing::{debug, info};
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Task {
+    cmd: String,
+    args: Option<Vec<String>>,
+    env: Option<HashMap<String, String>>,
+    files: Option<HashMap<String, String>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskResult {
+    success: bool,
+    stdout: String,
+    stderr: String,
+    exit_code: i32,
+}
 
 type ExecutionRequest = Vec<Task>;
 type ExecutionResponse = Vec<TaskResult>;
@@ -13,7 +30,6 @@ type ExecutionResponse = Vec<TaskResult>;
 #[axum::debug_handler]
 pub async fn execution(
     Extension(config): Extension<Arc<FaberConfig>>,
-    Extension(executor_pool): Extension<Arc<tokio::sync::Mutex<ExecutorPool>>>,
     Extension(request_id): Extension<RequestId>,
     Json(tasks): Json<ExecutionRequest>,
 ) -> Result<Json<ExecutionResponse>, (StatusCode, Json<String>)> {
@@ -23,19 +39,16 @@ pub async fn execution(
         return Err((StatusCode::BAD_REQUEST, Json("Empty request".to_string())));
     }
 
-    // Execute tasks using the executor pool
-    let mut pool = executor_pool.lock().await;
-    let results = pool.enqueue(tasks).await;
-    drop(pool);
+    info!(
+        "Starting execution for request ID: {} (max_concurrency: {})",
+        request_id, config.api.max_concurrency
+    );
 
-    match results {
-        Ok(results) => {
-            debug!("Successfully executed {} tasks", results.len());
-            Ok(Json(results))
-        }
-        Err(e) => {
-            debug!("Failed to execute tasks: {e}");
-            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(e.to_string())))
-        }
-    }
+    // INSERT_YOUR_CODE
+    // Wait for 1000 seconds before proceeding (simulate long-running task)
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+    info!("Completed execution for request ID: {}", request_id);
+
+    Ok(Json(vec![]))
 }

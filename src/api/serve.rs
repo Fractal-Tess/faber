@@ -11,10 +11,10 @@ use crate::config::FaberConfig;
 use super::create_router;
 
 pub async fn serve(config: Arc<FaberConfig>) -> Result<(), Box<dyn std::error::Error>> {
-    info!("Starting 🦊 Faber... ");
-
+    // Main router
     let app = create_router(Arc::clone(&config)).await;
 
+    // Shutdown signal
     let shutdown_signal = async move {
         let sigint = tokio::signal::ctrl_c();
         tokio::pin!(sigint);
@@ -33,11 +33,11 @@ pub async fn serve(config: Arc<FaberConfig>) -> Result<(), Box<dyn std::error::E
 
     let listener = TcpListener::bind(&format!("{}:{}", config.api.host, config.api.port)).await?;
 
-    info!("🚀 Listening on {}", listener.local_addr()?);
+    info!("🦊 Faber is listening on {}", listener.local_addr()?);
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal)
         .await?;
 
-    info!("Shutting down...");
+    info!("🦊 Faber is shutting down...");
     Ok(())
 }
