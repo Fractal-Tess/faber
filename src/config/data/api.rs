@@ -4,6 +4,7 @@ use serde::Deserialize;
 pub struct ApiConfig {
     pub host: String,
     pub port: u16,
+    pub max_concurrency: usize,
     pub cors: CorsConfig,
     pub auth: AuthConfig,
     pub endpoints: EndpointsConfig,
