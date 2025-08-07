@@ -5,6 +5,7 @@ mod api;
 mod cli;
 mod config;
 mod logging;
+mod sandbox;
 
 use cli::run;
 
