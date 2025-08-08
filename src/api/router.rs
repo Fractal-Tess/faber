@@ -5,6 +5,7 @@ use super::routes::{execution, health};
 use crate::config::FaberConfig;
 
 use axum::middleware;
+use axum::routing::Route;
 use axum::{
     Extension, Router,
     routing::{get, post},
