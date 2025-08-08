@@ -37,19 +37,17 @@
 //! // Cleanup happens automatically when `runtime` is dropped
 //! ```
 
+use super::errors::ContainerError;
+use super::mounts;
+use crate::config::ContainerFilesystemConfig;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-
 use tracing::{debug, info, warn};
-
-use super::errors::ContainerError;
-use super::mounts;
-use crate::config::ContainerFilesystemConfig;
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Task {
