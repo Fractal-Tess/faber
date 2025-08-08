@@ -4,8 +4,8 @@
 mod api;
 mod cli;
 mod config;
+mod container;
 mod logging;
-mod sandbox;
 
 use cli::run;
 

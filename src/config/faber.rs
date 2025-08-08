@@ -1,7 +1,8 @@
 use serde::Deserialize;
 
 use super::{ApiConfig, ContainerConfig, LoggingConfig};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use toml::de::Error as TomlDeError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum FaberConfigError {
@@ -13,10 +14,10 @@ pub enum FaberConfigError {
         "Failed to parse TOML configuration: {}. Please check your config file for syntax errors.",
         extract_toml_error_message(_0)
     )]
-    Toml(#[from] toml::de::Error),
+    Toml(#[from] TomlDeError),
 }
 
-fn extract_toml_error_message(error: &toml::de::Error) -> String {
+fn extract_toml_error_message(error: &TomlDeError) -> String {
     error.message().to_owned()
 }
 
@@ -28,11 +29,18 @@ pub struct FaberConfig {
     pub logging: LoggingConfig,
 }
 
-/// Configuration overrides that can be applied to a FaberConfig
-#[derive(Debug, Clone, Default)]
-pub struct FaberConfigOverrides {
-    pub host: Option<String>,
-    pub port: Option<u16>,
-    pub auth_enabled: Option<bool>,
-    pub workers: Option<u16>,
+impl FaberConfig {
+    /// Load configuration from a specific file path
+    pub fn load_from_path(path: &Path) -> Result<Self, FaberConfigError> {
+        // 1. Load from specified config file path or default
+        if !path.exists() {
+            return Err(FaberConfigError::ConfigNotFound(path.to_path_buf()));
+        }
+
+        let content = std::fs::read_to_string(path)?;
+
+        let config: FaberConfig = toml::from_str(&content)?;
+
+        Ok(config)
+    }
 }

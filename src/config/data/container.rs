@@ -114,7 +114,7 @@ pub enum FilePermissions {
     ReadWrite,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum FolderPermissions {
     ReadOnly,
     ReadWrite,

@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::config::FaberConfig;
@@ -27,13 +28,13 @@ pub enum Commands {
     Serve {
         /// Configuration file path
         #[arg(short, long, default_value = "config/default.toml")]
-        config: String,
+        config: PathBuf,
     },
     /// Validate configuration, optionally display the parsed config
     ValidateConfig {
         /// Configuration file path
         #[arg(short, long, default_value = "config/default.toml")]
-        config: String,
+        config: PathBuf,
         /// Display the parsed configuration after validation
         #[arg(short, long)]
         display: bool,
@@ -66,7 +67,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             let config = match FaberConfig::load_from_path(&config) {
                 Ok(config) => config,
                 Err(e) => {
-                    eprintln!("Failed to load configuration from {config}: {e}");
+                    eprintln!("Failed to load configuration from {config:?}: {e}");
                     exit(1);
                 }
             };
@@ -85,7 +86,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             let config = match FaberConfig::load_from_path(&config) {
                 Ok(config) => config,
                 Err(e) => {
-                    eprintln!("Failed to load configuration from {config}: {e}");
+                    eprintln!("Failed to load configuration from {config:?}: {e}");
                     exit(1);
                 }
             };
