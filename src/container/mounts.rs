@@ -31,8 +31,7 @@ use tracing::{debug, warn};
 use super::errors::ContainerError;
 use crate::{
     config::{
-        DeviceMount, DevicePermissions, FileMount, FilePermissions, FolderMount, FolderPermissions,
-        MountsConfig, TempfsMount,
+        FileMount, FilePermissions, FolderMount, FolderPermissions, MountsConfig, TempfsMount,
     },
     container::ContainerRuntime,
 };
@@ -83,7 +82,7 @@ impl ContainerRuntime {
         Self::mount_tmpfs(root, &mounts.tmpfs)?;
 
         // Mount the devices in the container (/dev/random,)
-        Self::mount_devices(root, &mounts.devices)?;
+        Self::mount_devices(root)?;
 
         // Mount the files in the container (config files, ...etc)
         Self::mount_files(root, &mounts.files)?;
@@ -310,9 +309,18 @@ impl ContainerRuntime {
     /// - MS_NOSUID prevents privilege escalation
     /// - Optional read-only remounting for additional security
     /// - Private propagation prevents mount event leakage
-    fn mount_devices(root: &Path, devices: &Vec<DeviceMount>) -> Result<(), ContainerError> {
-        for m in devices {
-            let target = root.join(&m.target);
+    fn mount_devices(root: &Path) -> Result<(), ContainerError> {
+        // Fixed set of essential devices to create inside the container
+        let device_specs: &[(&str, &str, bool)] = &[
+            ("dev_null", "/dev/null", true),
+            ("dev_zero", "/dev/zero", true),
+            ("dev_random", "/dev/random", true),
+            ("dev_urandom", "/dev/urandom", true),
+            ("dev_full", "/dev/full", true),
+        ];
+
+        for (name, target_rel, is_rw) in device_specs.iter().copied() {
+            let target = root.join(target_rel.trim_start_matches('/'));
 
             // Ensure parent directory exists
             if let Some(parent) = target.parent() {
@@ -322,7 +330,7 @@ impl ContainerRuntime {
                 })?;
             }
             // Discover source device metadata (type and rdev)
-            let src_path = Path::new(&m.source);
+            let src_path = Path::new(target_rel);
             let src_stat = statx::stat(src_path).map_err(|e| ContainerError::StatPath {
                 path: src_path.to_path_buf(),
                 source: e,
@@ -360,10 +368,7 @@ impl ContainerRuntime {
             }
 
             // Create the device node with appropriate permissions
-            let mode_bits: u32 = match m.permissions {
-                DevicePermissions::ReadOnly => 0o444,
-                DevicePermissions::ReadWrite => 0o666,
-            };
+            let mode_bits: u32 = if is_rw { 0o666 } else { 0o444 };
             let mode = Mode::from_bits_truncate(mode_bits);
             mknod(&target, dev_kind, mode, dev_rdev).map_err(|e| ContainerError::CreateDevice {
                 path: target.clone(),
@@ -621,24 +626,9 @@ impl ContainerRuntime {
     /// - Unmounting device files immediately removes container access
     /// - Host device files remain unaffected
     /// - Uses lazy unmounting for robustness
-    fn umount_devices(root: &Path, mounts: &MountsConfig) -> Result<(), ContainerError> {
-        let mut last_err: Option<ContainerError> = None;
-        for m in mounts.devices.iter().rev() {
-            let target = root.join(&m.target);
-            debug!("Unmounting device '{}' from {}", m.name, target.display());
-            if let Err(e) = umount2(&target, MntFlags::MNT_DETACH) {
-                warn!("Failed to unmount {}: {}", target.display(), e);
-                last_err = Some(ContainerError::Unmount {
-                    tgt: target.clone(),
-                    source: e,
-                });
-            }
-        }
-        if let Some(err) = last_err {
-            Err(err)
-        } else {
-            Ok(())
-        }
+    fn umount_devices(_root: &Path, _mounts: &MountsConfig) -> Result<(), ContainerError> {
+        // No-op: device nodes are created with mknod and are not separate mounts
+        Ok(())
     }
 
     /// Unmounts individual file bind mounts in reverse order for safe cleanup.

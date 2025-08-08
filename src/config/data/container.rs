@@ -65,8 +65,6 @@ pub struct MountsConfig {
     pub folders: Vec<FolderMount>,
     #[serde(deserialize_with = "deserialize_tmpfs_mounts")]
     pub tmpfs: Vec<TempfsMount>,
-    #[serde(deserialize_with = "deserialize_device_mounts")]
-    pub devices: Vec<DeviceMount>,
     #[serde(deserialize_with = "deserialize_file_mounts")]
     pub files: Vec<FileMount>,
 }
@@ -87,25 +85,11 @@ pub struct TempfsMount {
 }
 
 #[derive(Debug, Clone)]
-pub struct DeviceMount {
-    pub name: String,
-    pub source: String,
-    pub target: String,
-    pub permissions: DevicePermissions,
-}
-
-#[derive(Debug, Clone)]
 pub struct FileMount {
     pub name: String,
     pub source: String,
     pub target: String,
     pub permissions: FilePermissions,
-}
-
-#[derive(Debug, Clone)]
-pub enum DevicePermissions {
-    ReadOnly,
-    ReadWrite,
 }
 
 #[derive(Debug, Clone)]
@@ -163,35 +147,6 @@ where
                 name: name.clone(),
                 target: values[0].clone().trim_start_matches('/').to_string(),
                 options: values[1].clone(),
-            };
-            mounts.push(mount);
-        } else {
-        }
-    }
-
-    Ok(mounts)
-}
-
-fn deserialize_device_mounts<'de, D>(deserializer: D) -> Result<Vec<DeviceMount>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let map: HashMap<String, Vec<String>> = HashMap::deserialize(deserializer)?;
-    let mut mounts = Vec::new();
-
-    for (name, values) in map {
-        if values.len() >= 2 {
-            let permissions = if values.len() >= 3 && values[2] == "rw" {
-                DevicePermissions::ReadWrite
-            } else {
-                DevicePermissions::ReadOnly
-            };
-
-            let mount = DeviceMount {
-                name: name.clone(),
-                source: values[0].clone(),
-                target: values[1].clone().trim_start_matches('/').to_string(),
-                permissions,
             };
             mounts.push(mount);
         } else {

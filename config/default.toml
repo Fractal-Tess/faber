@@ -51,12 +51,4 @@ tmp_tmpfs = ["/tmp", "size=128m,nr_inodes=4k"]
 
 # Format: `mount_name` = ['host_path', 'container_path', 'permissions']
 # permissions: 'ro' for read-only (default), 'rw' for read-write
-[container.filesystem.mounts.devices]
-dev_null = ["/dev/null", "/dev/null", "rw"]
-dev_random = ["/dev/random", "/dev/random", "rw"]
-dev_urandom = ["/dev/urandom", "/dev/urandom", "rw"]
-dev_zero = ["/dev/zero", "/dev/zero", "rw"]
-dev_full = ["/dev/full", "/dev/full", "rw"]
-
-
 [container.filesystem.mounts.files]
