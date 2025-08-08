@@ -127,7 +127,6 @@ where
                 permissions,
             };
             mounts.push(mount);
-        } else {
         }
     }
 
@@ -149,7 +148,6 @@ where
                 options: values[1].clone(),
             };
             mounts.push(mount);
-        } else {
         }
     }
 
@@ -178,7 +176,6 @@ where
                 permissions,
             };
             mounts.push(mount);
-        } else {
         }
     }
 

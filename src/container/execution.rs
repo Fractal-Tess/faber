@@ -217,7 +217,7 @@ impl ContainerRuntime {
             if k == "PATH" {
                 has_path = true;
             }
-            let kv = format!("{}={}", k, v);
+            let kv = format!("{k}={v}");
             envp.push(
                 std::ffi::CString::new(kv.clone()).map_err(|e| ContainerError::CString {
                     value: kv,
@@ -227,7 +227,12 @@ impl ContainerRuntime {
         }
         if !has_path {
             let kv = "PATH=/usr/bin:/bin".to_string();
-            envp.push(std::ffi::CString::new(kv).unwrap());
+            envp.push(
+                std::ffi::CString::new(kv.clone()).map_err(|e| ContainerError::CString {
+                    value: kv,
+                    source: e,
+                })?,
+            );
         }
         Ok(envp)
     }

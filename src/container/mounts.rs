@@ -20,11 +20,8 @@
 use std::fs;
 use std::path::Path;
 
+use nix::mount::{MntFlags, MsFlags, mount, umount2};
 use nix::sys::stat::{self as statx, Mode, SFlag, mknod};
-use nix::{
-    libc::MS_NODEV,
-    mount::{MntFlags, MsFlags, mount, umount2},
-};
 use std::os::unix::fs::PermissionsExt;
 use tracing::{debug, warn};
 
@@ -319,7 +316,7 @@ impl ContainerRuntime {
             ("dev_full", "/dev/full", true),
         ];
 
-        for (name, target_rel, is_rw) in device_specs.iter().copied() {
+        for (_name, target_rel, is_rw) in device_specs.iter().copied() {
             let target = root.join(target_rel.trim_start_matches('/'));
 
             // Ensure parent directory exists
@@ -335,7 +332,7 @@ impl ContainerRuntime {
                 path: src_path.to_path_buf(),
                 source: e,
             })?;
-            let src_kind_bits = SFlag::from_bits_truncate(src_stat.st_mode as u32);
+            let src_kind_bits = SFlag::from_bits_truncate(src_stat.st_mode);
             let dev_kind = if src_kind_bits.contains(SFlag::S_IFBLK) {
                 SFlag::S_IFBLK
             } else {
@@ -346,7 +343,7 @@ impl ContainerRuntime {
             // If target exists but is not the same device node, remove it
             if target.exists() {
                 if let Ok(tgt_stat) = statx::stat(&target) {
-                    let tgt_kind_bits = SFlag::from_bits_truncate(tgt_stat.st_mode as u32);
+                    let tgt_kind_bits = SFlag::from_bits_truncate(tgt_stat.st_mode);
                     let is_dev = tgt_kind_bits.contains(SFlag::S_IFCHR)
                         || tgt_kind_bits.contains(SFlag::S_IFBLK);
                     if !is_dev || tgt_stat.st_rdev != dev_rdev || !tgt_kind_bits.contains(dev_kind)
@@ -527,6 +524,7 @@ impl ContainerRuntime {
     /// Many programs and utilities expect these filesystems to be present:
     /// - `ps` command needs /proc for process information
     /// - Memory management tools need /proc/meminfo
+    ///
     /// Unmounts folder bind mounts in reverse order for safe cleanup.
     ///
     /// This function unmounts all folder bind mounts that were created during
