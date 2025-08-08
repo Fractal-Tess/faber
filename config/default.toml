@@ -58,3 +58,5 @@ dev_urandom = ["/dev/urandom", "/dev/urandom", "rw"]
 dev_zero = ["/dev/zero", "/dev/zero", "rw"]
 dev_full = ["/dev/full", "/dev/full", "rw"]
 
+
+[container.filesystem.mounts.files]
