@@ -71,6 +71,45 @@ pub enum ContainerError {
         source: std::io::Error,
     },
 
+    /// Failed to stat a path to retrieve metadata.
+    ///
+    /// This error occurs when querying file metadata (e.g., to discover device
+    /// major/minor numbers before creating a device node).
+    #[error("Stat {path}: {source}")]
+    StatPath {
+        /// The path that failed to be stat'ed
+        path: PathBuf,
+        #[source]
+        /// The underlying stat system call error
+        source: nix::Error,
+    },
+
+    /// Failed to create a device node with mknod.
+    ///
+    /// This error occurs when creating character or block device nodes inside
+    /// the container filesystem.
+    #[error("Create device {path}: {source}")]
+    CreateDevice {
+        /// The device node path that failed to be created
+        path: PathBuf,
+        #[source]
+        /// The underlying mknod system call error
+        source: nix::Error,
+    },
+
+    /// Failed to remove an existing path.
+    ///
+    /// This error occurs when attempting to remove a pre-existing file at a
+    /// device mount target before re-creating it as a device node.
+    #[error("Remove path {path}: {source}")]
+    RemovePath {
+        /// The path that failed to be removed
+        path: PathBuf,
+        #[source]
+        /// The underlying I/O error from the remove operation
+        source: std::io::Error,
+    },
+
     // === Mount Operations - Folders ===
     /// Failed to mount a folder using bind mount.
     ///

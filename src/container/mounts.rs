@@ -20,10 +20,12 @@
 use std::fs;
 use std::path::Path;
 
+use nix::sys::stat::{self as statx, Mode, SFlag, mknod};
 use nix::{
     libc::MS_NODEV,
     mount::{MntFlags, MsFlags, mount, umount2},
 };
+use std::os::unix::fs::PermissionsExt;
 use tracing::{debug, warn};
 
 use super::errors::ContainerError;
@@ -312,62 +314,67 @@ impl ContainerRuntime {
         for m in devices {
             let target = root.join(&m.target);
 
-            // Ensure parent directory exists, then create placeholder file
+            // Ensure parent directory exists
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent).map_err(|e| ContainerError::CreateDir {
                     path: parent.to_path_buf(),
                     source: e,
                 })?;
             }
-            fs::File::create(&target).map_err(|e| ContainerError::CreateFile {
+            // Discover source device metadata (type and rdev)
+            let src_path = Path::new(&m.source);
+            let src_stat = statx::stat(src_path).map_err(|e| ContainerError::StatPath {
+                path: src_path.to_path_buf(),
+                source: e,
+            })?;
+            let src_kind_bits = SFlag::from_bits_truncate(src_stat.st_mode as u32);
+            let dev_kind = if src_kind_bits.contains(SFlag::S_IFBLK) {
+                SFlag::S_IFBLK
+            } else {
+                SFlag::S_IFCHR
+            };
+            let dev_rdev = src_stat.st_rdev;
+
+            // If target exists but is not the same device node, remove it
+            if target.exists() {
+                if let Ok(tgt_stat) = statx::stat(&target) {
+                    let tgt_kind_bits = SFlag::from_bits_truncate(tgt_stat.st_mode as u32);
+                    let is_dev = tgt_kind_bits.contains(SFlag::S_IFCHR)
+                        || tgt_kind_bits.contains(SFlag::S_IFBLK);
+                    if !is_dev || tgt_stat.st_rdev != dev_rdev || !tgt_kind_bits.contains(dev_kind)
+                    {
+                        fs::remove_file(&target).map_err(|e| ContainerError::RemovePath {
+                            path: target.clone(),
+                            source: e,
+                        })?;
+                    }
+                } else {
+                    // Could not stat target, attempt to remove to recreate
+                    if let Err(e) = fs::remove_file(&target) {
+                        return Err(ContainerError::RemovePath {
+                            path: target.clone(),
+                            source: e,
+                        });
+                    }
+                }
+            }
+
+            // Create the device node with appropriate permissions
+            let mode_bits: u32 = match m.permissions {
+                DevicePermissions::ReadOnly => 0o444,
+                DevicePermissions::ReadWrite => 0o666,
+            };
+            let mode = Mode::from_bits_truncate(mode_bits);
+            mknod(&target, dev_kind, mode, dev_rdev).map_err(|e| ContainerError::CreateDevice {
                 path: target.clone(),
                 source: e,
             })?;
 
-            // Initial bind (no nodev here to preserve device semantics)
-            let initial_flags = MsFlags::MS_BIND | MsFlags::MS_NOSUID;
-            mount(
-                Some(Path::new(&m.source)),
-                &target,
-                Option::<&str>::None,
-                initial_flags,
-                Option::<&str>::None,
-            )
-            .map_err(|e| ContainerError::MountDevice {
-                name: m.name.clone(),
-                src: m.source.clone(),
-                tgt: target.clone(),
-                source: e,
-            })?;
-
-            // Set mount propagation to private
-            mount(
-                Option::<&str>::None,
-                &target,
-                Option::<&str>::None,
-                MsFlags::MS_PRIVATE,
-                Option::<&str>::None,
-            )
-            .map_err(|e| ContainerError::SetPrivate {
-                tgt: target.clone(),
-                source: e,
-            })?;
-
-            // Remount with security flags while preserving device semantics
-            let mut remount_flags = MsFlags::MS_BIND | MsFlags::MS_REMOUNT | MsFlags::MS_NOSUID;
-            if let DevicePermissions::ReadOnly = m.permissions {
-                remount_flags |= MsFlags::MS_RDONLY;
-            }
-            mount(
-                Option::<&str>::None,
-                &target,
-                Option::<&str>::None,
-                remount_flags,
-                Option::<&str>::None,
-            )
-            .map_err(|e| ContainerError::RemountDevice {
-                name: m.name.clone(),
-                tgt: target.clone(),
+            // Ensure permissions are set as intended (in case node existed)
+            let perms = fs::Permissions::from_mode(mode_bits);
+            fs::set_permissions(&target, perms).map_err(|e| ContainerError::SetPermissions {
+                path: target.clone(),
+                octal_mode: mode_bits,
                 source: e,
             })?;
         }
