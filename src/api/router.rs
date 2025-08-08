@@ -9,25 +9,48 @@ use axum::{
     Extension, Router,
     routing::{get, post},
 };
-use tokio::sync::Semaphore;
-use tower::limit::GlobalConcurrencyLimitLayer;
 
-pub async fn create_router(config: Arc<FaberConfig>) -> Router {
-    let config_extension = Extension(Arc::clone(&config));
+pub struct RouterBuilder {
+    config: Arc<FaberConfig>,
+    router: Router,
+}
 
-    let public_routes = Router::new().route(&config.api.endpoints.health_endpoint, get(health));
+impl RouterBuilder {
+    pub fn new(config: Arc<FaberConfig>) -> Self {
+        Self {
+            config,
+            router: Router::new(),
+        }
+    }
 
-    let protected_routes = Router::new().route(
-        &config.api.endpoints.task_execution_endpoint,
-        post(execution),
-    );
+    pub fn with_public_routes(mut self) -> Self {
+        let route = get(health);
+        self.router = self
+            .router
+            .route(&self.config.api.endpoints.health_endpoint, route);
+        self
+    }
 
-    let final_routes = public_routes.merge(protected_routes);
+    pub fn with_protected_routes(mut self) -> Self {
+        let route = post(execution);
+        self.router = self
+            .router
+            .route(&self.config.api.endpoints.task_execution_endpoint, route);
+        self
+    }
 
-    final_routes
-        .layer(middleware::from_fn(auth_middleware))
-        .layer(middleware::from_fn(timing_middleware))
-        .layer(middleware::from_fn(request_id_middleware))
-        .layer(config_extension)
-    // .layer(GlobalConcurrencyLimitLayer::new(config.api.max_concurrency))
+    pub fn with_middlewares(mut self) -> Self {
+        let config_extension = Extension(Arc::clone(&self.config));
+        self.router = self
+            .router
+            .layer(middleware::from_fn(auth_middleware))
+            .layer(middleware::from_fn(timing_middleware))
+            .layer(middleware::from_fn(request_id_middleware))
+            .layer(config_extension);
+        self
+    }
+
+    pub fn build(self) -> Router {
+        self.router
+    }
 }
