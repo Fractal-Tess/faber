@@ -6,6 +6,7 @@ use std::path::Path;
 use nix::libc;
 use nix::sched::{CloneFlags, unshare};
 use nix::sys::wait::{WaitStatus, waitpid};
+use nix::mount::{mount as sys_mount, MntFlags, MsFlags, umount2};
 use nix::unistd::{ForkResult, chdir, chroot, close, execvpe, fork, pipe};
 use tracing::info;
 
@@ -16,6 +17,8 @@ use super::runtime::{Task, TaskResult};
 use crate::config::ContainerFilesystemConfig;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::ffi::OsStrExt;
+use std::ffi::CString;
 
 /// Container for the four file descriptors used for stdout/stderr pipes between processes.
 ///
@@ -268,11 +271,15 @@ impl ContainerRuntime {
         Ok(())
     }
 
-    /// Sets up the chroot environment by changing root directory and working directory.
+    /// Sets up the root filesystem using pivot_root and changes working directory.
     ///
-    /// This function performs two critical steps for container isolation:
-    /// 1. chroot() - Changes the root directory to the container's filesystem
-    /// 2. chdir() - Changes the working directory to the specified work directory within the container
+    /// This performs the modern root switch sequence:
+    /// 1. Bind-mount the new root onto itself to make it a mount point
+    /// 2. Create a `old_root` directory under the new root
+    /// 3. pivot_root(new_root, new_root/old_root)
+    /// 4. chdir to the new root
+    /// 5. Unmount the old root from /old_root (MNT_DETACH)
+    /// 6. Remove the /old_root directory
     ///
     /// The work directory path is normalized by removing leading slashes since we're now
     /// operating within the chroot environment.
@@ -282,21 +289,58 @@ impl ContainerRuntime {
     /// * `work_dir_rel` - Relative path to the working directory within the container
     ///
     /// # Returns
-    /// * `Ok(())` - If both chroot and chdir succeed
-    /// * `Err(ContainerError::Exec)` - If either system call fails
-    fn setup_chroot_environment(root: &Path, work_dir_rel: &str) -> Result<(), ContainerError> {
-        chroot(root).map_err(|e| ContainerError::Exec {
-            cmd: "chroot".into(),
+    /// * `Ok(())` - On success
+    /// * `Err(ContainerError)` - If any step fails
+    fn setup_root_with_pivot(root: &Path, work_dir_rel: &str) -> Result<(), ContainerError> {
+        // 1) Ensure root is a mount point via bind mount of itself
+        sys_mount(
+            Some(root),
+            root,
+            Option::<&str>::None,
+            MsFlags::MS_BIND | MsFlags::MS_REC,
+            Option::<&str>::None,
+        )
+        .map_err(|e| ContainerError::MountFolder {
+            name: "root_bind".into(),
+            src: root.display().to_string(),
+            tgt: root.to_path_buf(),
             source: e,
         })?;
-        chdir(Path::new(&format!(
-            "/{}",
-            work_dir_rel.trim_start_matches('/')
-        )))
-        .map_err(|e| ContainerError::Exec {
-            cmd: "chdir".into(),
+
+        // 2) Create put_old directory under new root
+        let put_old = root.join("old_root");
+        fs::create_dir_all(&put_old).map_err(|e| ContainerError::CreateDir {
+            path: put_old.clone(),
             source: e,
         })?;
+
+        // 3) pivot_root(new_root, put_old)
+        let new_root_c = CString::new(root.as_os_str().as_bytes()).map_err(|e| ContainerError::CString {
+            value: root.display().to_string(),
+            source: e,
+        })?;
+        let put_old_c = CString::new(put_old.as_os_str().as_bytes()).map_err(|e| ContainerError::CString {
+            value: put_old.display().to_string(),
+            source: e,
+        })?;
+        let res = unsafe { libc::syscall(libc::SYS_pivot_root, new_root_c.as_ptr(), put_old_c.as_ptr()) };
+        if res != 0 {
+            return Err(ContainerError::PivotRoot { new_root: root.to_path_buf(), put_old: put_old.clone(), source: nix::Error::last() });
+        }
+
+        // 4) chdir to new root, then to work_dir_rel within it
+        chdir(Path::new("/")).map_err(|e| ContainerError::Exec { cmd: "chdir".into(), source: e })?;
+        chdir(Path::new(&format!("/{}", work_dir_rel.trim_start_matches('/'))))
+            .map_err(|e| ContainerError::Exec { cmd: "chdir".into(), source: e })?;
+
+        // 5) Unmount old root now located at /old_root
+        let old_root_in_new = Path::new("/old_root");
+        umount2(old_root_in_new, MntFlags::MNT_DETACH)
+            .map_err(|e| ContainerError::Unmount { tgt: old_root_in_new.to_path_buf(), source: e })?;
+
+        // 6) Remove the /old_root directory
+        fs::remove_dir_all(old_root_in_new).map_err(|e| ContainerError::RemoveDir { path: old_root_in_new.to_path_buf(), source: e })?;
+
         Ok(())
     }
 
@@ -366,8 +410,8 @@ impl ContainerRuntime {
         // Grandchild: redirect stdio to pipes
         Self::setup_stdio_redirection(&pipes)?;
 
-        // chroot and chdir
-        Self::setup_chroot_environment(root, work_dir_rel)?;
+        // Switch root with pivot_root and chdir
+        Self::setup_root_with_pivot(root, work_dir_rel)?;
 
         // Build argv and envp
         let argv = Self::build_argv(cmd, args)?;

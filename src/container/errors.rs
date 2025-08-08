@@ -266,6 +266,21 @@ pub enum ContainerError {
         source: nix::Error,
     },
 
+    /// Failed to pivot root to the new root directory.
+    ///
+    /// This error occurs when replacing the current root filesystem using
+    /// pivot_root during container setup.
+    #[error("pivot_root new={new_root} put_old={put_old}: {source}")]
+    PivotRoot {
+        /// The new root directory path
+        new_root: PathBuf,
+        /// The temporary location under the new root where the old root is mounted
+        put_old: PathBuf,
+        #[source]
+        /// The underlying pivot_root system call error
+        source: nix::Error,
+    },
+
     // === Process Operations - High Level ===
     /// Failed to spawn a process using tokio's spawn_blocking.
     ///
