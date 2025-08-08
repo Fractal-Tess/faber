@@ -6,9 +6,9 @@ use tokio::{
 };
 use tracing::info;
 
-use crate::config::FaberConfig;
+use crate::{api::server::ServerBuilder, config::FaberConfig};
 
-use super::router::RouterBuilder;
+use super::{router::RouterBuilder, signal::SignalBuilder};
 use tower::limit::GlobalConcurrencyLimitLayer;
 
 pub async fn serve(config: Arc<FaberConfig>) -> Result<(), Box<dyn std::error::Error>> {
@@ -20,29 +20,18 @@ pub async fn serve(config: Arc<FaberConfig>) -> Result<(), Box<dyn std::error::E
         .build()
         .layer(GlobalConcurrencyLimitLayer::new(config.api.max_concurrency));
 
-    // Shutdown signal
-    let shutdown_signal = async move {
-        let sigint = tokio::signal::ctrl_c();
-        tokio::pin!(sigint);
-        let mut sigterm =
-            signal(SignalKind::terminate()).expect("Failed to install SIGTERM handler");
+    let signal = SignalBuilder::default().build();
 
-        tokio::select! {
-            _ = &mut sigint => {
-                info!("Shutdown signal (SIGINT/Ctrl+C) received, stopping server...");
-            }
-            _ = sigterm.recv() => {
-                info!("Shutdown signal (SIGTERM/Docker exit) received, stopping server...");
-            }
-        }
-    };
+    let server = ServerBuilder::new(Arc::clone(&config))
+        .with_router(router)
+        .with_signal(signal);
 
-    let listener = TcpListener::bind(&format!("{}:{}", config.api.host, config.api.port)).await?;
+    info!(
+        "🦊 Faber is listening on {}:{}",
+        config.api.host, config.api.port
+    );
 
-    info!("🦊 Faber is listening on {}", listener.local_addr()?);
-    axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown_signal)
-        .await?;
+    server.serve().await?;
 
     info!("🦊 Faber is shutting down...");
     Ok(())
