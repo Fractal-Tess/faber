@@ -8,11 +8,17 @@ use tracing::info;
 
 use crate::config::FaberConfig;
 
-use super::create_router;
+use super::router::RouterBuilder;
+use tower::limit::GlobalConcurrencyLimitLayer;
 
 pub async fn serve(config: Arc<FaberConfig>) -> Result<(), Box<dyn std::error::Error>> {
-    // Main router
-    let app = create_router(Arc::clone(&config)).await;
+    // Main router via builder
+    let router = RouterBuilder::new(Arc::clone(&config))
+        .with_public_routes()
+        .with_protected_routes()
+        .with_middlewares()
+        .build()
+        .layer(GlobalConcurrencyLimitLayer::new(config.api.max_concurrency));
 
     // Shutdown signal
     let shutdown_signal = async move {
@@ -34,7 +40,7 @@ pub async fn serve(config: Arc<FaberConfig>) -> Result<(), Box<dyn std::error::E
     let listener = TcpListener::bind(&format!("{}:{}", config.api.host, config.api.port)).await?;
 
     info!("🦊 Faber is listening on {}", listener.local_addr()?);
-    axum::serve(listener, app)
+    axum::serve(listener, router)
         .with_graceful_shutdown(shutdown_signal)
         .await?;
 
