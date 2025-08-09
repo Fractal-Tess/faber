@@ -19,3 +19,30 @@ file_name_prefix = "faber"
 
 [container.filesystem]
 base_dir = "/tmp/faber/containers"
+work_dir = "/faber"
+
+[[container.filesystem.mounts]]
+source = "/bin"
+target = "/bin"
+readonly = true
+
+[[container.filesystem.mounts]]
+source = "/lib"
+target = "/lib"
+readonly = true
+
+[[container.filesystem.mounts]]
+source = "/usr/bin"
+target = "/usr/bin"
+readonly = true
+
+[[container.filesystem.mounts]]
+source = "/lib64"
+target = "/lib64"
+readonly = true
+
+[container.cgroups]
+# Use cgroup v2 values. Set to numbers or special tokens (e.g., "max") as supported by kernel.
+# pids_max = "128"
+# memory_max = "256M"
+# cpu_max = "100000 50000" # period quota
