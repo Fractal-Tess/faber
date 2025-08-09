@@ -27,6 +27,7 @@ use std::time::Duration;
 use std::{ffi::CString, fs::File};
 use std::{io::Read, mem::ManuallyDrop};
 
+#[derive(Debug)]
 pub struct Runtime {
     pub(crate) container_root: PathBuf,
     pub(crate) mounts: Vec<Mount>,
@@ -415,6 +416,14 @@ impl Runtime {
     /// === Only for the child process ===
     fn bind_mounts(&self) -> Result<()> {
         for m in &self.mounts {
+            // Skip mounts whose source does not exist to avoid ENOENT
+            if !Path::new(&m.source).exists() {
+                eprintln!(
+                    "bind_mounts: source does not exist, skipping: {} -> {}",
+                    m.source, m.target
+                );
+                continue;
+            }
             let target = format!(
                 "{}/{}",
                 self.container_root.display(),
@@ -446,6 +455,12 @@ impl Runtime {
     fn pivot_root(&self) -> Result<()> {
         let new_root = self.container_root.clone();
         let old_root = format!("{}/oldroot", self.container_root.display());
+
+        // Ensure required directories exist
+        std::fs::create_dir_all(&new_root)
+            .map_err(|e| Error::GenericError(format!("failed to create new_root dir: {e}")))?;
+        std::fs::create_dir_all(&old_root)
+            .map_err(|e| Error::GenericError(format!("failed to create old_root dir: {e}")))?;
 
         // Remount the new root as bind mount
         mount(
