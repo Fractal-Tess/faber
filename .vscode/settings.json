@@ -3,9 +3,9 @@
   "git.openRepositoryInParentFolders": "always",
   "scm.defaultViewMode": "tree",
   "files.exclude": {
-    "**/.direnv": true,
-    "**/.git": true,
-    "**/target": true
+    "**/.direnv": false,
+    "**/.git": false,
+    "**/target": false
   },
   "explorer.fileNesting.enabled": true,
   "explorer.fileNesting.patterns": {

@@ -3,7 +3,7 @@ resolver = "3"
 members = [ "crates/faber" ]
 
 [package]
-name = "faber"
+name = "faber-server"
 version = "0.1.0"
 edition = "2024"
 authors = ["Faber Team"]
@@ -11,7 +11,7 @@ description = "A secure code execution platform"
 license = "MIT"
 
 [[bin]]
-name = "faber"
+name = "faber-server"
 path = "src/main.rs"
 
 [dependencies]
@@ -36,7 +36,7 @@ toml = "^0.9"
 tower = { version = "^0.5", features = ["limit"] }
 
 # local crates
-faber-core = { path = "crates/faber" }
+faber = { path = "crates/faber" }
 
 [profile.release]
 opt-level = 3

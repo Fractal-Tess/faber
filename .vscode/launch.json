@@ -5,7 +5,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "Remote Debug (Docker Container)",
-      "program": "${workspaceFolder}/target/x86_64-unknown-linux-musl/debug/faber",
+      "program": "${workspaceFolder}/target/x86_64-unknown-linux-musl/debug/faber-server",
       "args": ["serve"],
       "initCommands": [
         "platform select remote-linux",

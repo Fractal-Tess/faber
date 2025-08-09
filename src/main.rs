@@ -1,15 +1,17 @@
-#![allow(unused)]
 #![warn(clippy::unwrap_used)]
 
 mod api;
 mod cli;
 mod config;
-mod container;
 mod logging;
+mod prelude;
 
-use cli::run;
+use cli::run_cli;
 
 #[tokio::main]
 async fn main() {
-    run().await;
+    if let Err(e) = run_cli().await {
+        eprintln!("Error: {e}");
+        std::process::exit(1);
+    }
 }

@@ -1,105 +1,55 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::config::FaberConfig;
-use crate::{api::serve, logging::init_logging};
-use std::error::Error;
-use std::process::exit;
-use tracing::{error, info};
-
-use clap::{CommandFactory, Parser, Subcommand};
+use crate::{
+    api::{RouterBuilder, serve},
+    config::FaberConfig,
+    logging::init_logging,
+};
+use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
-#[command(name = "faber")]
-#[command(about = "A secure containerized task execution service")]
-#[command(version)]
-#[command(propagate_version = true)]
+#[command(name = "faber-server", author, version, about, long_about = None)]
 pub struct Cli {
-    #[arg(short, long, default_value = "/faber/config/default.toml")]
-    pub config: Option<String>,
-
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Start the Faber server
+    /// Start the server
     Serve {
         /// Configuration file path
         #[arg(short, long, default_value = "config/default.toml")]
         config: PathBuf,
     },
-    /// Validate configuration, optionally display the parsed config
-    ValidateConfig {
-        /// Configuration file path
-        #[arg(short, long, default_value = "config/default.toml")]
-        config: PathBuf,
-        /// Display the parsed configuration after validation
-        #[arg(short, long)]
-        display: bool,
-    },
 }
 
-pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    // Disallow non-Linux platforms
-    #[cfg(not(target_os = "linux"))]
-    {
-        eprintln!("Error: Faber is only supported on Linux.");
-        eprintln!("Current platform: {}", std::env::consts::OS);
-        exit(1);
-    }
-
+pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
-    let command = cli.command.unwrap_or_else(|| {
-        Cli::command()
-            .print_help()
-            .map_err(|e| {
-                eprintln!("Failed to print help: {e}");
-            })
-            .expect("Failed to print help");
-        exit(0);
+    let command = cli.command.unwrap_or(Commands::Serve {
+        config: PathBuf::from("config/default.toml"),
     });
 
     match command {
         Commands::Serve { config } => {
-            let config = match FaberConfig::load_from_path(&config) {
-                Ok(config) => config,
-                Err(e) => {
-                    eprintln!("Failed to load configuration from {config:?}: {e}");
-                    exit(1);
-                }
-            };
-
-            // Create an Arc for the global config - this will be shared throughout the application
+            // Load configuration
+            let config = FaberConfig::load_from_path(&config)?;
             let config = Arc::new(config);
 
             // Initialize logging
             init_logging(Arc::clone(&config))?;
 
-            // Start the server
-            serve(config).await?;
-        }
+            // Build router and start the server
+            let router = RouterBuilder::new(Arc::clone(&config))
+                .with_public_routes()
+                .with_protected_routes()
+                .with_middlewares()
+                .build();
 
-        Commands::ValidateConfig { config, display } => {
-            let config = match FaberConfig::load_from_path(&config) {
-                Ok(config) => config,
-                Err(e) => {
-                    eprintln!("Failed to load configuration from {config:?}: {e}");
-                    exit(1);
-                }
-            };
-            info!("Validating configuration...");
-            if display {
-                println!("{config:#?}");
-            } else {
-                println!("Config validated successfully");
-            }
-            info!("Configuration validation completed");
+            serve(config, router).await?;
+            Ok(())
         }
-    };
-
-    info!("CLI run completed successfully");
-    Ok(())
+    }
 }

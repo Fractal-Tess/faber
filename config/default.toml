@@ -1,54 +1,21 @@
 [api]
-host = "0.0.0.0" # The host address for the API server (string)
-port = 3000 # The port number for the API server (number)
-max_concurrency = 1 # Maximum number of concurrent in-flight requests globally (number)
+host = "0.0.0.0"
+port = 3000
+max_concurrency = 1
 
 [api.auth]
 enable = false
-api_key = "" # Secret key for authentication, must be set via FABER_AUTH_SECRET_KEY env variable (no fallback for security)
-
-[api.cors]
-enable_cors = false # Enable or disable CORS support (true/false)
-cors_allowed_origins = "*" # Allowed origins for CORS requests (string)
-cors_allowed_methods = "GET,POST,OPTIONS" # Allowed HTTP methods for CORS (string)
-cors_allowed_headers = "*" # Allowed headers for CORS (string)
-cors_allow_credentials = false # Allow credentials in CORS requests (true/false)
+api_key = ""
 
 [api.endpoints]
-health_endpoint = "/health" # The health check endpoint path (string)
-task_execution_endpoint = "/execute" # The endpoint path for executing tasks (string)
+health_endpoint = "/health"
+task_execution_endpoint = "/execute"
 
 [logging]
-level = "debug" # The log level (error/warn/info/debug/trace)
-dir = "/var/log/faber" # The directory to store logs (string)
-rotation = "hourly" # The log rotation (hourly/daily)
-file_name_prefix = "faber" # The prefix for the log file name (string)
-
-[container.cgroups]
-enabled = false
-
-[container.syscall_blocklist]
-enabled = false
+level = "debug"
+dir = "/var/log/faber"
+rotation = "hourly"
+file_name_prefix = "faber"
 
 [container.filesystem]
-base_dir = "/tmp/faber/containers" # The base directory for all containers
-work_dir = ["/work", "size=128m,nr_inodes=4k"]  # The working directory for the container 
-tmp_dir = ["/tmp", 'size=128m,nr_inodes=4k'] # The temporary directory for the container
-
-# Format: `mount_name` = ['host_path', 'container_path', 'permissions']
-# permissions: 'ro' for read-only (default), 'rw' for read-write
-[container.filesystem.mounts.folders]
-# Basic system binaries and libraries (read-only) - only mount if they exist
-bin = ["/bin", "/bin", "ro"]
-lib = ["/lib", "/lib", "ro"]
-lib64 = ["/lib64", "/lib64", "ro"]
-usr = ["/usr", "/usr", "ro"]
-
-# Format 'mount_name' = ['container_path', 'options']
-[container.filesystem.mounts.tmpfs]
-work_tmpfs = ["/work", "size=128m,nr_inodes=4k"]  # Work directory for user code execution
-tmp_tmpfs = ["/tmp", "size=128m,nr_inodes=4k"]
-
-# Format: `mount_name` = ['host_path', 'container_path', 'permissions']
-# permissions: 'ro' for read-only (default), 'rw' for read-write
-[container.filesystem.mounts.files]
+base_dir = "/tmp/faber/containers"

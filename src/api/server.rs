@@ -47,17 +47,21 @@ impl ServerBuilder {
         ))
         .await?;
 
-        let app = self.router.expect("router must be set with with_router()");
+        let Some(app) = self.router else {
+            return Err("router must be set with with_router()".into());
+        };
 
         // Use provided shutdown signal or a default ctrl_c future
-        let shutdown = self.signal.unwrap_or_else(|| {
+        let shutdown = if let Some(sig) = self.signal {
+            sig
+        } else {
             Box::pin(async {
                 let _ = tokio::signal::ctrl_c().await;
             })
-        });
+        };
 
         axum::serve(listener, app)
-            .with_graceful_shutdown(shutdown)
+            .with_graceful_shutdown(async move { shutdown.await })
             .await?;
 
         Ok(())
