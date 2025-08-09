@@ -1,4 +1,6 @@
-
+[workspace]
+resolver = "3"
+members = [ "crates/faber" ]
 
 [package]
 name = "faber"
@@ -32,6 +34,9 @@ nix = { version = "^0.30", features = [
 ] }
 toml = "^0.9"
 tower = { version = "^0.5", features = ["limit"] }
+
+# local crates
+faber-core = { path = "crates/faber" }
 
 [profile.release]
 opt-level = 3
