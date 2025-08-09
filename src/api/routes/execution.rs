@@ -2,11 +2,9 @@ use crate::api::middlewares::RequestId;
 use crate::config::FaberConfig;
 use crate::prelude::*;
 use axum::{Extension, Json, http::StatusCode};
-use faber::{Mount, Runtime, Task, TaskResult};
-use nix::mount::MsFlags;
+use faber::{CgroupConfig, Mount, RuntimeBuilder, Task, TaskResult};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::Arc;
 use tracing::debug;
 
@@ -88,40 +86,21 @@ pub async fn execution(
     }
 
     let container_root = format!("{}/{}", config.container.filesystem.base_dir, request_id);
-    // Static bind mounts
-    let mut mounts: Vec<Mount> = vec![
-        Mount {
-            source: "/bin".into(),
-            target: "/bin".into(),
-            flags: vec![MsFlags::MS_BIND, MsFlags::MS_REC, MsFlags::MS_RDONLY],
-            options: vec![],
-            data: None,
-        },
-        Mount {
-            source: "/lib".into(),
-            target: "/lib".into(),
-            flags: vec![MsFlags::MS_BIND, MsFlags::MS_REC, MsFlags::MS_RDONLY],
-            options: vec![],
-            data: None,
-        },
-        Mount {
-            source: "/usr/bin".into(),
-            target: "/usr/bin".into(),
-            flags: vec![MsFlags::MS_BIND, MsFlags::MS_REC, MsFlags::MS_RDONLY],
-            options: vec![],
-            data: None,
-        },
-    ];
-    if Path::new("/lib64").exists() {
-        mounts.push(Mount {
-            source: "/lib64".into(),
-            target: "/lib64".into(),
-            flags: vec![MsFlags::MS_BIND, MsFlags::MS_REC, MsFlags::MS_RDONLY],
-            options: vec![],
-            data: None,
+    // Use pre-parsed mounts from config; if empty, builder will use defaults
+    let mounts: Vec<Mount> = config.container.filesystem.mounts.clone();
+
+    // Build runtime via builder, applying cgroup limits if configured
+    let mut builder = faber::Runtime::builder(container_root)
+        .with_mounts(mounts)
+        .with_workdir(config.container.filesystem.work_dir.clone());
+    if let Some(cg) = &config.container.cgroups {
+        builder = builder.with_cgroups(CgroupConfig {
+            pids_max: cg.pids_max.clone(),
+            memory_max: cg.memory_max.clone(),
+            cpu_max: cg.cpu_max.clone(),
         });
     }
-    let runtime = Runtime::new(container_root, mounts);
+    let runtime = builder.build();
 
     let res = runtime.run(tasks.into_iter().map(|w| w.0).collect());
     debug!("Execution result: {res:?}");

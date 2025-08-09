@@ -19,10 +19,18 @@ pub struct TaskResult {
     pub exit_code: i32,
 }
 
+#[derive(Debug, Clone)]
 pub struct Mount {
     pub source: String,
     pub target: String,
     pub flags: Vec<MsFlags>,
     pub options: Vec<MsFlags>,
     pub data: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CgroupConfig {
+    pub pids_max: Option<String>,
+    pub memory_max: Option<String>,
+    pub cpu_max: Option<String>,
 }
