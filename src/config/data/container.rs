@@ -6,7 +6,7 @@ use nix::mount::MsFlags;
 #[derive(Debug, Clone, Deserialize)]
 pub struct ContainerConfig {
     pub filesystem: ContainerFilesystemConfig,
-    pub cgroups: Option<CgroupsConfig>,
+    pub cgroup: Option<CgroupConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -48,8 +48,18 @@ where
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct CgroupsConfig {
+pub struct CgroupConfig {
     pub pids_max: Option<String>,
     pub memory_max: Option<String>,
     pub cpu_max: Option<String>,
+}
+
+impl From<CgroupConfig> for faber::CgroupConfig {
+    fn from(cfg: CgroupConfig) -> Self {
+        faber::CgroupConfig {
+            pids_max: cfg.pids_max,
+            memory_max: cfg.memory_max,
+            cpu_max: cfg.cpu_max,
+        }
+    }
 }

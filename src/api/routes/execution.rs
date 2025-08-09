@@ -86,24 +86,29 @@ pub async fn execution(
     }
 
     let container_root = format!("{}/{}", config.container.filesystem.base_dir, request_id);
-    // Use pre-parsed mounts from config; if empty, builder will use defaults
     let mounts: Vec<Mount> = config.container.filesystem.mounts.clone();
+    let work_dir = config.container.filesystem.work_dir.clone();
 
     // Build runtime via builder, applying cgroup limits if configured
-    let mut builder = faber::Runtime::builder(container_root)
+    let mut builder = faber::Runtime::builder()
         .with_mounts(mounts)
-        .with_workdir(config.container.filesystem.work_dir.clone());
-    if let Some(cg) = &config.container.cgroups {
-        builder = builder.with_cgroups(CgroupConfig {
-            pids_max: cg.pids_max.clone(),
-            memory_max: cg.memory_max.clone(),
-            cpu_max: cg.cpu_max.clone(),
-        });
+        .with_container_root(container_root)
+        .with_workdir(work_dir);
+
+    // If cgroups are configured, apply them to the runtime
+    if let Some(cg) = &config.container.cgroup {
+        builder = builder.with_cgroups(cg.clone().into());
     }
+
+    // Build the runtime
     let runtime = builder.build();
 
+    // Run the tasks
     let res = runtime.run(tasks.into_iter().map(|w| w.0).collect());
+
     debug!("Execution result: {res:?}");
+
+    // Return the result
     match res {
         Ok(task_result) => Ok(Json(ExecutionResponse(vec![W(task_result)]))),
         Err(e) => Err((

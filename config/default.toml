@@ -41,8 +41,8 @@ source = "/lib64"
 target = "/lib64"
 readonly = true
 
-[container.cgroups]
+[container.cgroup]
 # Use cgroup v2 values. Set to numbers or special tokens (e.g., "max") as supported by kernel.
-# pids_max = "128"
-# memory_max = "256M"
-# cpu_max = "100000 50000" # period quota
+pids_max = "128"
+memory_max = "256M"
+cpu_max = "100000 50000" # period quota

@@ -8,7 +8,7 @@ use nix::{
     unistd::{ForkResult, close, dup2, execve, fork, pipe, pivot_root},
 };
 
-use crate::runtime_builder::RuntimeBuilder;
+use crate::builder::RuntimeBuilder;
 use crate::{
     TaskResult,
     prelude::*,
@@ -28,21 +28,15 @@ use std::{ffi::CString, fs::File};
 use std::{io::Read, mem::ManuallyDrop};
 
 pub struct Runtime {
-    container_root: PathBuf,
-    mounts: Vec<Mount>,
-    cgroup: Option<CgroupConfig>,
-    work_dir: String,
+    pub(crate) container_root: PathBuf,
+    pub(crate) mounts: Vec<Mount>,
+    pub(crate) cgroup: Option<CgroupConfig>,
+    pub(crate) work_dir: String,
 }
 
 impl Runtime {
-    pub fn new(container_root: String, mounts: Vec<Mount>) -> Self {
-        RuntimeBuilder::new(container_root)
-            .with_mounts(mounts)
-            .build()
-    }
-
-    pub fn builder(container_root: String) -> RuntimeBuilder {
-        RuntimeBuilder::new(container_root)
+    pub fn builder() -> RuntimeBuilder {
+        RuntimeBuilder::new()
     }
 
     pub(crate) fn from_builder_parts(
