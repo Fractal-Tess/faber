@@ -11,13 +11,8 @@ pub struct RuntimeBuilder {
 }
 
 impl RuntimeBuilder {
-    pub fn new(container_root: String) -> Self {
-        Self {
-            container_root: container_root.into(),
-            mounts: default_mounts(),
-            cgroup: None,
-            work_dir: "/faber".into(),
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn with_mounts(mut self, mounts: Vec<Mount>) -> Self {
@@ -35,15 +30,31 @@ impl RuntimeBuilder {
         self
     }
 
+    pub fn with_container_root(mut self, container_root: impl Into<PathBuf>) -> Self {
+        self.container_root = container_root.into();
+        self
+    }
+
     pub fn build(self) -> Runtime {
         Runtime::from_builder_parts(self.container_root, self.mounts, self.cgroup, self.work_dir)
+    }
+}
+
+impl Default for RuntimeBuilder {
+    fn default() -> Self {
+        Self {
+            container_root: "/tmp/faber/containers".into(),
+            mounts: default_mounts(),
+            cgroup: None,
+            work_dir: "/faber".into(),
+        }
     }
 }
 
 fn default_mounts() -> Vec<Mount> {
     use nix::mount::MsFlags;
     let ro = vec![MsFlags::MS_BIND, MsFlags::MS_REC, MsFlags::MS_RDONLY];
-    let mut mounts = vec![
+    let mut mounts: Vec<Mount> = vec![
         Mount {
             source: "/bin".into(),
             target: "/bin".into(),
