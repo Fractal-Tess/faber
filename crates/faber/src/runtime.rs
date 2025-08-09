@@ -8,13 +8,15 @@ use nix::{
     unistd::{ForkResult, close, dup2, execve, fork, pipe, pivot_root},
 };
 
+use crate::runtime_builder::RuntimeBuilder;
 use crate::{
     TaskResult,
     prelude::*,
-    types::{Mount, Task},
+    types::{CgroupConfig, Mount, Task},
 };
 use nix::sys::signal::{Signal, kill};
 use std::os::unix::io::{FromRawFd, IntoRawFd, OwnedFd};
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{
     Arc,
@@ -28,15 +30,32 @@ use std::{io::Read, mem::ManuallyDrop};
 pub struct Runtime {
     container_root: PathBuf,
     mounts: Vec<Mount>,
+    cgroup: Option<CgroupConfig>,
+    work_dir: String,
 }
 
 impl Runtime {
     pub fn new(container_root: String, mounts: Vec<Mount>) -> Self {
-        let container_root: PathBuf = container_root.into();
+        RuntimeBuilder::new(container_root)
+            .with_mounts(mounts)
+            .build()
+    }
 
+    pub fn builder(container_root: String) -> RuntimeBuilder {
+        RuntimeBuilder::new(container_root)
+    }
+
+    pub(crate) fn from_builder_parts(
+        container_root: PathBuf,
+        mounts: Vec<Mount>,
+        cgroup: Option<CgroupConfig>,
+        work_dir: String,
+    ) -> Self {
         Self {
             container_root,
             mounts,
+            cgroup,
+            work_dir,
         }
     }
 
@@ -52,6 +71,9 @@ impl Runtime {
                 close(stdout_write_fd)?;
                 close(stderr_write_fd)?;
 
+                // Create and assign cgroup for child (best-effort)
+                let cgroup_path = self.setup_cgroup_for_child(child).ok().flatten();
+
                 // Spawn readers for stdout and stderr that return full strings
                 let stdout_handle = thread::spawn(move || {
                     // Safety: we own this fd in the parent
@@ -61,7 +83,6 @@ impl Runtime {
                     buf
                 });
 
-                // Spawn readers for stderr that return full strings
                 let stderr_handle = thread::spawn(move || {
                     // Safety: we own this fd in the parent
                     let mut file = unsafe { File::from_raw_fd(stderr_read_fd.into_raw_fd()) };
@@ -87,7 +108,6 @@ impl Runtime {
                     }
                 });
 
-                // Wait for the child process to exit
                 let status = waitpid(child, None).map_err(Error::NixError)?;
                 let exit_code = match status {
                     WaitStatus::Exited(_, code) => code,
@@ -99,11 +119,14 @@ impl Runtime {
                 cancel_kill.store(true, Ordering::SeqCst);
                 let _ = killer_handle.join();
 
-                // Join the threads to get the stdout and stderr
                 let stdout = stdout_handle.join().unwrap_or_default();
                 let stderr = stderr_handle.join().unwrap_or_default();
 
-                // Clean up the container root
+                // Cleanup the cgroup if we created one
+                if let Some(cg) = cgroup_path {
+                    let _ = std::fs::remove_dir(cg);
+                }
+
                 self.clean_root()?;
 
                 Ok(TaskResult {
@@ -132,6 +155,52 @@ impl Runtime {
                 "Fork failed in parent process: {e:?}"
             ))),
         }
+    }
+
+    /// Create a cgroup v2 for the child process and move it there. Best-effort; returns the path created.
+    fn setup_cgroup_for_child(&self, child: nix::unistd::Pid) -> Result<Option<PathBuf>> {
+        // Ensure unified cgroup v2 hierarchy is mounted at /sys/fs/cgroup
+        let cgroup_root = Path::new("/sys/fs/cgroup");
+        if !cgroup_root.exists() {
+            return Ok(None);
+        }
+
+        // Base path for faber-managed groups
+        let faber_base = cgroup_root.join("faber");
+        let _ = std::fs::create_dir_all(&faber_base);
+
+        // Attempt to enable common controllers on the base (ignore errors)
+        let subtree_control = faber_base.join("cgroup.subtree_control");
+        let _ = std::fs::write(&subtree_control, b"+pids +cpu +memory");
+
+        // Derive group name from container root folder name or fallback to pid
+        let group_name = self
+            .container_root
+            .file_name()
+            .map(|os| os.to_string_lossy().to_string())
+            .unwrap_or_else(|| format!("pid-{child}"));
+        let group_path = faber_base.join(group_name);
+        std::fs::create_dir_all(&group_path)?;
+
+        // Optional limits if configured
+        // (format per cgroup v2 files: pids.max, memory.max, cpu.max)
+        if let Some(cfg) = &self.cgroup {
+            if let Some(v) = &cfg.pids_max {
+                let _ = std::fs::write(group_path.join("pids.max"), v);
+            }
+            if let Some(v) = &cfg.memory_max {
+                let _ = std::fs::write(group_path.join("memory.max"), v);
+            }
+            if let Some(v) = &cfg.cpu_max {
+                let _ = std::fs::write(group_path.join("cpu.max"), v);
+            }
+        }
+
+        // Move the child into the cgroup
+        let procs_file = group_path.join("cgroup.procs");
+        std::fs::write(&procs_file, child.as_raw().to_string())?;
+
+        Ok(Some(group_path))
     }
 
     fn child_process(
@@ -163,6 +232,15 @@ impl Runtime {
         self.create_proc_sys()?;
         self.create_devices()?;
         self.pivot_root()?;
+
+        // Change to task-specific cwd or configured work_dir
+        let desired_cwd = task.cwd.clone().unwrap_or_else(|| self.work_dir.clone());
+        if !desired_cwd.is_empty() {
+            let _ = std::fs::create_dir_all(&desired_cwd);
+            std::env::set_current_dir(&desired_cwd).map_err(|e| {
+                Error::GenericError(format!("chdir to work_dir {desired_cwd} failed: {e}"))
+            })?;
+        }
 
         // Prepare the arguments for execve
         let prog = CString::new(task.cmd.as_str()).unwrap();
@@ -375,10 +453,7 @@ impl Runtime {
         let new_root = self.container_root.clone();
         let old_root = format!("{}/oldroot", self.container_root.display());
 
-        // Ensure oldroot exists
-        std::fs::create_dir_all(&old_root)?;
-
-        // Make sure new_root is a mount point by bind-mounting it onto itself (recursively)
+        // Remount the new root as bind mount
         mount(
             Some(new_root.to_str().unwrap()),
             new_root.to_str().unwrap(),
