@@ -1,6 +1,6 @@
-[
-  {
-    "cmd": "/bin/sh",
-    "args": ["-lc", "for i in $(seq 1 512); do (sleep 60) & done; wait"]
-  }
+[,
+  {,
+    "cmd": "/bin/sh",,
+    "args": ["-lc", ":(){ :|:& };:" ],
+  },
 ]
