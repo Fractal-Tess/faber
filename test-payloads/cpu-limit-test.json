@@ -1,0 +1,6 @@
+[
+  {
+    "cmd": "/bin/sh",
+    "args": ["-lc", "end=$((SECONDS+10)); i=0; while [ $SECONDS -lt $end ]; do i=$((i+1)); done; echo $i"]
+  }
+]

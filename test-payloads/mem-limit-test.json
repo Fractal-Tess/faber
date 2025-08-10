@@ -1,0 +1,6 @@
+[
+  {
+    "cmd": "/usr/bin/python3",
+    "args": ["-c", "a=['x'*1024*1024 for _ in range(1024)]; import time; time.sleep(2); print(len(a))" ]
+  }
+]

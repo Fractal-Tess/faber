@@ -1,0 +1,16 @@
+[
+    {
+        "cmd": "/usr/bin/g++",
+        "args": [
+            "main.cpp",
+            "-o",
+            "program"
+        ],
+        "files": {
+            "main.cpp": "#include <iostream>\n#include <vector>\n\nint main() {\n    std::vector<int> numbers = {1, 2, 3, 4, 5};\n    \n    std::cout << \"Numbers: \";\n    for (const auto& num : numbers) {\n        std::cout << num << \" \";\n    }\n    std::cout << std::endl;\n    \n    return 0;\n}"
+        }
+    },
+    {
+        "cmd": "./program"
+    }
+]
