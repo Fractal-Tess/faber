@@ -43,9 +43,9 @@ impl RouterBuilder {
         let config_extension = Extension(Arc::clone(&self.config));
         self.router = self
             .router
-            .layer(config_extension)
+            .layer(middleware::from_fn(timing_middleware))
             .layer(middleware::from_fn(auth_middleware))
-            .layer(middleware::from_fn(timing_middleware));
+            .layer(config_extension);
         self
     }
 
