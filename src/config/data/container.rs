@@ -6,8 +6,8 @@ use nix::mount::MsFlags;
 #[derive(Debug, Clone, Deserialize)]
 pub struct ContainerConfig {
     pub filesystem: ContainerFilesystemConfig,
-    pub cgroup: Option<CgroupConfig>,
-    pub runtime: Option<ContainerRuntimeConfig>,
+    pub cgroup: CgroupConfig,
+    pub runtime: ContainerRuntimeConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
