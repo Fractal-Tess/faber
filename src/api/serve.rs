@@ -26,7 +26,7 @@ pub async fn serve(
         if let Err(e) = ctrl_c().await {
             error!("Failed to listen for shutdown signal: {e}");
         }
-        info!("Shutdown signal received; commencing graceful shutdown");
+        info!("🦊 faber shutdown");
     };
 
     let result = axum::serve(listener, router)
@@ -34,8 +34,8 @@ pub async fn serve(
         .await;
 
     match &result {
-        Ok(_) => info!("Axum server completed successfully"),
-        Err(e) => error!("Axum server failed: {}", e),
+        Ok(_) => info!("🦊 faber shutdown"),
+        Err(e) => error!("🦊 faber encountered an error: {}", e),
     }
 
     match result {
