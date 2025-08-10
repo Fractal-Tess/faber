@@ -34,22 +34,35 @@ impl ContainerEnvironment {
     }
 
     pub(crate) fn initialize(&self) -> Result<()> {
+        std::fs::create_dir_all(&self.container_root)?;
+
         self.unshare_internal()?;
-        self.bind_mounts_internal()?;
-        self.create_proc_sys_internal()?;
-        self.create_tmp_internal()?;
-        self.create_work_dir_internal()?;
-        self.create_devices_internal()?;
+
         self.set_hostname_internal()?;
+
+        self.create_proc_sys_internal()?;
+
+        self.create_tmp_internal()?;
+
+        self.create_work_dir_internal()?;
+
+        self.create_devices_internal()?;
+
+        self.bind_mounts_internal()?;
+
         self.pivot_root_internal()?;
+
         Ok(())
     }
 
     pub(crate) fn cleanup(&self) -> Result<()> {
         // Parent-side cleanup of the container root
-        std::fs::remove_dir_all(&self.container_root)
-            .map_err(|e| Error::GenericError(format!("failed to remove container root: {e}")))?;
-        Ok(())
+        match std::fs::remove_dir_all(&self.container_root) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(Error::GenericError(format!(
+                "failed to remove container root: {e}"
+            ))),
+        }
     }
 
     pub(crate) fn write_files_to_workdir(&self, files: &HashMap<String, String>) -> Result<()> {
@@ -110,7 +123,6 @@ impl ContainerEnvironment {
 
         for m in &self.mounts {
             if !Path::new(&m.source).exists() {
-                eprintln!("skipping mount {}: source does not exist", m.source);
                 continue;
             }
             let target = format!(
@@ -125,20 +137,13 @@ impl ContainerEnvironment {
 
             std::fs::create_dir_all(&target)?;
 
-            match mount(
+            mount(
                 Some(m.source.as_str()),
                 target.as_str(),
                 None::<&str>,
                 flags,
                 m.data.as_deref(),
-            ) {
-                Ok(_) => {
-                    eprintln!("mounted {}: {}", m.source, target);
-                }
-                Err(e) => {
-                    eprintln!("failed to mount {}: {e:?}", m.source);
-                }
-            }
+            )?
         }
         Ok(())
     }
@@ -150,7 +155,6 @@ impl ContainerEnvironment {
         let proc_flags = MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC;
 
         std::fs::create_dir_all(&proc_path)?;
-        eprintln!("[faber:mount] mounting proc -> {}", proc_path);
 
         mount(
             proc_source,
@@ -167,7 +171,6 @@ impl ContainerEnvironment {
         let sys_flags = MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC;
 
         std::fs::create_dir_all(&sys_target)?;
-        eprintln!("[faber:mount] mounting sysfs -> {}", sys_target);
 
         mount(
             sys_source,
@@ -245,10 +248,6 @@ impl ContainerEnvironment {
         std::fs::create_dir_all(&old_root)
             .map_err(|e| Error::GenericError(format!("failed to create old_root dir: {e}")))?;
 
-        eprintln!(
-            "[faber:root] remount new_root {} as MS_BIND|MS_REC",
-            new_root.display()
-        );
         mount(
             Some(new_root.to_str().unwrap()),
             new_root.to_str().unwrap(),
@@ -258,17 +257,11 @@ impl ContainerEnvironment {
         )
         .map_err(Error::NixError)?;
 
-        eprintln!(
-            "[faber:root] pivot_root new_root={} old_root={}",
-            new_root.display(),
-            old_root
-        );
         pivot_root(new_root.to_str().unwrap(), old_root.as_str()).map_err(Error::NixError)?;
 
         std::env::set_current_dir("/")
             .map_err(|e| Error::GenericError(format!("chdir to new root failed: {e}")))?;
 
-        eprintln!("[faber:root] umount oldroot");
         umount2("/oldroot", MntFlags::MNT_DETACH).map_err(Error::NixError)?;
         let _ = std::fs::remove_dir_all("/oldroot");
 
