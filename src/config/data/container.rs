@@ -49,14 +49,21 @@ where
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CgroupConfig {
+    #[serde(default = "default_enabled_true")]
+    pub enabled: bool,
     pub pids_max: Option<String>,
     pub memory_max: Option<String>,
     pub cpu_max: Option<String>,
 }
 
+fn default_enabled_true() -> bool {
+    true
+}
+
 impl From<CgroupConfig> for faber::CgroupConfig {
     fn from(cfg: CgroupConfig) -> Self {
         faber::CgroupConfig {
+            enabled: cfg.enabled,
             pids_max: cfg.pids_max,
             memory_max: cfg.memory_max,
             cpu_max: cfg.cpu_max,

@@ -31,6 +31,7 @@ pub struct Mount {
 
 #[derive(Debug, Clone, Default)]
 pub struct CgroupConfig {
+    pub enabled: bool,
     pub pids_max: Option<String>,
     pub memory_max: Option<String>,
     pub cpu_max: Option<String>,
