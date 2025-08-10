@@ -4,7 +4,7 @@ use axum::{Extension, Json, http::StatusCode};
 use faber::{Task, TaskResult};
 use serde::Serialize;
 use std::sync::Arc;
-use tracing::debug;
+use tracing::{debug, instrument};
 
 use tokio::sync::{OnceCell, Semaphore};
 
@@ -19,6 +19,7 @@ pub struct ExecutionResponse(pub Vec<TaskResult>);
 
 static CONTAINER_SEM: OnceCell<Arc<Semaphore>> = OnceCell::const_new();
 
+#[instrument(name = "route_execution", skip_all, fields(req_id = %request_id))]
 #[axum::debug_handler]
 pub async fn execution(
     Extension(config): Extension<Arc<FaberConfig>>,
@@ -26,7 +27,7 @@ pub async fn execution(
     Json(tasks): Json<Vec<Task>>,
 ) -> Result<Json<ExecutionResponse>, (StatusCode, Json<ErrorPayload>)> {
     if tasks.is_empty() {
-        debug!("Requst {request_id} is empty");
+        debug!("Request {request_id} is empty");
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ErrorPayload {
@@ -35,6 +36,11 @@ pub async fn execution(
             }),
         ));
     }
+
+    debug!(
+        task_count = tasks.len(),
+        "Building runtime and acquiring semaphore"
+    );
 
     // Initialize (or fetch) global semaphore to throttle container runs
     let sem = CONTAINER_SEM
@@ -65,6 +71,8 @@ pub async fn execution(
             kill_timeout_seconds: config.container.runtime.kill_timeout_seconds,
         })
         .build();
+
+    debug!("Spawning blocking runtime.run");
 
     let run_future = tokio::task::spawn_blocking(move || -> Result<Vec<TaskResult>, String> {
         // Catch panic to avoid poisoning the runtime

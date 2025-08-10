@@ -1,4 +1,3 @@
-use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -8,6 +7,7 @@ use crate::{
     logging::init_logging,
 };
 use clap::{Parser, Subcommand};
+use tracing::{info, instrument};
 
 #[derive(Parser, Debug)]
 #[command(name = "faber-server", author, version, about, long_about = None)]
@@ -26,6 +26,7 @@ pub enum Commands {
     },
 }
 
+#[instrument(name = "run_cli", skip_all)]
 pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
@@ -35,12 +36,15 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
 
     match command {
         Commands::Serve { config } => {
+            info!(config_path = %config.display(), "Loading configuration");
             // Load configuration
             let config = FaberConfig::load_from_path(&config)?;
             let config = Arc::new(config);
 
             // Initialize logging
             init_logging(Arc::clone(&config))?;
+
+            info!(host = %config.api.host, port = config.api.port, "Starting server");
 
             // Build router and start the server
             let router = RouterBuilder::new(Arc::clone(&config))

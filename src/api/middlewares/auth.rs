@@ -6,6 +6,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use std::sync::Arc;
+use tracing::{debug, warn};
 
 // Authentication middleware to check if the request has a valid API key
 pub async fn auth_middleware(
@@ -15,6 +16,7 @@ pub async fn auth_middleware(
     next: Next,
 ) -> Response {
     if !config.api.auth.enable {
+        debug!("Auth disabled; allowing request");
         return next.run(request).await;
     }
 
@@ -27,8 +29,10 @@ pub async fn auth_middleware(
     match api_key {
         Some(api_key) => {
             if api_key != config.api.auth.api_key {
+                warn!("Unauthorized request: invalid API key provided");
                 return (StatusCode::UNAUTHORIZED, "Invalid API key provided").into_response();
             }
+            debug!("Authorized request");
             next.run(request).await
         }
         None => (
