@@ -16,22 +16,21 @@ use crate::{
     types::{RuntimeLimits, Task},
 };
 
-use std::process::Stdio;
 use std::{
     collections::HashMap,
     fs::File,
-    io::Read,
+    io::{Read, Write},
     os::fd::{FromRawFd, IntoRawFd, OwnedFd},
     os::unix::process::ExitStatusExt,
     path::PathBuf,
+    process::{Command, Stdio, exit},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    thread,
-    time::Duration,
+    thread::{self, JoinHandle},
+    time::{Duration, Instant},
 };
-use std::{io::Write, process::Command};
 
 #[derive(Debug)]
 pub struct Runtime {
@@ -74,7 +73,7 @@ impl Runtime {
                 let _ = killer_handle.join();
 
                 if let Some(handle) = &cg_handle {
-                    self.cgroups.cleanup_group(handle.path());
+                    self.cgroups.cleanup_group(handle.path())?;
                 }
 
                 let results = Self::deserialize_results(&results_json)?;
@@ -97,7 +96,7 @@ impl Runtime {
 
                 self.write_child_results(results_write_fd, &results_vec);
 
-                std::process::exit(0);
+                exit(0);
             }
             Err(e) => Err(Error::GenericError(format!(
                 "Fork failed in parent process: {e:?}"
@@ -105,20 +104,17 @@ impl Runtime {
         }
     }
 
-    fn spawn_killer(
-        child: Pid,
-        timeout_secs: u64,
-    ) -> (std::thread::JoinHandle<()>, Arc<AtomicBool>) {
+    fn spawn_killer(child: Pid, timeout_secs: u64) -> (JoinHandle<()>, Arc<AtomicBool>) {
         let cancel_kill = Arc::new(AtomicBool::new(false));
         let cancel_kill_for_thread = cancel_kill.clone();
         let killer_handle = thread::spawn(move || {
             let timeout = Duration::from_secs(timeout_secs);
-            let start = std::time::Instant::now();
+            let start = Instant::now();
             while start.elapsed() < timeout {
                 if cancel_kill_for_thread.load(Ordering::SeqCst) {
                     return;
                 }
-                std::thread::sleep(Duration::from_millis(20));
+                thread::sleep(Duration::from_millis(20));
             }
             if !cancel_kill_for_thread.load(Ordering::SeqCst) {
                 let _ = kill(child, Signal::SIGKILL);
@@ -177,7 +173,7 @@ impl Runtime {
                     unsafe { OwnedFd::from_raw_fd(write_fd.into_raw_fd()) },
                     &results,
                 );
-                std::process::exit(0);
+                exit(0);
             }
             Err(e) => Err(Error::GenericError(format!(
                 "failed to fork PID1 for task runner: {e:?}"

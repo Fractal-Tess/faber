@@ -1,7 +1,7 @@
 [api]
 host = "0.0.0.0"
 port = 3000
-max_concurrency = 10
+max_concurrency = 100
 
 [api.auth]
 enable = false
@@ -12,7 +12,7 @@ health_endpoint = "/health"
 task_execution_endpoint = "/execute"
 
 [logging]
-level = "debug"
+level = "info"
 dir = "/var/log/faber"
 rotation = "hourly"
 file_name_prefix = "faber"

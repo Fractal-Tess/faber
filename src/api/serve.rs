@@ -10,7 +10,10 @@ pub async fn serve(
     config: Arc<FaberConfig>,
     router: axum::Router,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    info!(host = %config.api.host, port = config.api.port, "🦊 faber starting");
+    info!(
+        "🦊 Faber is starting on {}:{}",
+        config.api.host, config.api.port
+    );
 
     let addr = SocketAddr::from((
         config.api.host.parse::<std::net::IpAddr>()?,
@@ -23,20 +26,12 @@ pub async fn serve(
         if let Err(e) = ctrl_c().await {
             error!("Failed to listen for shutdown signal: {e}");
         }
-        info!("🦊 faber shutdown");
     };
 
-    let result = axum::serve(listener, router)
+    axum::serve(listener, router)
         .with_graceful_shutdown(shutdown_signal)
-        .await;
+        .await?;
 
-    match &result {
-        Ok(_) => info!("🦊 faber shutdown"),
-        Err(e) => error!("🦊 faber encountered an error: {}", e),
-    }
-
-    match result {
-        Ok(_) => Ok(()),
-        Err(e) => Err(Box::new(e) as Box<dyn std::error::Error>),
-    }
+    info!("🦊 Faber is tearing down...");
+    Ok(())
 }

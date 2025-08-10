@@ -60,9 +60,12 @@ impl Cgroups {
 
         // Use a unique path that includes the request ID to avoid conflicts
         let unique_cgroup_path = cgroup_root.join("faber").join(&group_name);
-        create_dir_all(&unique_cgroup_path)?;
+        create_dir_all(&unique_cgroup_path).map_err(|source| Error::CgroupCreate {
+            path: unique_cgroup_path.clone(),
+            source,
+        })?;
 
-        // Enable controllers for this specific cgroup
+        // Enable controllers for this specific cgroup (best-effort)
         let subtree_control = unique_cgroup_path.join("cgroup.subtree_control");
         let _ = write(&subtree_control, b"+pids +cpu +memory");
 
@@ -79,7 +82,11 @@ impl Cgroups {
         }
 
         let procs_file = unique_cgroup_path.join("cgroup.procs");
-        write(&procs_file, child.as_raw().to_string())?;
+        write(&procs_file, child.as_raw().to_string()).map_err(|source| Error::CgroupWrite {
+            path: procs_file.clone(),
+            value: child.as_raw().to_string(),
+            source,
+        })?;
 
         Ok(Some(CgroupHandle {
             path: unique_cgroup_path,
@@ -88,7 +95,9 @@ impl Cgroups {
     }
 
     pub(crate) fn cleanup_group(&self, group_path: &Path) -> Result<()> {
-        remove_dir(group_path)?;
-        Ok(())
+        remove_dir(group_path).map_err(|source| Error::RemoveDir {
+            path: group_path.to_path_buf(),
+            source,
+        })
     }
 }
