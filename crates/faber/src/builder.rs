@@ -1,7 +1,7 @@
 use crate::cgroups::Cgroups;
 use crate::environment::ContainerEnvironment;
 use crate::runtime::Runtime;
-use crate::types::{CgroupConfig, Mount};
+use crate::types::{CgroupConfig, Mount, RuntimeLimits};
 use rand::{Rng, distr::Alphanumeric};
 use std::path::PathBuf;
 
@@ -12,6 +12,7 @@ pub struct RuntimeBuilder {
     mounts: Option<Vec<Mount>>,
     work_dir: Option<String>,
     cgroup: Option<CgroupConfig>,
+    limits: Option<RuntimeLimits>,
 }
 
 impl RuntimeBuilder {
@@ -23,29 +24,28 @@ impl RuntimeBuilder {
         self.mounts = Some(mounts);
         self
     }
-
     pub fn with_cgroups(mut self, cfg: CgroupConfig) -> Self {
         self.cgroup = Some(cfg);
         self
     }
-
     pub fn with_workdir(mut self, work_dir: String) -> Self {
         self.work_dir = Some(work_dir);
         self
     }
-
     pub fn with_container_root(mut self, container_root: impl Into<PathBuf>) -> Self {
         self.container_root = Some(container_root.into());
         self
     }
-
     pub fn with_hostname(mut self, hostname: String) -> Self {
         self.hostname = Some(hostname);
         self
     }
+    pub fn with_runtime_limits(mut self, limits: RuntimeLimits) -> Self {
+        self.limits = Some(limits);
+        self
+    }
 
     pub fn build(self) -> Runtime {
-        // Defaults mirror Runtime::default()
         let flags = vec![
             nix::mount::MsFlags::MS_BIND,
             nix::mount::MsFlags::MS_REC,
@@ -76,6 +76,11 @@ impl RuntimeBuilder {
 
         let env = ContainerEnvironment::new(container_root, hostname, mounts, work_dir);
         let cgroups = Cgroups::new(self.cgroup);
-        Runtime { env, cgroups }
+        let limits = self.limits.unwrap_or_default();
+        Runtime {
+            env,
+            cgroups,
+            limits,
+        }
     }
 }

@@ -100,6 +100,13 @@ pub async fn execution(
         builder = builder.with_cgroups(cg.clone().into());
     }
 
+    // If runtime limits are configured, apply them to the runtime
+    if let Some(rt) = &config.container.runtime {
+        builder = builder.with_runtime_limits(faber::RuntimeLimits {
+            kill_timeout_seconds: rt.kill_timeout_seconds,
+        });
+    }
+
     // Build the runtime
     let runtime = builder.build();
 

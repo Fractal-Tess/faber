@@ -52,3 +52,7 @@ enabled = true
 pids_max = "128"
 memory_max = "256M"
 cpu_max = "100000 50000" # period quota
+
+[container.runtime]
+# Max lifetime for a child container process, after which it will be SIGKILLed.
+kill_timeout_seconds = 300

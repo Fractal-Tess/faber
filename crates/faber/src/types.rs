@@ -36,3 +36,8 @@ pub struct CgroupConfig {
     pub memory_max: Option<String>,
     pub cpu_max: Option<String>,
 }
+
+#[derive(Debug, Clone, Default)]
+pub struct RuntimeLimits {
+    pub kill_timeout_seconds: Option<u64>,
+}

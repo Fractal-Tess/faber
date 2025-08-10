@@ -8,4 +8,4 @@ mod types;
 
 pub use builder::RuntimeBuilder;
 pub use runtime::Runtime;
-pub use types::{CgroupConfig, Mount, Task, TaskResult};
+pub use types::{CgroupConfig, Mount, RuntimeLimits, Task, TaskResult};

@@ -13,7 +13,7 @@ use crate::{
     cgroups::{CgroupHandle, Cgroups},
     environment::ContainerEnvironment,
     prelude::*,
-    types::Task,
+    types::{RuntimeLimits, Task},
 };
 
 use std::{
@@ -35,6 +35,7 @@ use std::{
 pub struct Runtime {
     pub(crate) env: ContainerEnvironment,
     pub(crate) cgroups: Cgroups,
+    pub(crate) limits: RuntimeLimits,
 }
 
 impl Runtime {
@@ -55,7 +56,9 @@ impl Runtime {
                 close(results_write_fd)?;
 
                 self.assign_child_cgroup(child);
-                let (killer_handle, cancel_kill) = Self::spawn_killer(child);
+
+                let timeout_secs = self.limits.kill_timeout_seconds.unwrap_or(300);
+                let (killer_handle, cancel_kill) = Self::spawn_killer(child, timeout_secs);
 
                 let results_json = self.read_all_from_fd(results_read_fd);
                 let _ = waitpid(child, None).map_err(Error::NixError)?;
@@ -92,11 +95,14 @@ impl Runtime {
             .flatten()
     }
 
-    fn spawn_killer(child: Pid) -> (std::thread::JoinHandle<()>, Arc<AtomicBool>) {
+    fn spawn_killer(
+        child: Pid,
+        timeout_secs: u64,
+    ) -> (std::thread::JoinHandle<()>, Arc<AtomicBool>) {
         let cancel_kill = Arc::new(AtomicBool::new(false));
         let cancel_kill_for_thread = cancel_kill.clone();
         let killer_handle = thread::spawn(move || {
-            let timeout = Duration::from_secs(300);
+            let timeout = Duration::from_secs(timeout_secs);
             let start = std::time::Instant::now();
             while start.elapsed() < timeout {
                 if cancel_kill_for_thread.load(Ordering::SeqCst) {
@@ -296,6 +302,7 @@ impl Default for Runtime {
         Self {
             env,
             cgroups: Cgroups::default(),
+            limits: RuntimeLimits::default(),
         }
     }
 }

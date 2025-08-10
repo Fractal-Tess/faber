@@ -7,6 +7,7 @@ use nix::mount::MsFlags;
 pub struct ContainerConfig {
     pub filesystem: ContainerFilesystemConfig,
     pub cgroup: Option<CgroupConfig>,
+    pub runtime: Option<ContainerRuntimeConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -69,4 +70,9 @@ impl From<CgroupConfig> for faber::CgroupConfig {
             cpu_max: cfg.cpu_max,
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ContainerRuntimeConfig {
+    pub kill_timeout_seconds: Option<u64>,
 }
