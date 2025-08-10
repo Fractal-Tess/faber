@@ -8,8 +8,8 @@ services:
       - ../../.cargo:/faber/.cargo:ro
       - ../../config:/faber/config:ro
       - ../../src:/faber/src:ro
+      - ../../crates:/faber/crates:ro
       - ../../logs:/var/log/faber:rw
-      - ../../tests:/faber/tests:ro
       - ../../Cargo.toml:/faber/Cargo.toml:ro
       - cargo-target:/faber/target
     privileged: true
