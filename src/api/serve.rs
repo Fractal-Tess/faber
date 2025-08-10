@@ -10,17 +10,14 @@ pub async fn serve(
     config: Arc<FaberConfig>,
     router: axum::Router,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    info!(host = %config.api.host, port = config.api.port, "🦊 faber starting");
+
     let addr = SocketAddr::from((
         config.api.host.parse::<std::net::IpAddr>()?,
         config.api.port,
     ));
 
     let listener = TcpListener::bind(addr).await?;
-
-    info!(
-        "Starting Axum server on {}:{}",
-        config.api.host, config.api.port
-    );
 
     let shutdown_signal = async {
         if let Err(e) = ctrl_c().await {

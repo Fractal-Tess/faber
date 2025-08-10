@@ -43,11 +43,6 @@ pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
             // Initialize logging
             init_logging(Arc::clone(&config))?;
 
-            // Signature startup log
-            info!("🦊 faber starting");
-
-            info!(host = %config.api.host, port = config.api.port, "Starting server");
-
             // Build router and start the server
             let router = RouterBuilder::new(Arc::clone(&config))
                 .with_public_routes()
