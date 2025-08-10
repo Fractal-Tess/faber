@@ -7,7 +7,7 @@ RUN apt update && apt install -y \
     lldb \
     gdb \
     build-essential \
-    && rm -rf /var/lib/apt/lists/*
+    btop
 
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain stable && \
     . $HOME/.cargo/env && \
