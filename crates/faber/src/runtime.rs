@@ -10,7 +10,7 @@ use rand::{Rng, distr::Alphanumeric};
 use crate::{
     TaskResult,
     builder::RuntimeBuilder,
-    cgroups::{CgroupHandle, Cgroups},
+    cgroups::Cgroups,
     environment::ContainerEnvironment,
     prelude::*,
     types::{RuntimeLimits, Task},
@@ -19,7 +19,6 @@ use crate::{
 use std::process::{Command, Stdio};
 use std::{
     collections::HashMap,
-    ffi::CString,
     fs::File,
     io::Read,
     os::fd::{FromRawFd, IntoRawFd, OwnedFd},
