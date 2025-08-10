@@ -47,6 +47,7 @@ target = "/sbin"
 readonly = true
 
 [container.cgroup]
+enabled = true
 # Use cgroup v2 values. Set to numbers or special tokens (e.g., "max") as supported by kernel.
 pids_max = "128"
 memory_max = "256M"
