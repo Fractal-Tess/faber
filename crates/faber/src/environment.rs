@@ -7,6 +7,7 @@ use nix::{
 
 use crate::{prelude::*, types::Mount};
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -32,7 +33,56 @@ impl ContainerEnvironment {
         }
     }
 
-    pub(crate) fn unshare(&self) -> Result<()> {
+    pub(crate) fn initialize(&self) -> Result<()> {
+        self.unshare_internal()?;
+        self.bind_mounts_internal()?;
+        self.create_proc_sys_internal()?;
+        self.create_tmp_internal()?;
+        self.create_work_dir_internal()?;
+        self.create_devices_internal()?;
+        self.set_hostname_internal()?;
+        self.pivot_root_internal()?;
+        Ok(())
+    }
+
+    pub(crate) fn cleanup(&self) -> Result<()> {
+        // Parent-side cleanup of the container root
+        std::fs::remove_dir_all(&self.container_root)
+            .map_err(|e| Error::GenericError(format!("failed to remove container root: {e}")))?;
+        Ok(())
+    }
+
+    pub(crate) fn write_files_to_workdir(&self, files: &HashMap<String, String>) -> Result<()> {
+        let base = PathBuf::from(self.work_dir.trim_start_matches('/'));
+        std::fs::create_dir_all(&base).map_err(|e| {
+            Error::GenericError(format!(
+                "failed to create base workdir {}: {e}",
+                base.display()
+            ))
+        })?;
+        for (rel_path, contents) in files {
+            let target = base.join(rel_path);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    Error::GenericError(format!(
+                        "failed to create parent dir {} for {}: {e}",
+                        parent.display(),
+                        target.display()
+                    ))
+                })?;
+            }
+            std::fs::write(&target, contents).map_err(|e| {
+                Error::GenericError(format!(
+                    "failed to write file {} ({} bytes): {e}",
+                    target.display(),
+                    contents.len()
+                ))
+            })?;
+        }
+        Ok(())
+    }
+
+    fn unshare_internal(&self) -> Result<()> {
         let flags = CloneFlags::CLONE_NEWNS
             | CloneFlags::CLONE_NEWUTS
             | CloneFlags::CLONE_NEWIPC
@@ -42,23 +92,12 @@ impl ContainerEnvironment {
         Ok(())
     }
 
-    pub(crate) fn set_hostname(&self) -> Result<()> {
+    fn set_hostname_internal(&self) -> Result<()> {
         sethostname(self.hostname.as_str()).map_err(Error::NixError)?;
         Ok(())
     }
 
-    pub(crate) fn print_entries(&self, path: &Path) -> Result<()> {
-        let stat = std::fs::read_dir(path)?;
-        for entry in stat {
-            let entry = entry.unwrap();
-            let path = entry.path();
-            eprintln!("path: {path:?}");
-        }
-        Ok(())
-    }
-
-    pub(crate) fn bind_mounts(&self) -> Result<()> {
-        // Make mount propagation private so mounts don't propagate back to host
+    fn bind_mounts_internal(&self) -> Result<()> {
         mount(
             None::<&str>,
             "/",
@@ -68,9 +107,7 @@ impl ContainerEnvironment {
         )
         .map_err(Error::NixError)?;
 
-        // Bind mount to the container root
         for m in &self.mounts {
-            // Skip mounts whose source does not exist to avoid ENOENT
             if !Path::new(&m.source).exists() {
                 eprintln!("skipping mount {}: source does not exist", m.source);
                 continue;
@@ -78,7 +115,6 @@ impl ContainerEnvironment {
             let target = format!(
                 "{}/{}",
                 self.container_root.display(),
-                // Safe unwrap due to strip_prefix on a leading '/'
                 m.target.strip_prefix("/").unwrap().to_owned()
             );
             let flags = m
@@ -106,8 +142,7 @@ impl ContainerEnvironment {
         Ok(())
     }
 
-    pub(crate) fn create_proc_sys(&self) -> Result<()> {
-        // Mount procfs on /proc within the container root
+    fn create_proc_sys_internal(&self) -> Result<()> {
         let proc_source = Some("proc");
         let proc_path = format!("{}/proc", self.container_root.display());
         let proc_fstype = "proc";
@@ -125,7 +160,6 @@ impl ContainerEnvironment {
         )
         .map_err(Error::NixError)?;
 
-        // Mount sysfs on /sys within the container root
         let sys_source = Some("sysfs");
         let sys_target = format!("{}/sys", self.container_root.display());
         let sys_fstype = "sysfs";
@@ -146,7 +180,7 @@ impl ContainerEnvironment {
         Ok(())
     }
 
-    pub(crate) fn create_tmp(&self) -> Result<()> {
+    fn create_tmp_internal(&self) -> Result<()> {
         let tmp_path = format!("{}/tmp", self.container_root.display());
         std::fs::create_dir_all(&tmp_path)?;
         mount(
@@ -160,13 +194,13 @@ impl ContainerEnvironment {
         Ok(())
     }
 
-    pub(crate) fn create_work_dir(&self) -> Result<()> {
+    fn create_work_dir_internal(&self) -> Result<()> {
         let work_dir = format!("{}/{}", self.container_root.display(), self.work_dir);
         std::fs::create_dir_all(&work_dir)?;
         Ok(())
     }
 
-    pub(crate) fn create_devices(&self) -> Result<()> {
+    fn create_devices_internal(&self) -> Result<()> {
         let flags = SFlag::S_IFCHR;
         let mode = Mode::S_IRUSR
             | Mode::S_IWUSR
@@ -178,27 +212,22 @@ impl ContainerEnvironment {
         let dev_path = format!("{}/dev", self.container_root.display());
         std::fs::create_dir_all(&dev_path)?;
 
-        // /dev/null
         let device_path = format!("{dev_path}/null");
         let device_id = makedev(1, 3);
         let _ = mknod(device_path.as_str(), flags, mode, device_id);
 
-        // /dev/zero
         let device_path = format!("{dev_path}/zero");
         let device_id = makedev(1, 5);
         let _ = mknod(device_path.as_str(), flags, mode, device_id);
 
-        // /dev/full
         let device_path = format!("{dev_path}/full");
         let device_id = makedev(1, 7);
         let _ = mknod(device_path.as_str(), flags, mode, device_id);
 
-        // /dev/random
         let device_path = format!("{dev_path}/random");
         let device_id = makedev(1, 8);
         let _ = mknod(device_path.as_str(), flags, mode, device_id);
 
-        // /dev/urandom
         let device_path = format!("{dev_path}/urandom");
         let device_id = makedev(1, 9);
         let _ = mknod(device_path.as_str(), flags, mode, device_id);
@@ -206,7 +235,7 @@ impl ContainerEnvironment {
         Ok(())
     }
 
-    pub(crate) fn pivot_root(&self) -> Result<()> {
+    fn pivot_root_internal(&self) -> Result<()> {
         let new_root = self.container_root.clone();
         let old_root = format!("{}/oldroot", self.container_root.display());
 
