@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use nix::mount::MsFlags;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
 pub struct Task {
@@ -12,7 +13,7 @@ pub struct Task {
     pub files: Option<HashMap<String, String>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskResult {
     pub stdout: String,
     pub stderr: String,
