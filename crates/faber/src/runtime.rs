@@ -16,6 +16,7 @@ use crate::{
     types::{RuntimeLimits, Task},
 };
 
+use std::io::Write;
 use std::process::{Command, Stdio};
 use std::{
     collections::HashMap,
@@ -139,7 +140,6 @@ impl Runtime {
                 eprintln!("serialize error: {e:?}");
                 String::from("[]")
             });
-        use std::io::Write as _;
         let _ = writer.write_all(serialized.as_bytes());
         let _ = writer.flush();
     }
