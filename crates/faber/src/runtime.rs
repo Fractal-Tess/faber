@@ -204,6 +204,17 @@ impl Runtime {
             }
             if let Some(env) = &task.env {
                 cmd.envs(env.iter());
+                if !env.contains_key("PATH") {
+                    cmd.env(
+                        "PATH",
+                        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                    );
+                }
+            } else {
+                cmd.env(
+                    "PATH",
+                    "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                );
             }
 
             if let Some(cwd) = &task.cwd {
