@@ -1,9 +1,9 @@
 use nix::{
     sys::{
         signal::{Signal, kill},
-        wait::{WaitStatus, waitpid},
+        wait::waitpid,
     },
-    unistd::{ForkResult, Pid, close, dup2, execve, fork, pipe},
+    unistd::{ForkResult, Pid, close, fork, pipe},
 };
 use rand::{Rng, distr::Alphanumeric};
 
@@ -16,12 +16,14 @@ use crate::{
     types::{RuntimeLimits, Task},
 };
 
+use std::process::{Command, Stdio};
 use std::{
+    collections::HashMap,
     ffi::CString,
     fs::File,
     io::Read,
-    mem::ManuallyDrop,
     os::fd::{FromRawFd, IntoRawFd, OwnedFd},
+    os::unix::process::ExitStatusExt,
     path::PathBuf,
     sync::{
         Arc,
@@ -55,9 +57,9 @@ impl Runtime {
             Ok(ForkResult::Parent { child, .. }) => {
                 close(results_write_fd)?;
 
-                self.assign_child_cgroup(child);
+                let cg_handle = self.cgroups.assign_child(child, &self.env.container_root)?;
 
-                let timeout_secs = self.limits.kill_timeout_seconds.unwrap_or(300);
+                let timeout_secs = self.limits.kill_timeout_seconds.unwrap_or(10);
                 let (killer_handle, cancel_kill) = Self::spawn_killer(child, timeout_secs);
 
                 let results_json = self.read_all_from_fd(results_read_fd);
@@ -65,6 +67,10 @@ impl Runtime {
 
                 cancel_kill.store(true, Ordering::SeqCst);
                 let _ = killer_handle.join();
+
+                if let Some(handle) = &cg_handle {
+                    self.cgroups.cleanup_group(handle.path());
+                }
 
                 let results = Self::deserialize_results(&results_json)?;
                 let _ = self.env.cleanup();
@@ -86,13 +92,6 @@ impl Runtime {
                 "Fork failed in parent process: {e:?}"
             ))),
         }
-    }
-
-    fn assign_child_cgroup(&self, child: Pid) -> Option<CgroupHandle> {
-        self.cgroups
-            .assign_child(child, &self.env.container_root)
-            .ok()
-            .flatten()
     }
 
     fn spawn_killer(
@@ -147,129 +146,97 @@ impl Runtime {
     }
 
     fn run_tasks_in_child(&self, tasks: Vec<Task>) -> Result<Vec<TaskResult>> {
+        // Set up namespaces and root
         self.env.initialize()?;
-        let mut all_results: Vec<TaskResult> = Vec::with_capacity(tasks.len());
-        for task in tasks.into_iter() {
-            all_results.push(self.run_task(task)?);
-        }
-        Ok(all_results)
-    }
 
-    fn run_task(&self, task: Task) -> Result<TaskResult> {
-        eprintln!("[faber:task] cmd='{}'", task.cmd);
-        if let Some(files) = &task.files {
-            if let Some(cwd) = &task.cwd {
-                use std::collections::HashMap;
-                let mut remapped: HashMap<String, String> = HashMap::new();
-                for (k, v) in files.iter() {
-                    let path = if k.starts_with('/') {
-                        k.clone()
-                    } else {
-                        format!("{}/{}", cwd, k)
-                    };
-                    remapped.insert(path, v.clone());
-                }
-                self.env.write_files_to_workdir(&remapped)?;
-            } else {
-                self.env.write_files_to_workdir(files)?;
-            }
-        }
-
-        let (task_stdout_read_fd, task_stdout_write_fd) = pipe()?;
-        let (task_stderr_read_fd, task_stderr_write_fd) = pipe()?;
+        // Create an internal pipe to shuttle all results from PID 1 back to this parent
+        let (read_fd, write_fd) = pipe()?;
 
         match unsafe { fork() } {
             Ok(ForkResult::Parent { child, .. }) => {
-                close(task_stdout_write_fd)?;
-                close(task_stderr_write_fd)?;
-
-                let mut task_stdout_reader =
-                    unsafe { File::from_raw_fd(task_stdout_read_fd.into_raw_fd()) };
-                let mut stdout_buf = String::new();
-                let _ = task_stdout_reader.read_to_string(&mut stdout_buf);
-
-                let mut task_stderr_reader =
-                    unsafe { File::from_raw_fd(task_stderr_read_fd.into_raw_fd()) };
-                let mut stderr_buf = String::new();
-                let _ = task_stderr_reader.read_to_string(&mut stderr_buf);
-
-                let status = waitpid(child, None).map_err(Error::NixError)?;
-                let exit_code = match status {
-                    WaitStatus::Exited(_, code) => code,
-                    WaitStatus::Signaled(_, sig, _) => 128 + (sig as i32),
-                    _ => 1,
-                };
-
-                Ok(TaskResult {
-                    stdout: stdout_buf,
-                    stderr: stderr_buf,
-                    exit_code,
-                })
+                // Parent of PID 1: close write end and read Vec<TaskResult> JSON
+                close(write_fd)?;
+                let json =
+                    self.read_all_from_fd(unsafe { OwnedFd::from_raw_fd(read_fd.into_raw_fd()) });
+                let _ = waitpid(child, None).map_err(Error::NixError)?;
+                let results: Vec<TaskResult> = Self::deserialize_results(&json)?;
+                Ok(results)
             }
             Ok(ForkResult::Child) => {
-                close(task_stdout_read_fd)?;
-                close(task_stderr_read_fd)?;
-
-                let mut stdout_fd = unsafe { ManuallyDrop::new(OwnedFd::from_raw_fd(1)) };
-                let mut stderr_fd = unsafe { ManuallyDrop::new(OwnedFd::from_raw_fd(2)) };
-                dup2(&task_stdout_write_fd, &mut stdout_fd)?;
-                dup2(&task_stderr_write_fd, &mut stderr_fd)?;
-                close(task_stdout_write_fd)?;
-                close(task_stderr_write_fd)?;
-
-                let desired_cwd = task
-                    .cwd
-                    .clone()
-                    .unwrap_or_else(|| self.env.work_dir.clone());
-                if !desired_cwd.is_empty() {
-                    let _ = std::fs::create_dir_all(&desired_cwd);
-                    std::env::set_current_dir(&desired_cwd).map_err(|e| {
-                        Error::GenericError(format!("chdir to work_dir {desired_cwd} failed: {e}"))
-                    })?;
-                }
-
-                let args = self.build_args(&task)?;
-                let env = self.build_env(&task)?;
-
-                let prog = CString::new(task.cmd.as_str()).unwrap();
-                execve(&prog, &args, &env)
-                    .map_err(|e| Error::GenericError(format!("execve failed: {e:?}")))?;
-                unreachable!()
+                // This becomes PID 1 in the new PID namespace
+                close(read_fd)?;
+                let results = self.run_tasks(tasks)?;
+                self.write_child_results(
+                    unsafe { OwnedFd::from_raw_fd(write_fd.into_raw_fd()) },
+                    &results,
+                );
+                std::process::exit(0);
             }
-            Err(e) => Ok(TaskResult {
-                stdout: String::new(),
-                stderr: format!("fork failed for task '{}': {e:?}", task.cmd),
-                exit_code: 1,
-            }),
+            Err(e) => Err(Error::GenericError(format!(
+                "failed to fork PID1 for task runner: {e:?}"
+            ))),
         }
     }
 
-    // === Only for the child process ===
-    fn build_args(&self, task: &Task) -> Result<Vec<CString>> {
-        let Some(args) = &task.args else {
-            return Ok(vec![CString::new(task.cmd.as_str()).unwrap()]);
-        };
+    fn run_tasks(&self, tasks: Vec<Task>) -> Result<Vec<TaskResult>> {
+        let mut all_results: Vec<TaskResult> = Vec::with_capacity(tasks.len());
+        for task in tasks.into_iter() {
+            eprintln!("[faber:task] cmd='{}'", task.cmd);
+            if let Some(files) = &task.files {
+                if let Some(cwd) = &task.cwd {
+                    let mut remapped: HashMap<String, String> = HashMap::new();
+                    for (k, v) in files.iter() {
+                        let path = if k.starts_with('/') {
+                            k.clone()
+                        } else {
+                            format!("{cwd}/{k}")
+                        };
+                        remapped.insert(path, v.clone());
+                    }
+                    self.env.write_files_to_workdir(&remapped)?;
+                } else {
+                    self.env.write_files_to_workdir(files)?;
+                }
+            }
 
-        let mut result = vec![CString::new(task.cmd.as_str())?];
-        for arg in args {
-            result.push(CString::new(arg.to_owned())?);
+            let mut cmd = Command::new(&task.cmd);
+            if let Some(args) = &task.args {
+                cmd.args(args);
+            }
+            if let Some(env) = &task.env {
+                cmd.envs(env.iter());
+            }
+
+            if let Some(cwd) = &task.cwd {
+                if !cwd.is_empty() {
+                    cmd.current_dir(cwd);
+                }
+            } else if !self.env.work_dir.is_empty() {
+                cmd.current_dir(&self.env.work_dir);
+            }
+
+            cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+            match cmd.output() {
+                Ok(output) => all_results.push(TaskResult {
+                    stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                    stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+                    exit_code: output.status.code().unwrap_or_else(|| {
+                        if let Some(sig) = output.status.signal() {
+                            128 + sig
+                        } else {
+                            1
+                        }
+                    }),
+                }),
+                Err(e) => all_results.push(TaskResult {
+                    stdout: String::new(),
+                    stderr: format!("failed to execute '{}': {e}", task.cmd),
+                    exit_code: 1,
+                }),
+            }
         }
-
-        Ok(result)
-    }
-
-    // === Only for the child process ===
-    fn build_env(&self, task: &Task) -> Result<Vec<CString>> {
-        let Some(env) = &task.env else {
-            return Ok(vec![]);
-        };
-
-        let mut result = vec![];
-        for (key, value) in env {
-            result.push(CString::new(format!("{key}={value}"))?);
-        }
-
-        Ok(result)
+        Ok(all_results)
     }
 }
 
