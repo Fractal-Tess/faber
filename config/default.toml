@@ -32,13 +32,18 @@ target = "/lib"
 readonly = true
 
 [[container.filesystem.mounts]]
-source = "/usr/bin"
-target = "/usr/bin"
+source = "/usr"
+target = "/usr"
 readonly = true
 
 [[container.filesystem.mounts]]
 source = "/lib64"
 target = "/lib64"
+readonly = true
+
+[[container.filesystem.mounts]]
+source = "/sbin"
+target = "/sbin"
 readonly = true
 
 [container.cgroup]
