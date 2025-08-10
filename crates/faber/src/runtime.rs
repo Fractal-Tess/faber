@@ -289,33 +289,27 @@ impl Runtime {
     }
 
     fn initialize_container_root(&self) -> Result<()> {
-        self.unshare()?;
-        self.bind_mounts()?;
+        use crate::environment::ContainerEnvironment;
+        let env = ContainerEnvironment::new(
+            self.container_root.clone(),
+            self.hostname.clone(),
+            self.mounts.clone(),
+            self.work_dir.clone(),
+        );
 
-        self.print_entries(&self.container_root)?;
-        println!("After bind_mounts");
-
-        self.create_proc_sys()?;
-
-        self.print_entries(&self.container_root)?;
-        println!("After after proc_sys");
-        self.create_tmp()?;
-
-        self.print_entries(&self.container_root)?;
-        println!("After create_tmp");
-
-        self.create_work_dir()?;
-
-        self.print_entries(&self.container_root)?;
-        println!("After create_work_dir");
-
-        self.create_devices()?;
-
-        self.print_entries(&self.container_root)?;
-        println!("After create_devices");
-        self.set_hostname()?;
-
-        self.pivot_root()?;
+        env.unshare()?;
+        env.bind_mounts()?;
+        env.print_entries(&self.container_root)?;
+        env.create_proc_sys()?;
+        env.print_entries(&self.container_root)?;
+        env.create_tmp()?;
+        env.print_entries(&self.container_root)?;
+        env.create_work_dir()?;
+        env.print_entries(&self.container_root)?;
+        env.create_devices()?;
+        env.print_entries(&self.container_root)?;
+        env.set_hostname()?;
+        env.pivot_root()?;
 
         eprintln!("[faber:child] pivot_root complete; cwd=/");
         Ok(())
