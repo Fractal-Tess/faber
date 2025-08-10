@@ -52,41 +52,43 @@ impl Cgroups {
             return Ok(None);
         }
 
-        let faber_base = cgroup_root.join("faber");
-        let _ = create_dir_all(&faber_base);
-
-        let subtree_control = faber_base.join("cgroup.subtree_control");
-        let _ = write(&subtree_control, b"+pids +cpu +memory");
-
+        // Create unique cgroup path for this request using the container_root name
         let group_name = container_root
             .file_name()
             .map(|os| os.to_string_lossy().to_string())
             .unwrap_or_else(|| format!("pid-{child}"));
-        let group_path = faber_base.join(group_name);
-        create_dir_all(&group_path)?;
+
+        // Use a unique path that includes the request ID to avoid conflicts
+        let unique_cgroup_path = cgroup_root.join("faber").join(&group_name);
+        create_dir_all(&unique_cgroup_path)?;
+
+        // Enable controllers for this specific cgroup
+        let subtree_control = unique_cgroup_path.join("cgroup.subtree_control");
+        let _ = write(&subtree_control, b"+pids +cpu +memory");
 
         if let Some(cfg) = &self.config {
             if let Some(v) = &cfg.pids_max {
-                let _ = write(group_path.join("pids.max"), v);
+                let _ = write(unique_cgroup_path.join("pids.max"), v);
             }
             if let Some(v) = &cfg.memory_max {
-                let _ = write(group_path.join("memory.max"), v);
+                let _ = write(unique_cgroup_path.join("memory.max"), v);
             }
             if let Some(v) = &cfg.cpu_max {
-                let _ = write(group_path.join("cpu.max"), v);
+                let _ = write(unique_cgroup_path.join("cpu.max"), v);
             }
         }
 
-        let procs_file = group_path.join("cgroup.procs");
+        let procs_file = unique_cgroup_path.join("cgroup.procs");
         write(&procs_file, child.as_raw().to_string())?;
 
         Ok(Some(CgroupHandle {
-            path: group_path,
+            path: unique_cgroup_path,
             manager: self.clone(),
         }))
     }
 
-    pub(crate) fn cleanup_group(&self, group_path: &Path) {
-        let _ = remove_dir(group_path);
+    pub(crate) fn cleanup_group(&self, group_path: &Path) -> Result<()> {
+        remove_dir(group_path)?;
+        Ok(())
     }
 }
