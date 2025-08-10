@@ -52,6 +52,23 @@ impl Cgroups {
             return Ok(None);
         }
 
+        // Ensure parent namespace for faber exists and enable controllers up the tree
+        let faber_root = cgroup_root.join("faber");
+        create_dir_all(&faber_root).map_err(|source| Error::CgroupCreate {
+            path: faber_root.clone(),
+            source,
+        })?;
+
+        // Best-effort: enable controllers at the root and parent to allow limits on children
+        let _ = write(
+            cgroup_root.join("cgroup.subtree_control"),
+            b"+pids +cpu +memory",
+        );
+        let _ = write(
+            faber_root.join("cgroup.subtree_control"),
+            b"+pids +cpu +memory",
+        );
+
         // Create unique cgroup path for this request using the container_root name
         let group_name = container_root
             .file_name()
@@ -59,16 +76,13 @@ impl Cgroups {
             .unwrap_or_else(|| format!("pid-{child}"));
 
         // Use a unique path that includes the request ID to avoid conflicts
-        let unique_cgroup_path = cgroup_root.join("faber").join(&group_name);
+        let unique_cgroup_path = faber_root.join(&group_name);
         create_dir_all(&unique_cgroup_path).map_err(|source| Error::CgroupCreate {
             path: unique_cgroup_path.clone(),
             source,
         })?;
 
-        // Enable controllers for this specific cgroup (best-effort)
-        let subtree_control = unique_cgroup_path.join("cgroup.subtree_control");
-        let _ = write(&subtree_control, b"+pids +cpu +memory");
-
+        // Apply configured limits where provided (best-effort)
         if let Some(cfg) = &self.config {
             if let Some(v) = &cfg.pids_max {
                 let _ = write(unique_cgroup_path.join("pids.max"), v);
