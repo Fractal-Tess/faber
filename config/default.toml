@@ -47,7 +47,7 @@ target = "/sbin"
 readonly = true
 
 [container.cgroup]
-enabled = true
+enabled = false
 # Use cgroup v2 values. Set to numbers or special tokens (e.g., "max") as supported by kernel.
 pids_max = "128"
 memory_max = "256M"
@@ -55,4 +55,4 @@ cpu_max = "100000 50000" # period quota
 
 [container.runtime]
 # Max lifetime for a child container process, after which it will be SIGKILLed.
-kill_timeout_seconds = 15
+kill_timeout_seconds = 60
