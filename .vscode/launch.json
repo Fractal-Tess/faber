@@ -12,6 +12,10 @@
         "platform connect connect://0.0.0.0:12345",
         "settings set target.inherit-env false"
       ],
+      "env": {
+        "RUST_LOG": "debug",
+        "RUST_BACKTRACE": "1"
+      },
       "cargo": {
         "args": ["build"]
       }

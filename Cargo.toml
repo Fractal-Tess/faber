@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = [ "crates/faber" ]
+members = ["crates/faber"]
 
 [package]
 name = "faber-server"
@@ -21,6 +21,7 @@ tracing = "^0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-appender = "^0.2"
 serde = { version = "^1.0", features = ["derive"] }
+serde_json = "^1.0"
 uuid = { version = "^1.17", features = ["v4", "serde"] }
 thiserror = "^2.0"
 clap = { version = "^4.5", features = ["derive"] }
@@ -34,6 +35,8 @@ nix = { version = "^0.30", features = [
 ] }
 toml = "^0.9"
 tower = { version = "^0.5", features = ["limit"] }
+signal-hook = "^0.3"
+libc = "^0.2"
 
 # local crates
 faber = { path = "crates/faber" }
