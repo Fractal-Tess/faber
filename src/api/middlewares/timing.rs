@@ -7,17 +7,21 @@ use axum::{
 use std::time::Instant;
 use tracing::{debug, warn};
 
-use crate::api::middlewares::request_id::RequestId;
+use crate::api::middlewares::RequestId;
 
-pub async fn timing_middleware(request: Request, next: Next) -> Result<Response, Response> {
+pub async fn timing_middleware(mut request: Request, next: Next) -> Result<Response, Response> {
+    // Ensure a RequestId exists; generate one if missing
     let request_id = request
         .extensions()
         .get::<RequestId>()
         .cloned()
-        .ok_or_else(|| {
-            warn!("===Request ID not found - this should not happen===");
-            (StatusCode::INTERNAL_SERVER_ERROR, "Request ID not found").into_response()
-        })?;
+        .unwrap_or_else(|| {
+            let id: RequestId = uuid::Uuid::new_v4().to_string();
+            id
+        });
+
+    // Insert the request_id for downstream handlers
+    request.extensions_mut().insert(request_id.clone());
 
     debug!("=== Request {request_id:?} started ===");
 

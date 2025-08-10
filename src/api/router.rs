@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use super::middlewares::{auth_middleware, request_id_middleware, timing_middleware};
+use super::middlewares::{auth_middleware, timing_middleware};
 use super::routes::{execution, health};
 use crate::config::FaberConfig;
 
@@ -43,10 +43,9 @@ impl RouterBuilder {
         let config_extension = Extension(Arc::clone(&self.config));
         self.router = self
             .router
+            .layer(config_extension)
             .layer(middleware::from_fn(auth_middleware))
-            .layer(middleware::from_fn(timing_middleware))
-            .layer(middleware::from_fn(request_id_middleware))
-            .layer(config_extension);
+            .layer(middleware::from_fn(timing_middleware));
         self
     }
 
