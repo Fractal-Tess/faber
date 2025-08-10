@@ -16,8 +16,7 @@ use crate::{
     types::{RuntimeLimits, Task},
 };
 
-use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::{
     collections::HashMap,
     fs::File,
@@ -32,6 +31,7 @@ use std::{
     thread,
     time::Duration,
 };
+use std::{io::Write, process::Command};
 
 #[derive(Debug)]
 pub struct Runtime {
@@ -46,23 +46,28 @@ impl Runtime {
     }
 
     pub fn run(&self, tasks: Vec<Task>) -> Result<Vec<TaskResult>> {
-        let (results_read_fd, results_write_fd) = pipe()?;
-        eprintln!(
-            "[faber:run] container_root={}, tasks={}",
-            self.env.container_root.display(),
-            tasks.len(),
-        );
+        let (results_read_fd, results_write_fd) = match pipe() {
+            Ok(pipe) => pipe,
+            Err(e) => {
+                return Err(Error::NixError(e));
+            }
+        };
 
         match unsafe { fork() } {
             Ok(ForkResult::Parent { child, .. }) => {
                 close(results_write_fd)?;
 
-                let cg_handle = self.cgroups.assign_child(child, &self.env.container_root)?;
+                let cg_handle = self
+                    .cgroups
+                    .assign_child(child, &self.env.container_root)
+                    .unwrap_or_default();
 
                 let timeout_secs = self.limits.kill_timeout_seconds.unwrap_or(10);
+
                 let (killer_handle, cancel_kill) = Self::spawn_killer(child, timeout_secs);
 
                 let results_json = self.read_all_from_fd(results_read_fd);
+
                 let _ = waitpid(child, None).map_err(Error::NixError)?;
 
                 cancel_kill.store(true, Ordering::SeqCst);
@@ -73,19 +78,25 @@ impl Runtime {
                 }
 
                 let results = Self::deserialize_results(&results_json)?;
+
                 let _ = self.env.cleanup();
+
                 Ok(results)
             }
             Ok(ForkResult::Child) => {
                 let results_vec = match self.run_tasks_in_child(tasks) {
                     Ok(v) => v,
-                    Err(e) => vec![TaskResult {
-                        stdout: String::new(),
-                        stderr: format!("setup failed: {e:?}"),
-                        exit_code: 1,
-                    }],
+                    Err(e) => {
+                        vec![TaskResult {
+                            stdout: String::new(),
+                            stderr: format!("setup failed: {e:?}"),
+                            exit_code: 1,
+                        }]
+                    }
                 };
+
                 self.write_child_results(results_write_fd, &results_vec);
+
                 std::process::exit(0);
             }
             Err(e) => Err(Error::GenericError(format!(
@@ -136,10 +147,7 @@ impl Runtime {
         let mut writer = unsafe { File::from_raw_fd(write_fd.into_raw_fd()) };
         let serialized = serde_json::to_string(results)
             .map_err(|e| Error::GenericError(format!("Failed to serialize results: {e}")))
-            .unwrap_or_else(|e| {
-                eprintln!("serialize error: {e:?}");
-                String::from("[]")
-            });
+            .unwrap_or_else(|_| String::from("[]"));
         let _ = writer.write_all(serialized.as_bytes());
         let _ = writer.flush();
     }
@@ -180,7 +188,6 @@ impl Runtime {
     fn run_tasks(&self, tasks: Vec<Task>) -> Result<Vec<TaskResult>> {
         let mut all_results: Vec<TaskResult> = Vec::with_capacity(tasks.len());
         for task in tasks.into_iter() {
-            eprintln!("[faber:task] cmd='{}'", task.cmd);
             if let Some(files) = &task.files {
                 if let Some(cwd) = &task.cwd {
                     let mut remapped: HashMap<String, String> = HashMap::new();
