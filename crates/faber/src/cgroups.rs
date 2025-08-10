@@ -17,6 +17,12 @@ pub(crate) struct CgroupHandle {
     manager: Cgroups,
 }
 
+impl CgroupHandle {
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
 impl Drop for CgroupHandle {
     fn drop(&mut self) {
         let _ = remove_dir(&self.path);
@@ -33,13 +39,11 @@ impl Cgroups {
         child: Pid,
         container_root: &Path,
     ) -> Result<Option<CgroupHandle>> {
-        // Respect config enabled flag; default to enabled when Some but missing field
         if let Some(cfg) = &self.config {
             if !cfg.enabled {
                 return Ok(None);
             }
         } else {
-            // No config present: treat as disabled for explicitness per requirement
             return Ok(None);
         }
 

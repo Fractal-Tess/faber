@@ -87,7 +87,8 @@ impl ContainerEnvironment {
             | CloneFlags::CLONE_NEWUTS
             | CloneFlags::CLONE_NEWIPC
             | CloneFlags::CLONE_NEWPID
-            | CloneFlags::CLONE_NEWNET;
+            | CloneFlags::CLONE_NEWNET
+            | CloneFlags::CLONE_NEWCGROUP;
         unshare(flags).map_err(|_| Error::UnshareFailed)?;
         Ok(())
     }
