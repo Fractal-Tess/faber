@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use nix::mount::MsFlags;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
     pub cmd: String,
     pub args: Option<Vec<String>>,
