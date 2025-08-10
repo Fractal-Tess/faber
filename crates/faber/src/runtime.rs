@@ -1,35 +1,42 @@
 use nix::{
+    errno::Errno,
     mount::{MntFlags, MsFlags, mount, umount2},
     sched::{CloneFlags, unshare},
     sys::{
+        signal::{Signal, kill},
         stat::{Mode, SFlag, makedev, mknod},
         wait::{WaitStatus, waitpid},
     },
-    unistd::{ForkResult, close, dup2, execve, fork, pipe, pivot_root},
+    unistd::{ForkResult, close, dup2, execve, fork, pipe, pivot_root, sethostname},
 };
+use rand::{Rng, distr::Alphanumeric};
 
-use crate::builder::RuntimeBuilder;
 use crate::{
     TaskResult,
+    builder::RuntimeBuilder,
     prelude::*,
     types::{CgroupConfig, Mount, Task},
 };
-use nix::sys::signal::{Signal, kill};
-use std::os::unix::io::{FromRawFd, IntoRawFd, OwnedFd};
-use std::path::Path;
-use std::path::PathBuf;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+
+use std::{
+    ffi::CString,
+    fs::File,
+    io::Read,
+    mem::ManuallyDrop,
+    os::fd::{FromRawFd, IntoRawFd, OwnedFd},
+    path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::Duration,
 };
-use std::thread;
-use std::time::Duration;
-use std::{ffi::CString, fs::File};
-use std::{io::Read, mem::ManuallyDrop};
 
 #[derive(Debug)]
 pub struct Runtime {
     pub(crate) container_root: PathBuf,
+    pub(crate) hostname: String,
     pub(crate) mounts: Vec<Mount>,
     pub(crate) cgroup: Option<CgroupConfig>,
     pub(crate) work_dir: String,
@@ -40,57 +47,30 @@ impl Runtime {
         RuntimeBuilder::new()
     }
 
-    pub(crate) fn from_builder_parts(
-        container_root: PathBuf,
-        mounts: Vec<Mount>,
-        cgroup: Option<CgroupConfig>,
-        work_dir: String,
-    ) -> Self {
-        Self {
-            container_root,
-            mounts,
-            cgroup,
-            work_dir,
-        }
-    }
-
-    pub fn run(&self, tasks: Vec<Task>) -> Result<TaskResult> {
-        // Create pipes for capturing child's stdout and stderr
-        // Since this is not in the match block, it is created for both parent and child
-        let (stdout_read_fd, stdout_write_fd) = pipe()?;
-        let (stderr_read_fd, stderr_write_fd) = pipe()?;
+    pub fn run(&self, tasks: Vec<Task>) -> Result<Vec<TaskResult>> {
+        // Create a dedicated pipe for structured results from the child
+        let (results_read_fd, results_write_fd) = pipe()?;
+        eprintln!(
+            "[faber:run] container_root={}, mounts={}, work_dir='{}', tasks={}",
+            self.container_root.display(),
+            self.mounts.len(),
+            self.work_dir,
+            tasks.len()
+        );
 
         match unsafe { fork() } {
             Ok(ForkResult::Parent { child, .. }) => {
-                // Parent: close the write ends so reads can see EOF
-                close(stdout_write_fd)?;
-                close(stderr_write_fd)?;
+                // Parent: close the write end so reads can see EOF
+                close(results_write_fd)?;
 
                 // Create and assign cgroup for child (best-effort)
                 let cgroup_path = self.setup_cgroup_for_child(child).ok().flatten();
-
-                // Spawn readers for stdout and stderr that return full strings
-                let stdout_handle = thread::spawn(move || {
-                    // Safety: we own this fd in the parent
-                    let mut file = unsafe { File::from_raw_fd(stdout_read_fd.into_raw_fd()) };
-                    let mut buf = String::new();
-                    let _ = file.read_to_string(&mut buf);
-                    buf
-                });
-
-                let stderr_handle = thread::spawn(move || {
-                    // Safety: we own this fd in the parent
-                    let mut file = unsafe { File::from_raw_fd(stderr_read_fd.into_raw_fd()) };
-                    let mut buf = String::new();
-                    let _ = file.read_to_string(&mut buf);
-                    buf
-                });
 
                 // Killer thread: if child doesn't exit in 10s, send SIGKILL
                 let cancel_kill = Arc::new(AtomicBool::new(false));
                 let cancel_kill_for_thread = cancel_kill.clone();
                 let killer_handle = thread::spawn(move || {
-                    let timeout = Duration::from_secs(10);
+                    let timeout = Duration::from_secs(300);
                     let start = std::time::Instant::now();
                     while start.elapsed() < timeout {
                         if cancel_kill_for_thread.load(Ordering::SeqCst) {
@@ -103,8 +83,14 @@ impl Runtime {
                     }
                 });
 
+                // Read all structured results from the child
+                let mut results_reader =
+                    unsafe { File::from_raw_fd(results_read_fd.into_raw_fd()) };
+                let mut results_json = String::new();
+                let _ = results_reader.read_to_string(&mut results_json);
+
                 let status = waitpid(child, None).map_err(Error::NixError)?;
-                let exit_code = match status {
+                let _exit_code = match status {
                     WaitStatus::Exited(_, code) => code,
                     WaitStatus::Signaled(_, sig, _) => 128 + (sig as i32),
                     _ => 1,
@@ -114,42 +100,279 @@ impl Runtime {
                 cancel_kill.store(true, Ordering::SeqCst);
                 let _ = killer_handle.join();
 
-                let stdout = stdout_handle.join().unwrap_or_default();
-                let stderr = stderr_handle.join().unwrap_or_default();
-
                 // Cleanup the cgroup if we created one
                 if let Some(cg) = cgroup_path {
                     let _ = std::fs::remove_dir(cg);
                 }
 
+                // Deserialize results vector; include context on error
+                let results: Vec<TaskResult> =
+                    serde_json::from_str(&results_json).map_err(|e| {
+                        Error::GenericError(format!(
+                            "Failed to parse child results JSON: {e}. Raw: {}",
+                            results_json.chars().take(256).collect::<String>()
+                        ))
+                    })?;
+
+                // Clean up the container root folder
                 self.clean_root()?;
 
-                Ok(TaskResult {
-                    stdout,
-                    stderr,
-                    exit_code,
-                })
+                Ok(results)
             }
             Ok(ForkResult::Child) => {
-                match self.child_process(
-                    tasks.first().unwrap().clone(),
-                    (stdout_read_fd, stdout_write_fd),
-                    (stderr_read_fd, stderr_write_fd),
-                ) {
-                    Ok(()) => {
-                        std::process::exit(0);
-                    }
+                // Run setup and tasks; always write a JSON results payload back
+                let results_vec = match self.child_manager(tasks) {
+                    Ok(v) => v,
                     Err(e) => {
-                        eprintln!("child_process failed before execve: {e:?}");
-                        std::process::exit(1);
+                        // Represent setup failure as a single TaskResult for API stability
+                        vec![TaskResult {
+                            stdout: String::new(),
+                            stderr: format!("setup failed: {e:?}"),
+                            exit_code: 1,
+                        }]
                     }
-                }
+                };
+                // Safety: we own this fd in the child
+                let mut results_writer =
+                    unsafe { File::from_raw_fd(results_write_fd.into_raw_fd()) };
+                let serialized = serde_json::to_string(&results_vec)
+                    .map_err(|e| Error::GenericError(format!("Failed to serialize results: {e}")))
+                    .unwrap_or_else(|e| {
+                        // Fallback minimal JSON on unexpected serialization failure
+                        eprintln!("serialize error: {e:?}");
+                        String::from("[]")
+                    });
+                use std::io::Write as _;
+                let _ = results_writer.write_all(serialized.as_bytes());
+                let _ = results_writer.flush();
+                std::process::exit(0);
             }
 
             Err(e) => Err(Error::GenericError(format!(
                 "Fork failed in parent process: {e:?}"
             ))),
         }
+    }
+
+    fn child_manager(&self, tasks: Vec<Task>) -> Result<Vec<TaskResult>> {
+        // Proceed with isolation and setup in the top-level child
+        self.initialize_container_root()?;
+
+        // Sequentially execute tasks inside the namespace, capturing outputs per task
+        let mut all_results: Vec<TaskResult> = Vec::with_capacity(tasks.len());
+
+        for task in tasks.into_iter() {
+            eprintln!("[faber:task] cmd='{}'", task.cmd);
+            // Materialize any provided files for this task relative to its cwd or default work_dir
+            if let Some(files) = &task.files {
+                let base_dir = task.cwd.clone().unwrap_or_else(|| self.work_dir.clone());
+                if !base_dir.is_empty() {
+                    std::fs::create_dir_all(&base_dir)?;
+                }
+                for (rel_path, contents) in files {
+                    let target_path = if rel_path.starts_with('/') {
+                        // Absolute within container
+                        rel_path.clone()
+                    } else if base_dir.is_empty() {
+                        rel_path.clone()
+                    } else {
+                        format!("{base_dir}/{rel_path}")
+                    };
+                    if let Some(parent) = Path::new(&target_path).parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    std::fs::write(&target_path, contents).map_err(|e| {
+                        Error::GenericError(format!("failed to write task file {target_path}: {e}"))
+                    })?;
+                    eprintln!(
+                        "[faber:task] wrote file {} ({} bytes)",
+                        target_path,
+                        contents.len()
+                    );
+                }
+            }
+            // Create pipes to capture this task's stdout/stderr
+            let (task_stdout_read_fd, task_stdout_write_fd) = pipe()?;
+            let (task_stderr_read_fd, task_stderr_write_fd) = pipe()?;
+
+            match unsafe { fork() } {
+                Ok(ForkResult::Parent { child, .. }) => {
+                    // Parent (top-level child): close write ends and read outputs
+                    close(task_stdout_write_fd)?;
+                    close(task_stderr_write_fd)?;
+
+                    // Read stdout
+                    let mut task_stdout_reader =
+                        unsafe { File::from_raw_fd(task_stdout_read_fd.into_raw_fd()) };
+                    let mut stdout_buf = String::new();
+                    let _ = task_stdout_reader.read_to_string(&mut stdout_buf);
+
+                    // Read stderr
+                    let mut task_stderr_reader =
+                        unsafe { File::from_raw_fd(task_stderr_read_fd.into_raw_fd()) };
+                    let mut stderr_buf = String::new();
+                    let _ = task_stderr_reader.read_to_string(&mut stderr_buf);
+
+                    // Wait for the grandchild to finish
+                    let status = waitpid(child, None).map_err(Error::NixError)?;
+                    let exit_code = match status {
+                        WaitStatus::Exited(_, code) => code,
+                        WaitStatus::Signaled(_, sig, _) => 128 + (sig as i32),
+                        _ => 1,
+                    };
+
+                    all_results.push(TaskResult {
+                        stdout: stdout_buf,
+                        stderr: stderr_buf,
+                        exit_code,
+                    });
+                }
+                Ok(ForkResult::Child) => {
+                    // Grandchild: set up stdout/stderr redirection to per-task pipes
+                    // Close read ends
+                    close(task_stdout_read_fd)?;
+                    close(task_stderr_read_fd)?;
+
+                    // Duplicate write ends onto STDOUT/STDERR without libc
+                    let mut stdout_fd = unsafe { ManuallyDrop::new(OwnedFd::from_raw_fd(1)) };
+                    let mut stderr_fd = unsafe { ManuallyDrop::new(OwnedFd::from_raw_fd(2)) };
+                    dup2(&task_stdout_write_fd, &mut stdout_fd)?;
+                    dup2(&task_stderr_write_fd, &mut stderr_fd)?;
+                    // Close the original write fds; stdout/stderr now refer to the pipes
+                    close(task_stdout_write_fd)?;
+                    close(task_stderr_write_fd)?;
+
+                    // Change to task-specific cwd or configured work_dir
+                    let desired_cwd = task.cwd.clone().unwrap_or_else(|| self.work_dir.clone());
+                    if !desired_cwd.is_empty() {
+                        let _ = std::fs::create_dir_all(&desired_cwd);
+                        std::env::set_current_dir(&desired_cwd).map_err(|e| {
+                            Error::GenericError(format!(
+                                "chdir to work_dir {desired_cwd} failed: {e}"
+                            ))
+                        })?;
+                    }
+
+                    // Prepare the arguments and env for execve
+                    let args = self.build_args(&task)?;
+                    let env = self.build_env(&task)?;
+
+                    // Resolve candidate executable paths
+                    let prog = CString::new(task.cmd.as_str()).unwrap();
+                    execve(&prog, &args, &env)
+                        .map_err(|e| Error::GenericError(format!("execve failed: {e:?}")))?;
+                    unreachable!()
+                }
+                Err(e) => {
+                    all_results.push(TaskResult {
+                        stdout: String::new(),
+                        stderr: format!("fork failed for task '{}': {e:?}", task.cmd),
+                        exit_code: 1,
+                    });
+                    continue;
+                }
+            }
+        }
+
+        Ok(all_results)
+    }
+
+    fn print_entries(&self, path: &Path) -> Result<()> {
+        let stat = std::fs::read_dir(path)?;
+        for entry in stat {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            let metadata = entry.metadata().unwrap();
+            eprintln!("path: {path:?}");
+        }
+        Ok(())
+    }
+
+    fn initialize_container_root(&self) -> Result<()> {
+        self.unshare()?;
+        self.bind_mounts()?;
+
+        self.print_entries(&self.container_root)?;
+        println!("After bind_mounts");
+
+        self.create_proc_sys()?;
+
+        self.print_entries(&self.container_root)?;
+        println!("After after proc_sys");
+        self.create_tmp()?;
+
+        self.print_entries(&self.container_root)?;
+        println!("After create_tmp");
+
+        self.create_work_dir()?;
+
+        self.print_entries(&self.container_root)?;
+        println!("After create_work_dir");
+
+        self.create_devices()?;
+
+        self.print_entries(&self.container_root)?;
+        println!("After create_devices");
+        self.set_hostname()?;
+
+        self.pivot_root()?;
+
+        eprintln!("[faber:child] pivot_root complete; cwd=/");
+        Ok(())
+    }
+
+    /// === Only for the parent process ===
+    fn clean_root(&self) -> Result<()> {
+        std::fs::remove_dir_all(&self.container_root)
+            .map_err(|e| Error::GenericError(format!("failed to remove container root: {e}")))?;
+        Ok(())
+    }
+
+    // === Only for the child process ===
+    fn build_args(&self, task: &Task) -> Result<Vec<CString>> {
+        let Some(args) = &task.args else {
+            return Ok(vec![CString::new(task.cmd.as_str()).unwrap()]);
+        };
+
+        let mut result = vec![CString::new(task.cmd.as_str())?];
+        for arg in args {
+            result.push(CString::new(arg.to_owned())?);
+        }
+
+        Ok(result)
+    }
+
+    // === Only for the child process ===
+    fn build_env(&self, task: &Task) -> Result<Vec<CString>> {
+        let Some(env) = &task.env else {
+            return Ok(vec![]);
+        };
+
+        let mut result = vec![];
+        for (key, value) in env {
+            result.push(CString::new(format!("{key}={value}"))?);
+        }
+
+        Ok(result)
+    }
+
+    /// === Only for the child process ===
+    fn unshare(&self) -> Result<()> {
+        let flags = CloneFlags::CLONE_NEWNS
+            | CloneFlags::CLONE_NEWUTS
+            | CloneFlags::CLONE_NEWIPC
+            | CloneFlags::CLONE_NEWPID
+            | CloneFlags::CLONE_NEWNET;
+
+        unshare(flags).map_err(|_| Error::UnshareFailed)?;
+
+        Ok(())
+    }
+
+    // === Only for the child process ===
+    fn set_hostname(&self) -> Result<()> {
+        sethostname(self.hostname.as_str()).map_err(Error::NixError)?;
+        Ok(())
     }
 
     /// Create a cgroup v2 for the child process and move it there. Best-effort; returns the path created.
@@ -198,131 +421,26 @@ impl Runtime {
         Ok(Some(group_path))
     }
 
-    fn child_process(
-        &self,
-        task: Task,
-        stdout_pipe: (OwnedFd, OwnedFd),
-        stderr_pipe: (OwnedFd, OwnedFd),
-    ) -> Result<()> {
-        // Redirect child's stdout/stderr to pipe write ends as early as possible
-        let (stdout_read_fd, stdout_write_fd) = stdout_pipe;
-        let (stderr_read_fd, stderr_write_fd) = stderr_pipe;
-
-        // Close read ends in child; we don't need them in the child
-        close(stdout_read_fd)?;
-        close(stderr_read_fd)?;
-
-        // Duplicate write ends onto STDOUT/STDERR without libc
-        let mut stdout_fd = unsafe { ManuallyDrop::new(OwnedFd::from_raw_fd(1)) };
-        let mut stderr_fd = unsafe { ManuallyDrop::new(OwnedFd::from_raw_fd(2)) };
-        dup2(&stdout_write_fd, &mut stdout_fd)?;
-        dup2(&stderr_write_fd, &mut stderr_fd)?;
-        // Close the original write fds; stdout/stderr now refer to the pipes
-        close(stdout_write_fd)?;
-        close(stderr_write_fd)?;
-
-        // Proceed with isolation and setup
-        self.unshare()?;
-        self.bind_mounts()?;
-        self.create_proc_sys()?;
-        self.create_devices()?;
-        self.pivot_root()?;
-
-        // Change to task-specific cwd or configured work_dir
-        let desired_cwd = task.cwd.clone().unwrap_or_else(|| self.work_dir.clone());
-        if !desired_cwd.is_empty() {
-            let _ = std::fs::create_dir_all(&desired_cwd);
-            std::env::set_current_dir(&desired_cwd).map_err(|e| {
-                Error::GenericError(format!("chdir to work_dir {desired_cwd} failed: {e}"))
-            })?;
-        }
-
-        // Prepare the arguments for execve
-        let prog = CString::new(task.cmd.as_str()).unwrap();
-        let args = self.build_args(&task)?;
-        let env = self.build_env(&task)?;
-
-        match execve(&prog, &args, &env) {
-            Ok(_) => unreachable!(),
-            Err(e) => {
-                eprintln!("execve failed: {e:?}");
-                std::process::exit(1);
-            }
-        }
-    }
-
-    /// === Only for the parent process ===
-    fn clean_root(&self) -> Result<()> {
-        if self.container_root.exists() {
-            // Best-effort: unmount proc and sys (may have propagated if mounts weren't private)
-            let proc_path = format!("{}/proc", self.container_root.display());
-            let sys_path = format!("{}/sys", self.container_root.display());
-            let _ = umount2(proc_path.as_str(), MntFlags::MNT_DETACH);
-            let _ = umount2(sys_path.as_str(), MntFlags::MNT_DETACH);
-
-            // Best-effort: unmount any bind mounts we created under the container root
-            for m in &self.mounts {
-                let target = format!(
-                    "{}/{}",
-                    self.container_root.display(),
-                    m.target.strip_prefix("/").unwrap().to_owned()
-                );
-                let _ = umount2(target.as_str(), MntFlags::MNT_DETACH);
-            }
-
-            std::fs::remove_dir_all(&self.container_root)?
-        }
-
+    /// === Only for the child process ===
+    fn create_tmp(&self) -> Result<()> {
+        let tmp_path = format!("{}/tmp", self.container_root.display());
+        // Ensure {container_root}/tmp exists and is writable with the sticky bit
+        std::fs::create_dir_all(&tmp_path)?;
+        mount(
+            Some("tmpfs"),
+            tmp_path.as_str(),
+            Some("tmpfs"),
+            MsFlags::empty(),
+            Some("size=128M,mode=1777"),
+        )
+        .map_err(Error::NixError)?;
         Ok(())
     }
 
-    // === Only for the child process ===
-    fn build_args(&self, task: &Task) -> Result<Vec<CString>> {
-        let Some(args) = &task.args else {
-            return Ok(vec![CString::new(task.cmd.as_str()).unwrap()]);
-        };
-
-        let mut result = vec![CString::new(task.cmd.as_str())?];
-        for arg in args {
-            result.push(CString::new(arg.to_owned())?);
-        }
-
-        Ok(result)
-    }
-
-    // === Only for the child process ===
-    fn build_env(&self, task: &Task) -> Result<Vec<CString>> {
-        let Some(env) = &task.env else {
-            return Ok(vec![]);
-        };
-
-        let mut result = vec![];
-        for (key, value) in env {
-            result.push(CString::new(format!("{key}={value}"))?);
-        }
-
-        Ok(result)
-    }
-
     /// === Only for the child process ===
-    fn unshare(&self) -> Result<()> {
-        let flags = CloneFlags::CLONE_NEWNS
-            | CloneFlags::CLONE_NEWUTS
-            | CloneFlags::CLONE_NEWIPC
-            | CloneFlags::CLONE_NEWPID
-            | CloneFlags::CLONE_NEWNET;
-
-        unshare(flags).map_err(|_| Error::UnshareFailed)?;
-
-        // Make mount propagation private so mounts do not propagate back to the host namespace
-        mount(
-            None::<&str>,
-            "/",
-            None::<&str>,
-            MsFlags::MS_REC | MsFlags::MS_PRIVATE,
-            None::<&str>,
-        )
-        .map_err(Error::NixError)?;
+    fn create_work_dir(&self) -> Result<()> {
+        let work_dir = format!("{}/{}", self.container_root.display(), self.work_dir);
+        std::fs::create_dir_all(&work_dir)?;
         Ok(())
     }
 
@@ -336,6 +454,7 @@ impl Runtime {
 
         // Create /proc directory
         std::fs::create_dir_all(&proc_path)?;
+        eprintln!("[faber:mount] mounting proc -> {}", proc_path);
 
         // Mount procfs on /proc
         mount(
@@ -355,6 +474,7 @@ impl Runtime {
 
         // Create /sys directory
         std::fs::create_dir_all(&sys_target)?;
+        eprintln!("[faber:mount] mounting sysfs -> {}", sys_target);
 
         // Mount sysfs on /sys
         mount(
@@ -415,13 +535,21 @@ impl Runtime {
 
     /// === Only for the child process ===
     fn bind_mounts(&self) -> Result<()> {
+        // Make mount propagation private so mounts don't propagate back to host
+        mount(
+            None::<&str>,
+            "/",
+            None::<&str>,
+            MsFlags::MS_REC | MsFlags::MS_PRIVATE,
+            None::<&str>,
+        )
+        .map_err(Error::NixError)?;
+
+        // Bind mount to the container root
         for m in &self.mounts {
             // Skip mounts whose source does not exist to avoid ENOENT
             if !Path::new(&m.source).exists() {
-                eprintln!(
-                    "bind_mounts: source does not exist, skipping: {} -> {}",
-                    m.source, m.target
-                );
+                eprintln!("skipping mount {}: source does not exist", m.source);
                 continue;
             }
             let target = format!(
@@ -439,14 +567,20 @@ impl Runtime {
             std::fs::create_dir_all(&target)?;
 
             // Mount the source to the target
-            mount(
+            match mount(
                 Some(m.source.as_str()),
                 target.as_str(),
                 None::<&str>,
                 flags,
                 m.data.as_deref(),
-            )
-            .map_err(Error::NixError)?;
+            ) {
+                Ok(_) => {
+                    eprintln!("mounted {}: {}", m.source, target);
+                }
+                Err(e) => {
+                    eprintln!("failed to mount {}: {e:?}", m.source);
+                }
+            }
         }
         Ok(())
     }
@@ -463,6 +597,10 @@ impl Runtime {
             .map_err(|e| Error::GenericError(format!("failed to create old_root dir: {e}")))?;
 
         // Remount the new root as bind mount
+        eprintln!(
+            "[faber:root] remount new_root {} as MS_BIND|MS_REC",
+            new_root.display()
+        );
         mount(
             Some(new_root.to_str().unwrap()),
             new_root.to_str().unwrap(),
@@ -473,6 +611,11 @@ impl Runtime {
         .map_err(Error::NixError)?;
 
         // Switch root
+        eprintln!(
+            "[faber:root] pivot_root new_root={} old_root={}",
+            new_root.display(),
+            old_root
+        );
         pivot_root(new_root.to_str().unwrap(), old_root.as_str()).map_err(Error::NixError)?;
 
         // Change directory to the new root
@@ -480,6 +623,7 @@ impl Runtime {
             .map_err(|e| Error::GenericError(format!("chdir to new root failed: {e}")))?;
 
         // Unmount and remove the old root (now mounted at /oldroot)
+        eprintln!("[faber:root] umount oldroot");
         umount2("/oldroot", MntFlags::MNT_DETACH).map_err(Error::NixError)?;
         let _ = std::fs::remove_dir_all("/oldroot");
 
@@ -487,8 +631,35 @@ impl Runtime {
     }
 }
 
-impl Drop for Runtime {
-    fn drop(&mut self) {
-        let _ = self.clean_root();
+impl Default for Runtime {
+    fn default() -> Self {
+        // Default bind mounts for core system directories
+        let flags = vec![MsFlags::MS_BIND, MsFlags::MS_REC, MsFlags::MS_RDONLY];
+        let mounts: Vec<Mount> = ["/bin", "/lib", "/usr", "/lib64"]
+            .iter()
+            .map(|s| Mount {
+                source: s.to_string(),
+                target: s.to_string(),
+                flags: flags.clone(),
+                options: vec![],
+                data: None,
+            })
+            .collect();
+
+        // Random container root path
+        let id: String = rand::rng()
+            .sample_iter(&Alphanumeric)
+            .take(12)
+            .map(char::from)
+            .collect();
+        let container_root = PathBuf::from(format!("/tmp/faber/containers/{id}"));
+
+        Self {
+            container_root,
+            hostname: "faber".into(),
+            mounts,
+            cgroup: None,
+            work_dir: "/faber".into(),
+        }
     }
 }
