@@ -7,7 +7,7 @@ use crate::{
     logging::init_logging,
 };
 use clap::{Parser, Subcommand};
-use tracing::{info, instrument};
+use tracing::info;
 
 #[derive(Parser, Debug)]
 #[command(name = "faber-server", author, version, about, long_about = None)]
@@ -26,7 +26,6 @@ pub enum Commands {
     },
 }
 
-#[instrument(name = "run_cli", skip_all)]
 pub async fn run_cli() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 

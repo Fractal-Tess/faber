@@ -4,9 +4,8 @@ use crate::config::FaberConfig;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::signal::ctrl_c;
-use tracing::{error, info, instrument};
+use tracing::{error, info};
 
-#[instrument(name = "serve", skip_all)]
 pub async fn serve(
     config: Arc<FaberConfig>,
     router: axum::Router,

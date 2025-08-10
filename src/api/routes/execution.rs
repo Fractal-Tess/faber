@@ -4,7 +4,7 @@ use axum::{Extension, Json, http::StatusCode};
 use faber::{Task, TaskResult};
 use serde::Serialize;
 use std::sync::Arc;
-use tracing::{debug, instrument};
+use tracing::debug;
 
 use tokio::sync::{OnceCell, Semaphore};
 
@@ -19,7 +19,6 @@ pub struct ExecutionResponse(pub Vec<TaskResult>);
 
 static CONTAINER_SEM: OnceCell<Arc<Semaphore>> = OnceCell::const_new();
 
-#[instrument(name = "route_execution", skip_all, fields(req_id = %request_id))]
 #[axum::debug_handler]
 pub async fn execution(
     Extension(config): Extension<Arc<FaberConfig>>,
