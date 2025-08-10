@@ -108,9 +108,11 @@ pub async fn execution(
 
     debug!("Execution result: {res:?}");
 
-    // Return the result
+    // Return the results
     match res {
-        Ok(task_result) => Ok(Json(ExecutionResponse(vec![W(task_result)]))),
+        Ok(task_results) => Ok(Json(ExecutionResponse(
+            task_results.into_iter().map(W).collect(),
+        ))),
         Err(e) => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorPayload {
