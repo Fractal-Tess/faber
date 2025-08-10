@@ -47,27 +47,25 @@ impl Cgroups {
             return Ok(None);
         }
 
-        let cgroup_root = Path::new("/sys/fs/cgroup");
-        if !cgroup_root.exists() {
+        let cgroup_mount = Path::new("/sys/fs/cgroup");
+        if !cgroup_mount.exists() {
             return Ok(None);
         }
 
-        // Ensure parent namespace for faber exists and enable controllers up the tree
-        let faber_root = cgroup_root.join("faber");
-        create_dir_all(&faber_root).map_err(|source| Error::CgroupCreate {
-            path: faber_root.clone(),
+        // Work within the current process's cgroup base to avoid requiring root-level changes
+        let self_rel_path = Self::read_self_cgroup_path().unwrap_or_else(|| PathBuf::from("/"));
+        let base = cgroup_mount.join(self_rel_path);
+
+        // Ensure base has controllers enabled by moving self into a leaf and enabling subtree_control
+        let _ = Self::enable_controllers_on_parent(&base);
+
+        // Ensure a dedicated parent for faber exists under base and has controllers enabled
+        let faber_parent = base.join("faber");
+        create_dir_all(&faber_parent).map_err(|source| Error::CgroupCreate {
+            path: faber_parent.clone(),
             source,
         })?;
-
-        // Best-effort: enable controllers at the root and parent to allow limits on children
-        let _ = write(
-            cgroup_root.join("cgroup.subtree_control"),
-            b"+pids +cpu +memory",
-        );
-        let _ = write(
-            faber_root.join("cgroup.subtree_control"),
-            b"+pids +cpu +memory",
-        );
+        let _ = Self::enable_controllers_on_parent(&faber_parent);
 
         // Create unique cgroup path for this request using the container_root name
         let group_name = container_root
@@ -76,7 +74,7 @@ impl Cgroups {
             .unwrap_or_else(|| format!("pid-{child}"));
 
         // Use a unique path that includes the request ID to avoid conflicts
-        let unique_cgroup_path = faber_root.join(&group_name);
+        let unique_cgroup_path = faber_parent.join(&group_name);
         create_dir_all(&unique_cgroup_path).map_err(|source| Error::CgroupCreate {
             path: unique_cgroup_path.clone(),
             source,
@@ -111,6 +109,34 @@ impl Cgroups {
         }))
     }
 
+    /// Enable controllers on a parent cgroup directory by first moving the current
+    /// process into a dedicated leaf (so the parent has no tasks) and then writing
+    /// "+pids +cpu +memory" to its cgroup.subtree_control. Best-effort.
+    fn enable_controllers_on_parent(parent: &Path) -> Result<()> {
+        // Create manager leaf
+        let mgr = parent.join(".mgr");
+        let _ = create_dir_all(&mgr);
+        // Move current thread group into leaf
+        let pid = std::process::id();
+        let _ = write(mgr.join("cgroup.procs"), pid.to_string());
+        // Enable controllers on parent
+        let _ = write(parent.join("cgroup.subtree_control"), b"+pids +cpu +memory");
+        Ok(())
+    }
+
+    /// Read this process's cgroup v2 relative path from /proc/self/cgroup (0::/path)
+    fn read_self_cgroup_path() -> Option<PathBuf> {
+        if let Ok(s) = std::fs::read_to_string("/proc/self/cgroup") {
+            for line in s.lines() {
+                if let Some(rest) = line.strip_prefix("0::") {
+                    let p = rest.trim();
+                    return Some(PathBuf::from(if p.is_empty() { "/" } else { p }));
+                }
+            }
+        }
+        None
+    }
+
     /// Best-effort debugging output about cgroup configuration and the created group.
     /// This prints to stderr so callers in applications can capture it in logs if desired.
     pub(crate) fn debug_group_state(&self, group_path: &Path) {
@@ -124,19 +150,22 @@ impl Cgroups {
         }
 
         let root = Path::new("/sys/fs/cgroup");
-        let faber_root = root.join("faber");
+        let self_rel = Self::read_self_cgroup_path().unwrap_or_else(|| PathBuf::from("/"));
+        let base = root.join(&self_rel);
+        let faber_parent = base.join("faber");
 
+        eprintln!("[cgroups-debug] base: {}", base.display());
         eprintln!(
-            "[cgroups-debug] root.controllers: {:?}",
-            read(&root.join("cgroup.controllers"))
+            "[cgroups-debug] base.controllers: {:?}",
+            read(&base.join("cgroup.controllers"))
         );
         eprintln!(
-            "[cgroups-debug] root.subtree_control: {:?}",
-            read(&root.join("cgroup.subtree_control"))
+            "[cgroups-debug] base.subtree_control: {:?}",
+            read(&base.join("cgroup.subtree_control"))
         );
         eprintln!(
-            "[cgroups-debug] faber.subtree_control: {:?}",
-            read(&faber_root.join("cgroup.subtree_control"))
+            "[cgroups-debug] faber_parent.subtree_control: {:?}",
+            read(&faber_parent.join("cgroup.subtree_control"))
         );
         eprintln!("[cgroups-debug] group: {}", group_path.display());
         eprintln!(
