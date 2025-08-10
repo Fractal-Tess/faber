@@ -102,10 +102,62 @@ impl Cgroups {
             source,
         })?;
 
+        // Emit a best-effort debug snapshot of cgroup state
+        self.debug_group_state(&unique_cgroup_path);
+
         Ok(Some(CgroupHandle {
             path: unique_cgroup_path,
             manager: self.clone(),
         }))
+    }
+
+    /// Best-effort debugging output about cgroup configuration and the created group.
+    /// This prints to stderr so callers in applications can capture it in logs if desired.
+    pub(crate) fn debug_group_state(&self, group_path: &Path) {
+        fn read(path: &Path) -> Option<String> {
+            std::fs::read_to_string(path)
+                .ok()
+                .map(|s| s.trim().to_string())
+        }
+        fn exists(path: &Path) -> bool {
+            path.exists()
+        }
+
+        let root = Path::new("/sys/fs/cgroup");
+        let faber_root = root.join("faber");
+
+        eprintln!(
+            "[cgroups-debug] root.controllers: {:?}",
+            read(&root.join("cgroup.controllers"))
+        );
+        eprintln!(
+            "[cgroups-debug] root.subtree_control: {:?}",
+            read(&root.join("cgroup.subtree_control"))
+        );
+        eprintln!(
+            "[cgroups-debug] faber.subtree_control: {:?}",
+            read(&faber_root.join("cgroup.subtree_control"))
+        );
+        eprintln!("[cgroups-debug] group: {}", group_path.display());
+        eprintln!(
+            "[cgroups-debug] has pids.max: {} value: {:?}",
+            exists(&group_path.join("pids.max")),
+            read(&group_path.join("pids.max"))
+        );
+        eprintln!(
+            "[cgroups-debug] has memory.max: {} value: {:?}",
+            exists(&group_path.join("memory.max")),
+            read(&group_path.join("memory.max"))
+        );
+        eprintln!(
+            "[cgroups-debug] has cpu.max: {} value: {:?}",
+            exists(&group_path.join("cpu.max")),
+            read(&group_path.join("cpu.max"))
+        );
+        eprintln!(
+            "[cgroups-debug] procs: {:?}",
+            read(&group_path.join("cgroup.procs"))
+        );
     }
 
     pub(crate) fn cleanup_group(&self, group_path: &Path) -> Result<()> {
