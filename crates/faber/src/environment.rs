@@ -71,6 +71,10 @@ impl ContainerEnvironment {
                 details: format!("Failed to set hostname: {e}"),
             })?;
 
+        Ok(())
+    }
+
+    pub(crate) fn mount_proc_sys(&self) -> Result<()> {
         self.create_proc_sys_internal()
             .map_err(|e| Error::ContainerEnvironment {
                 operation: "create proc/sys".to_string(),
@@ -220,8 +224,7 @@ impl ContainerEnvironment {
     }
 
     fn create_proc_sys_internal(&self) -> Result<()> {
-        // Proc
-        let proc_source = Some("proc");
+        // Proc - mount a new proc filesystem to isolate from host
         let proc_path = "/proc";
         let proc_fstype = "proc";
         let proc_flags = MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC;
@@ -232,24 +235,23 @@ impl ContainerEnvironment {
             source,
         })?;
 
-        // Mount proc
+        // Mount a new proc filesystem (not bind mount from host)
         mount(
-            proc_source,
+            None::<&str>, // No source - create new filesystem
             proc_path,
             Some(proc_fstype),
             proc_flags,
             None::<&str>,
         )
         .map_err(|e| Error::Mount {
-            src: "proc".to_string(),
+            src: "None".to_string(),
             target: proc_path.to_string(),
             fstype: Some(proc_fstype.to_string()),
             flags: proc_flags,
             err: e,
         })?;
 
-        // Sys
-        let sys_source = Some("sysfs");
+        // Sys - mount a new sysfs to isolate from host
         let sys_target = "/sys";
         let sys_fstype = "sysfs";
         let sys_flags = MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC;
@@ -260,16 +262,16 @@ impl ContainerEnvironment {
             source,
         })?;
 
-        // Mount sys
+        // Mount a new sysfs (not bind mount from host)
         mount(
-            sys_source,
+            None::<&str>, // No source - create new filesystem
             sys_target,
             Some(sys_fstype),
             sys_flags,
             None::<&str>,
         )
         .map_err(|e| Error::Mount {
-            src: "sysfs".to_string(),
+            src: "None".to_string(),
             target: sys_target.to_string(),
             fstype: Some(sys_fstype.to_string()),
             flags: sys_flags,

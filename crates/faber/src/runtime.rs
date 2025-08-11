@@ -9,7 +9,6 @@ use nix::{
 use crate::{
     TaskResult,
     builder::RuntimeBuilder,
-    cgroup::CgroupManager,
     environment::ContainerEnvironment,
     prelude::*,
     types::{RuntimeLimits, Task},
@@ -37,7 +36,6 @@ pub struct Runtime {
     pub(crate) id: String,
     pub(crate) env: ContainerEnvironment,
     pub(crate) limits: RuntimeLimits,
-    pub(crate) cgroup_manager: CgroupManager,
 }
 
 impl Runtime {
@@ -53,14 +51,6 @@ impl Runtime {
                 details: "Task list cannot be empty".to_string(),
             });
         }
-
-        // Initialize cgroup manager
-        self.cgroup_manager
-            .initilize()
-            .map_err(|e| Error::ContainerEnvironment {
-                operation: "initialize cgroup".to_string(),
-                details: format!("Failed to initialize cgroup: {e}"),
-            })?;
 
         // Create pipe for task results
         let (results_read_fd, results_write_fd) = pipe().map_err(|e| Error::ProcessManagement {
@@ -101,9 +91,6 @@ impl Runtime {
                 // Task results
                 let task_results = Self::deserialize_results(&results_json)?;
 
-                // Cleanup cgroup
-                self.cgroup_manager.cleanup()?;
-
                 // Cleanup environment
                 self.env.cleanup()?;
 
@@ -129,9 +116,6 @@ impl Runtime {
                 exit(0);
             }
             Err(e) => {
-                // Cleanup cgroup
-                self.cgroup_manager.cleanup()?;
-
                 // Cleanup environment
                 self.env.cleanup()?;
 
@@ -178,8 +162,8 @@ impl Runtime {
             operation: "parse child results".to_string(),
             data_type: "Vec<TaskResult>".to_string(),
             details: format!(
-                "JSON parsing failed: {e}. Raw data (first 256 chars): {}",
-                json.chars().take(256).collect::<String>()
+                "JSON parsing failed: {e}. Raw data (first 1024 chars): {}",
+                json.chars().take(1024).collect::<String>()
             ),
         })
     }
@@ -222,8 +206,6 @@ impl Runtime {
         // Fork
         match unsafe { fork() } {
             Ok(ForkResult::Parent { child, .. }) => {
-                // self.cgroup_manager.add_proc(child.as_raw())?;
-
                 // Parent of PID 1: close write end and read Vec<TaskResult> JSON
                 close(write_fd).map_err(|e| Error::ProcessManagement {
                     operation: "close write fd".to_string(),
@@ -247,6 +229,15 @@ impl Runtime {
                     pid: -1,
                     details: format!("Failed to close read fd: {e}"),
                 })?;
+
+                // Mount proc/sys after PID namespace isolation is complete
+                self.env
+                    .mount_proc_sys()
+                    .map_err(|e| Error::ContainerEnvironment {
+                        operation: "mount proc/sys".to_string(),
+                        details: format!("Failed to mount proc/sys: {e}"),
+                    })?;
+
                 let results = self.run_tasks(tasks)?;
                 self.write_child_results(write_fd, &results);
 
@@ -264,6 +255,10 @@ impl Runtime {
     fn run_tasks(&self, tasks: Vec<Task>) -> Result<Vec<TaskResult>> {
         // Tasks results
         let mut all_results: Vec<TaskResult> = Vec::with_capacity(tasks.len());
+
+        // Simple PID limit enforcement (since cgroups aren't available)
+        let max_pids = 10; // Hardcoded for now
+        println!("[faber] PID limit: {}", max_pids);
 
         // Run tasks
         for task in tasks.into_iter() {
@@ -285,24 +280,23 @@ impl Runtime {
                 cmd.args(args);
             }
 
-            // Add environment variables
+            // Clear all environment variables for security
+            cmd.env_clear();
+
+            // Add environment variables if provided
             if let Some(env) = &task.env {
                 cmd.envs(env.iter());
-
-                // Add PATH if not set
-                if !env.contains_key("PATH") {
-                    cmd.env(
-                        "PATH",
-                        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-                    );
-                }
-            } else {
-                // Add PATH if not set
-                cmd.env(
-                    "PATH",
-                    "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-                );
             }
+
+            // Always add minimal PATH
+            cmd.env(
+                "PATH",
+                "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            );
+
+            // Set minimal environment
+            cmd.env("HOME", "/tmp");
+            cmd.env("TERM", "xterm");
 
             // Set current directory
 

@@ -13,7 +13,7 @@ pub struct RuntimeBuilder {
     mounts: Option<Vec<Mount>>,
     work_dir: Option<String>,
     limits: Option<RuntimeLimits>,
-    cgroups: Option<CgroupConfig>,
+
     id: Option<String>,
 }
 
@@ -46,10 +46,6 @@ impl RuntimeBuilder {
     }
     pub fn with_runtime_limits(mut self, limits: RuntimeLimits) -> Self {
         self.limits = Some(limits);
-        self
-    }
-    pub fn with_cgroups(mut self, cgroups: CgroupConfig) -> Self {
-        self.cgroups = Some(cgroups);
         self
     }
 
@@ -112,19 +108,7 @@ impl RuntimeBuilder {
 
         let env = ContainerEnvironment::new(container_root, hostname, mounts, work_dir);
         let limits = self.limits.unwrap_or_default();
-        let cgroups = self.cgroups.unwrap_or_default();
 
-        // Create the cgroup manager during build
-        let cgroup_manager = CgroupManager {
-            cgroup_path: PathBuf::from(format!("/sys/fs/cgroup/faber-{id}")),
-            pids_max: cgroups.pids_max.unwrap_or(100),
-        };
-
-        Ok(Runtime {
-            id,
-            env,
-            limits,
-            cgroup_manager,
-        })
+        Ok(Runtime { id, env, limits })
     }
 }

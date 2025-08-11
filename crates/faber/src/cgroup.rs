@@ -13,7 +13,12 @@ pub(crate) struct CgroupManager {
 
 impl CgroupManager {
     pub fn initilize(&self) -> Result<()> {
-        // Create the cgroup directory
+        // Create the cgroup directory on the host
+        println!(
+            "[DEBUG] Creating cgroup directory at: {}",
+            self.cgroup_path.display()
+        );
+
         create_dir_all(&self.cgroup_path).map_err(|e| {
             Error::Cgroup(format!(
                 "Failed to create container cgroup at '{}': {e}",
@@ -21,32 +26,46 @@ impl CgroupManager {
             ))
         })?;
 
-        // Set initial pids.max to a reasonable default
-        let pids_max_path = self.cgroup_path.join("pids.max");
+        println!("[DEBUG] Cgroup directory created successfully");
+        println!("[DEBUG] Directory exists: {}", self.cgroup_path.exists());
+        println!(
+            "[DEBUG] Directory contents: {:?}",
+            std::fs::read_dir(&self.cgroup_path)
+                .map(|d| d.collect::<Vec<_>>().len())
+                .unwrap_or(0)
+        );
+
+        // Set the configured PID limit
+        println!("[DEBUG] Setting PID limit to: {}", self.pids_max);
+        self.set_max_procs(self.pids_max)?;
+        println!("[DEBUG] PID limit set successfully");
+
+        Ok(())
+    }
+
+    pub fn add_host_process(&self, pid: i32) -> Result<()> {
+        // Add a process to the cgroup from the host side
+        // Skip the process existence check since we're adding from host context
+        let cgroup_procs = self.cgroup_path.join("cgroup.procs");
 
         let mut file = OpenOptions::new()
-            .write(true)
-            .open(&pids_max_path)
+            .append(true)
+            .truncate(false)
+            .open(&cgroup_procs)
             .map_err(|e| {
                 Error::Cgroup(format!(
-                    "Failed to open pids.max at '{}': {e}",
-                    pids_max_path.display()
+                    "Failed to open cgroup.procs at '{}': {e}",
+                    cgroup_procs.display()
                 ))
             })?;
 
-        file.write_all(b"100\n").map_err(|e| {
-            Error::Cgroup(format!(
-                "Failed to write to pids.max at '{}': {e}",
-                pids_max_path.display()
-            ))
-        })?;
+        // Write the PID as bytes with newline
+        file.write_all(format!("{pid}\n").as_bytes())
+            .map_err(|e| Error::Cgroup(format!("Cannot write PID {}: {}", pid, e)))?;
 
-        file.flush().map_err(|e| {
-            Error::Cgroup(format!(
-                "Failed to sync pids.max at '{}': {e}",
-                pids_max_path.display()
-            ))
-        })?;
+        // Ensure immediate flush
+        file.sync_all()
+            .map_err(|e| Error::Cgroup(format!("Cannot sync cgroup.procs: {}", e)))?;
 
         Ok(())
     }
@@ -144,5 +163,61 @@ impl CgroupManager {
             }
         };
         Ok(())
+    }
+
+    pub fn get_current_pids(&self) -> Result<u64> {
+        let cgroup_pids = self.cgroup_path.join("pids.current");
+
+        if !cgroup_pids.exists() {
+            return Err(Error::Cgroup(format!(
+                "pids.current file not found in cgroup. Path: {:?}",
+                self.cgroup_path
+            )));
+        }
+
+        let content = std::fs::read_to_string(&cgroup_pids).map_err(|e| {
+            Error::Cgroup(format!(
+                "Failed to read pids.current from '{}': {e}",
+                cgroup_pids.display()
+            ))
+        })?;
+
+        content.trim().parse::<u64>().map_err(|e| {
+            Error::Cgroup(format!(
+                "Failed to parse pids.current value '{}': {e}",
+                content.trim()
+            ))
+        })
+    }
+
+    pub fn check_pid_limit(&self) -> Result<bool> {
+        let current = self.get_current_pids()?;
+        Ok(current < self.pids_max)
+    }
+
+    pub fn enforce_pid_limit(&self) -> Result<()> {
+        if !self.check_pid_limit()? {
+            return Err(Error::Cgroup(format!(
+                "PID limit exceeded: current {} >= max {}",
+                self.get_current_pids()?,
+                self.pids_max
+            )));
+        }
+        Ok(())
+    }
+
+    pub fn add_child_process(&self, pid: i32) -> Result<()> {
+        // Add child process to cgroup and check limits
+        self.add_proc(pid)?;
+
+        // Enforce PID limit after adding
+        self.enforce_pid_limit()?;
+
+        Ok(())
+    }
+
+    pub fn get_pid_stats(&self) -> Result<(u64, u64)> {
+        let current = self.get_current_pids()?;
+        Ok((current, self.pids_max))
     }
 }

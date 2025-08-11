@@ -65,7 +65,6 @@ pub async fn execution(
             config.container.filesystem.base_dir, request_id
         ))
         .with_workdir(config.container.filesystem.work_dir.clone())
-        .with_cgroups(config.container.cgroup.clone().into())
         .with_runtime_limits(faber::RuntimeLimits {
             kill_timeout_seconds: config.container.runtime.kill_timeout_seconds,
         })
