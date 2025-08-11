@@ -49,7 +49,6 @@ impl ContainerEnvironment {
         self.create_devices_internal()?;
         self.bind_mounts_internal()?;
         self.pivot_root_internal()?;
-
         Ok(())
     }
 

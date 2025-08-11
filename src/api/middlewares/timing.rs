@@ -1,9 +1,4 @@
-use axum::{
-    extract::Request,
-    http::{HeaderValue, StatusCode},
-    middleware::Next,
-    response::{IntoResponse, Response},
-};
+use axum::{extract::Request, http::HeaderValue, middleware::Next, response::Response};
 use std::time::Instant;
 use tracing::{debug, warn};
 

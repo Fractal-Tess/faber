@@ -6,7 +6,7 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("Faber generic error: {0}")]
-    GenericError(String),
+    Generic(String),
 
     #[error("Unshare failed (flags: {flags:?}): {source}")]
     Unshare {
@@ -78,27 +78,11 @@ pub enum Error {
     },
 
     #[error("FFI NulError: {0}")]
-    FFINullError(#[from] std::ffi::NulError),
+    FFI(#[from] std::ffi::NulError),
 
     #[error("Nix error: {0}")]
-    NixError(#[from] NixError),
+    Nix(#[from] NixError),
 
     #[error("IO error: {0}")]
-    IoError(#[from] std::io::Error),
-
-    // Cgroup-specific errors
-    #[error("Failed to create cgroup dir: {path}: {source}")]
-    CgroupCreate {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-
-    #[error("Failed to write cgroup file: {path} (value={value}): {source}")]
-    CgroupWrite {
-        path: PathBuf,
-        value: String,
-        #[source]
-        source: std::io::Error,
-    },
+    Io(#[from] std::io::Error),
 }

@@ -52,7 +52,7 @@ where
 pub struct CgroupConfig {
     #[serde(default = "default_enabled_true")]
     pub enabled: bool,
-    pub pids_max: Option<String>,
+    pub pids_max: Option<u64>,
     pub memory_max: Option<String>,
     pub cpu_max: Option<String>,
 }

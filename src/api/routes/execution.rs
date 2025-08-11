@@ -69,6 +69,7 @@ pub async fn execution(
         .with_runtime_limits(faber::RuntimeLimits {
             kill_timeout_seconds: config.container.runtime.kill_timeout_seconds,
         })
+        .with_id(request_id.clone())
         .build();
 
     debug!("Spawning blocking runtime.run");

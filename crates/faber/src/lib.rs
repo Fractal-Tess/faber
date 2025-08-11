@@ -1,5 +1,5 @@
 mod builder;
-mod cgroups;
+mod cgroup;
 mod environment;
 mod error;
 mod prelude;

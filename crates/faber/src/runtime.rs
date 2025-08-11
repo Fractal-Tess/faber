@@ -10,7 +10,7 @@ use rand::{Rng, distr::Alphanumeric};
 use crate::{
     TaskResult,
     builder::RuntimeBuilder,
-    cgroups::Cgroups,
+    cgroup::CgroupManager,
     environment::ContainerEnvironment,
     prelude::*,
     types::{RuntimeLimits, Task},
@@ -19,9 +19,11 @@ use crate::{
 use std::{
     collections::HashMap,
     fs::File,
-    io::{Read, Write},
-    os::fd::{FromRawFd, IntoRawFd, OwnedFd},
-    os::unix::process::ExitStatusExt,
+    io::{Read, Write, read_to_string},
+    os::{
+        fd::{FromRawFd, IntoRawFd, OwnedFd},
+        unix::process::ExitStatusExt,
+    },
     path::PathBuf,
     process::{Command, Stdio, exit},
     sync::{
@@ -34,9 +36,10 @@ use std::{
 
 #[derive(Debug)]
 pub struct Runtime {
+    pub(crate) id: String,
     pub(crate) env: ContainerEnvironment,
-    pub(crate) cgroups: Cgroups,
     pub(crate) limits: RuntimeLimits,
+    pub(crate) cgroup_manager: CgroupManager,
 }
 
 impl Runtime {
@@ -48,7 +51,7 @@ impl Runtime {
         let (results_read_fd, results_write_fd) = match pipe() {
             Ok(pipe) => pipe,
             Err(e) => {
-                return Err(Error::NixError(e));
+                return Err(Error::Nix(e));
             }
         };
 
@@ -56,29 +59,18 @@ impl Runtime {
             Ok(ForkResult::Parent { child, .. }) => {
                 close(results_write_fd)?;
 
-                let cg_handle = self
-                    .cgroups
-                    .assign_child(child, &self.env.container_root)
-                    .unwrap_or_default();
-
                 let timeout_secs = self.limits.kill_timeout_seconds.unwrap_or(10);
 
                 let (killer_handle, cancel_kill) = Self::spawn_killer(child, timeout_secs);
 
                 let results_json = self.read_all_from_fd(results_read_fd);
 
-                let _ = waitpid(child, None).map_err(Error::NixError)?;
+                let _ = waitpid(child, None).map_err(Error::Nix)?;
 
                 cancel_kill.store(true, Ordering::SeqCst);
                 let _ = killer_handle.join();
 
-                if let Some(handle) = &cg_handle {
-                    self.cgroups.cleanup_group(handle.path())?;
-                }
-
                 let results = Self::deserialize_results(&results_json)?;
-
-                let _ = self.env.cleanup();
 
                 Ok(results)
             }
@@ -98,7 +90,7 @@ impl Runtime {
 
                 exit(0);
             }
-            Err(e) => Err(Error::GenericError(format!(
+            Err(e) => Err(Error::Generic(format!(
                 "Fork failed in parent process: {e:?}"
             ))),
         }
@@ -132,7 +124,7 @@ impl Runtime {
 
     fn deserialize_results(json: &str) -> Result<Vec<TaskResult>> {
         serde_json::from_str(json).map_err(|e| {
-            Error::GenericError(format!(
+            Error::Generic(format!(
                 "Failed to parse child results JSON: {e}. Raw: {}",
                 json.chars().take(256).collect::<String>()
             ))
@@ -142,7 +134,7 @@ impl Runtime {
     fn write_child_results(&self, write_fd: OwnedFd, results: &Vec<TaskResult>) {
         let mut writer = unsafe { File::from_raw_fd(write_fd.into_raw_fd()) };
         let serialized = serde_json::to_string(results)
-            .map_err(|e| Error::GenericError(format!("Failed to serialize results: {e}")))
+            .map_err(|e| Error::Generic(format!("Failed to serialize results: {e}")))
             .unwrap_or_else(|_| String::from("[]"));
         let _ = writer.write_all(serialized.as_bytes());
         let _ = writer.flush();
@@ -152,6 +144,8 @@ impl Runtime {
         // Set up namespaces and root
         self.env.initialize()?;
 
+        // Use the pre-created cgroup manager (simplified approach - no validation needed)
+
         // Create an internal pipe to shuttle all results from PID 1 back to this parent
         let (read_fd, write_fd) = pipe()?;
 
@@ -159,23 +153,20 @@ impl Runtime {
             Ok(ForkResult::Parent { child, .. }) => {
                 // Parent of PID 1: close write end and read Vec<TaskResult> JSON
                 close(write_fd)?;
-                let json =
-                    self.read_all_from_fd(unsafe { OwnedFd::from_raw_fd(read_fd.into_raw_fd()) });
-                let _ = waitpid(child, None).map_err(Error::NixError)?;
+                let json = self.read_all_from_fd(read_fd);
+                let _ = waitpid(child, None).map_err(Error::Nix)?;
                 let results: Vec<TaskResult> = Self::deserialize_results(&json)?;
+
                 Ok(results)
             }
             Ok(ForkResult::Child) => {
                 // This becomes PID 1 in the new PID namespace
                 close(read_fd)?;
                 let results = self.run_tasks(tasks)?;
-                self.write_child_results(
-                    unsafe { OwnedFd::from_raw_fd(write_fd.into_raw_fd()) },
-                    &results,
-                );
+                self.write_child_results(write_fd, &results);
                 exit(0);
             }
-            Err(e) => Err(Error::GenericError(format!(
+            Err(e) => Err(Error::Generic(format!(
                 "failed to fork PID1 for task runner: {e:?}"
             ))),
         }
@@ -250,39 +241,5 @@ impl Runtime {
             }
         }
         Ok(all_results)
-    }
-}
-
-impl Default for Runtime {
-    fn default() -> Self {
-        // Random container root path
-        let id: String = rand::rng()
-            .sample_iter(&Alphanumeric)
-            .take(12)
-            .map(char::from)
-            .collect();
-        let container_root = PathBuf::from(format!("/tmp/faber/containers/{id}"));
-        let flags = vec![
-            nix::mount::MsFlags::MS_BIND,
-            nix::mount::MsFlags::MS_REC,
-            nix::mount::MsFlags::MS_RDONLY,
-        ];
-        let mounts = ["/bin", "/lib", "/usr", "/lib64", "/sbin"]
-            .iter()
-            .map(|s| crate::types::Mount {
-                source: s.to_string(),
-                target: s.to_string(),
-                flags: flags.clone(),
-                options: vec![],
-                data: None,
-            })
-            .collect();
-        let env =
-            ContainerEnvironment::new(container_root, "faber".into(), mounts, "/faber".into());
-        Self {
-            env,
-            cgroups: Cgroups::default(),
-            limits: RuntimeLimits::default(),
-        }
     }
 }

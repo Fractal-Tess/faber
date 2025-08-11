@@ -11,8 +11,10 @@ services:
       - ../../crates:/faber/crates:ro
       - ../../logs:/var/log/faber:rw
       - ../../Cargo.toml:/faber/Cargo.toml:ro
+      - ../../debug:/faber/debug:ro
       - cargo-target:/faber/target
     privileged: true
+    cgroup: host
     network_mode: 'host'
     environment:
       - RUST_LOG=debug

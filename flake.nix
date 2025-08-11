@@ -22,7 +22,7 @@
             # (pkgs.lib.optionals pkgs.stdenv.isLinux pkgs.mold)
             cargo-watch
             bun
-            go
+            playwright-mcp
           ];
           buildInputs = with pkgs;
             [
