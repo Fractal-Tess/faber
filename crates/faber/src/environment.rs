@@ -43,7 +43,7 @@ impl ContainerEnvironment {
 
         self.unshare_internal()?;
         self.set_hostname_internal()?;
-        self.create_proc_sys_internal()?;
+        // self.create_proc_sys_internal()?;
         self.create_tmp_internal()?;
         self.create_work_dir_internal()?;
         self.create_devices_internal()?;

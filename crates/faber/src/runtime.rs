@@ -144,8 +144,6 @@ impl Runtime {
         // Set up namespaces and root
         self.env.initialize()?;
 
-        // Use the pre-created cgroup manager (simplified approach - no validation needed)
-
         // Create an internal pipe to shuttle all results from PID 1 back to this parent
         let (read_fd, write_fd) = pipe()?;
 
