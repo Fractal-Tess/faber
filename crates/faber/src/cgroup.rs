@@ -1,57 +1,47 @@
 use crate::prelude::*;
 use std::{
-    fs::OpenOptions,
-    io::{Read, Write},
+    fs::{OpenOptions, create_dir_all},
+    io::Write,
     path::PathBuf,
 };
 
 #[derive(Debug)]
-pub struct CgroupManager {
-    cgroup_path: PathBuf,
+pub(crate) struct CgroupManager {
+    pub(crate) cgroup_path: PathBuf,
+    pub(crate) pids_max: u64,
 }
 
 impl CgroupManager {
-    pub fn new(id: impl Into<String>) -> Result<Self> {
-        let id_string = id.into();
-        println!("=== Creating CgroupManager for ID: {} ===", id_string);
-
-        // Create container cgroup directly under root with pattern 'faber-<id>'
-        let cgroup_path = PathBuf::from(format!("/sys/fs/cgroup/faber-{}", id_string));
-        println!("Container cgroup path: {:?}", cgroup_path);
-
-        // Create the cgroup directory if it doesn't exist
-        println!("Creating container cgroup directory...");
-        std::fs::create_dir_all(&cgroup_path)
-            .map_err(|e| Error::Generic(format!("Failed to create container cgroup: {e}")))?;
+    pub fn initilize(&self) -> Result<()> {
+        // Create the cgroup directory
+        create_dir_all(&self.cgroup_path)
+            .map_err(|e| Error::Cgroup(format!("Failed to create container cgroup: {e}")))?;
 
         // Set initial pids.max to a reasonable default
-        let pids_max_path = cgroup_path.join("pids.max");
-        if pids_max_path.exists() {
-            println!("Setting initial pids.max to 100...");
-            let mut file = OpenOptions::new()
-                .write(true)
-                .open(&pids_max_path)
-                .map_err(|e| Error::Generic(format!("Failed to open pids.max: {e}")))?;
+        let pids_max_path = self.cgroup_path.join("pids.max");
 
-            file.write_all(b"100\n")
-                .map_err(|e| Error::Generic(format!("Failed to write to pids.max: {e}")))?;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .open(&pids_max_path)
+            .map_err(|e| Error::Cgroup(format!("Failed to open pids.max: {e}")))?;
 
-            file.flush()
-                .map_err(|e| Error::Generic(format!("Failed to sync pids.max: {e}")))?;
+        file.write_all(b"100\n")
+            .map_err(|e| Error::Cgroup(format!("Failed to write to pids.max: {e}")))?;
 
-            println!("✓ Initial pids.max set to 100");
-        } else {
-            println!("⚠️  pids.max not found - cgroup may not have pids controller enabled");
-        }
+        file.flush()
+            .map_err(|e| Error::Cgroup(format!("Failed to sync pids.max: {e}")))?;
 
-        println!("=== CgroupManager creation complete ===");
-        Ok(CgroupManager { cgroup_path })
+        Ok(())
     }
 
-    pub fn add_proc(&self, pid: u32) -> Result<()> {
+    pub fn add_proc(&self, pid: i32) -> Result<()> {
         // Check if process exists first
         if !PathBuf::from(format!("/proc/{pid}")).exists() {
-            return Err(Error::Generic(format!("Process {pid} does not exist")));
+            return Err(Error::ProcessManagement {
+                operation: "add process to cgroup".to_string(),
+                pid,
+                details: "Process does not exist in /proc".to_string(),
+            });
         }
 
         let cgroup_procs = self.cgroup_path.join("cgroup.procs");
@@ -62,25 +52,16 @@ impl CgroupManager {
             .open(&cgroup_procs)?;
 
         // Write the PID as bytes with newline
-        file.write_all(format!("{pid}\n").as_bytes())
-            .map_err(|e| Error::Generic(format!("Failed to write to cgroup.procs: {e}")))?;
+        file.write_all(format!("{pid}\n").as_bytes()).map_err(|e| {
+            Error::Cgroup(format!("Failed to write PID {pid} to cgroup.procs: {e}"))
+        })?;
 
         // Ensure immediate flush
-        file.sync_all()
-            .map_err(|e| Error::Generic(format!("Failed to sync cgroup.procs: {e}")))?;
-
-        Ok(())
-    }
-
-    pub fn print_group_procs(&self) -> Result<()> {
-        let procs_path = self.cgroup_path.join("cgroup.procs");
-
-        let mut file = OpenOptions::new().read(true).open(procs_path)?;
-
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)?;
-
-        println!("Cgroup procs: {}", contents);
+        file.sync_all().map_err(|e| {
+            Error::Cgroup(format!(
+                "Failed to sync cgroup.procs after adding PID {pid}: {e}"
+            ))
+        })?;
 
         Ok(())
     }
@@ -90,7 +71,7 @@ impl CgroupManager {
 
         // Check if the pids.max file exists
         if !cgroup_pids.exists() {
-            return Err(Error::Generic(format!(
+            return Err(Error::Cgroup(format!(
                 "pids.max file not found in cgroup. Path: {:?}",
                 self.cgroup_path
             )));
@@ -100,27 +81,28 @@ impl CgroupManager {
             .write(true)
             .truncate(false)
             .open(&cgroup_pids)
-            .map_err(|e| Error::Generic(format!("Failed to open pids.max: {e}")))?;
+            .map_err(|e| {
+                Error::Cgroup(format!(
+                    "Failed to open pids.max for writing limit {limit}: {e}"
+                ))
+            })?;
 
         file.write_all(format!("{limit}\n").as_bytes())
-            .map_err(|e| Error::Generic(format!("Failed to write to pids.max: {e}")))?;
+            .map_err(|e| {
+                Error::Cgroup(format!("Failed to write limit {limit} to pids.max: {e}"))
+            })?;
 
-        file.sync_all()
-            .map_err(|e| Error::Generic(format!("Failed to sync pids.max: {e}")))?;
+        file.sync_all().map_err(|e| {
+            Error::Cgroup(format!(
+                "Failed to sync pids.max after setting limit {limit}: {e}"
+            ))
+        })?;
 
         Ok(())
     }
 
-    pub fn print_max_procs(&self) -> Result<()> {
-        let pids_path = self.cgroup_path.join("pids.max");
-
-        let mut file = OpenOptions::new().read(true).open(pids_path)?;
-
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)?;
-
-        println!("Cgroup pids: {contents}");
-
+    pub fn cleanup(&self) -> Result<()> {
+        std::fs::remove_dir_all(&self.cgroup_path)?;
         Ok(())
     }
 }

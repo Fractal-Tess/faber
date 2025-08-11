@@ -8,6 +8,9 @@ pub enum Error {
     #[error("Faber generic error: {0}")]
     Generic(String),
 
+    #[error("Cgroup error: {0}")]
+    Cgroup(String),
+
     #[error("Unshare failed (flags: {flags:?}): {source}")]
     Unshare {
         flags: CloneFlags,
@@ -85,4 +88,65 @@ pub enum Error {
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+
+    // New specific error types for better error handling
+    #[error("Process management error: {operation} (pid: {pid}): {details}")]
+    ProcessManagement {
+        operation: String,
+        pid: i32,
+        details: String,
+    },
+
+    #[error("Thread management error: {operation}: {details}")]
+    ThreadManagement { operation: String, details: String },
+
+    #[error("Serialization error: {operation} for data type '{data_type}': {details}")]
+    Serialization {
+        operation: String,
+        data_type: String,
+        details: String,
+    },
+
+    #[error("Deserialization error: {operation} for data type '{data_type}': {details}")]
+    Deserialization {
+        operation: String,
+        data_type: String,
+        details: String,
+    },
+
+    #[error("File descriptor error: {operation} (fd: {fd}): {details}")]
+    FileDescriptor {
+        operation: String,
+        fd: i32,
+        details: String,
+    },
+
+    #[error("Task execution error: command='{command}' args={args:?}: {details}")]
+    TaskExecution {
+        command: String,
+        args: Option<Vec<String>>,
+        details: String,
+    },
+
+    #[error("Container environment error: {operation}: {details}")]
+    ContainerEnvironment { operation: String, details: String },
+
+    #[error("Resource limit error: {resource_type} limit exceeded: {details}")]
+    ResourceLimit {
+        resource_type: String,
+        details: String,
+    },
+
+    #[error("Timeout error: operation '{operation}' exceeded {timeout_secs}s: {details}")]
+    Timeout {
+        operation: String,
+        timeout_secs: u64,
+        details: String,
+    },
+
+    #[error("Validation error: {field} - {details}")]
+    Validation { field: String, details: String },
+
+    #[error("Configuration error: {component} - {details}")]
+    Configuration { component: String, details: String },
 }

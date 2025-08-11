@@ -70,7 +70,16 @@ pub async fn execution(
             kill_timeout_seconds: config.container.runtime.kill_timeout_seconds,
         })
         .with_id(request_id.clone())
-        .build();
+        .build()
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorPayload {
+                    request_id: request_id.clone(),
+                    message: format!("Failed to build runtime: {e}"),
+                }),
+            )
+        })?;
 
     debug!("Spawning blocking runtime.run");
 

@@ -1,5 +1,6 @@
 use crate::cgroup::CgroupManager;
 use crate::environment::ContainerEnvironment;
+use crate::prelude::*;
 use crate::runtime::Runtime;
 use crate::types::{CgroupConfig, Mount, RuntimeLimits};
 use rand::{Rng, distr::Alphanumeric};
@@ -52,7 +53,25 @@ impl RuntimeBuilder {
         self
     }
 
-    pub fn build(self) -> Runtime {
+    pub fn build(self) -> Result<Runtime> {
+        // Validate required fields
+        if let Some(ref mounts) = self.mounts {
+            for mount in mounts {
+                if mount.source.is_empty() {
+                    return Err(Error::Validation {
+                        field: "mount source".to_string(),
+                        details: "Mount source cannot be empty".to_string(),
+                    });
+                }
+                if mount.target.is_empty() {
+                    return Err(Error::Validation {
+                        field: "mount target".to_string(),
+                        details: "Mount target cannot be empty".to_string(),
+                    });
+                }
+            }
+        }
+
         let flags = vec![
             nix::mount::MsFlags::MS_BIND,
             nix::mount::MsFlags::MS_REC,
@@ -83,41 +102,29 @@ impl RuntimeBuilder {
         let mounts = self.mounts.unwrap_or(default_mounts);
         let work_dir = self.work_dir.unwrap_or_else(|| "/faber".into());
 
+        // Validate work_dir
+        if work_dir.is_empty() {
+            return Err(Error::Validation {
+                field: "work_dir".to_string(),
+                details: "Work directory cannot be empty".to_string(),
+            });
+        }
+
         let env = ContainerEnvironment::new(container_root, hostname, mounts, work_dir);
         let limits = self.limits.unwrap_or_default();
         let cgroups = self.cgroups.unwrap_or_default();
 
         // Create the cgroup manager during build
-        println!("=== Builder: Creating cgroup manager ===");
-        let cgroup_manager = CgroupManager::new(&id).expect("Failed to create cgroup manager");
-        println!("✓ Builder: Cgroup manager created successfully");
+        let cgroup_manager = CgroupManager {
+            cgroup_path: PathBuf::from(format!("/sys/fs/cgroup/faber-{id}")),
+            pids_max: cgroups.pids_max.unwrap_or(100),
+        };
 
-        // Note: Cgroup validation removed - simplified approach just creates directory and sets pids.max
-        println!("✓ Builder: Cgroup manager created with simplified approach");
-
-        // Apply cgroup configuration if provided
-        if cgroups.enabled {
-            println!("=== Builder: Applying cgroup configuration ===");
-            if let Some(pids_max) = cgroups.pids_max {
-                println!("Setting pids.max to {}", pids_max);
-                if let Err(e) = cgroup_manager.set_max_procs(pids_max) {
-                    eprintln!("Warning: Failed to set max procs during build: {:?}", e);
-                } else {
-                    println!("✓ Builder: pids.max set successfully");
-                }
-            }
-            // TODO: Add support for memory_max and cpu_max when those methods are implemented
-        } else {
-            println!("Builder: No cgroup configuration provided, using defaults");
-        }
-
-        println!("=== Builder: Cgroup setup complete ===");
-
-        Runtime {
+        Ok(Runtime {
             id,
             env,
             limits,
             cgroup_manager,
-        }
+        })
     }
 }
