@@ -54,14 +54,30 @@ impl Runtime {
             });
         }
 
+        // Initialize cgroup manager
+        self.cgroup_manager
+            .initilize()
+            .map_err(|e| Error::ContainerEnvironment {
+                operation: "initialize cgroup".to_string(),
+                details: format!("Failed to initialize cgroup: {e}"),
+            })?;
+
         // Create pipe for task results
-        let (results_read_fd, results_write_fd) = pipe()?;
+        let (results_read_fd, results_write_fd) = pipe().map_err(|e| Error::ProcessManagement {
+            operation: "create pipe".to_string(),
+            pid: -1,
+            details: format!("Failed to create pipe: {e}"),
+        })?;
 
         // Fork
         match unsafe { fork() } {
             Ok(ForkResult::Parent { child, .. }) => {
                 // Close write end of the pipe
-                close(results_write_fd)?;
+                close(results_write_fd).map_err(|e| Error::ProcessManagement {
+                    operation: "close write fd".to_string(),
+                    pid: child.as_raw(),
+                    details: format!("Failed to close write fd: {e}"),
+                })?;
 
                 // Read task results from child
                 let results_json = self.read_all_from_fd(results_read_fd);
@@ -197,14 +213,23 @@ impl Runtime {
             })?;
 
         // Create pipe for task results
-        let (read_fd, write_fd) = pipe()?;
+        let (read_fd, write_fd) = pipe().map_err(|e| Error::ProcessManagement {
+            operation: "create pipe".to_string(),
+            pid: -1,
+            details: format!("Failed to create pipe: {e}"),
+        })?;
 
         // Fork
         match unsafe { fork() } {
             Ok(ForkResult::Parent { child, .. }) => {
-                self.cgroup_manager.add_proc(child.as_raw())?;
+                // self.cgroup_manager.add_proc(child.as_raw())?;
+
                 // Parent of PID 1: close write end and read Vec<TaskResult> JSON
-                close(write_fd)?;
+                close(write_fd).map_err(|e| Error::ProcessManagement {
+                    operation: "close write fd".to_string(),
+                    pid: child.as_raw(),
+                    details: format!("Failed to close write fd: {e}"),
+                })?;
                 let json = self.read_all_from_fd(read_fd);
                 let _ = waitpid(child, None).map_err(|e| Error::ProcessManagement {
                     operation: "wait for PID1 process".to_string(),
@@ -217,9 +242,15 @@ impl Runtime {
             }
             Ok(ForkResult::Child) => {
                 // This becomes PID 1 in the new PID namespace
-                close(read_fd)?;
+                close(read_fd).map_err(|e| Error::ProcessManagement {
+                    operation: "close read fd".to_string(),
+                    pid: -1,
+                    details: format!("Failed to close read fd: {e}"),
+                })?;
                 let results = self.run_tasks(tasks)?;
                 self.write_child_results(write_fd, &results);
+
+                std::thread::sleep(Duration::from_secs(60));
                 exit(0);
             }
             Err(e) => Err(Error::ProcessManagement {
