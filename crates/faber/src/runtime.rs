@@ -250,7 +250,6 @@ impl Runtime {
                 let results = self.run_tasks(tasks)?;
                 self.write_child_results(write_fd, &results);
 
-                std::thread::sleep(Duration::from_secs(60));
                 exit(0);
             }
             Err(e) => Err(Error::ProcessManagement {

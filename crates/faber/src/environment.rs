@@ -36,79 +36,58 @@ impl ContainerEnvironment {
     }
 
     pub(crate) fn initialize(&self) -> Result<()> {
-        use std::thread::sleep;
-        use std::time::Duration;
-
-        // Create container root
         create_dir_all(&self.container_root).map_err(|source| Error::CreateDir {
             path: self.container_root.clone(),
             source,
         })?;
-        sleep(Duration::from_secs(10));
 
-        // Unshare
         self.unshare_internal()
             .map_err(|e| Error::ContainerEnvironment {
                 operation: "unshare namespaces".to_string(),
                 details: format!("Failed to unshare namespaces: {e}"),
             })?;
-        sleep(Duration::from_secs(10));
 
-        // Bind mounts
         self.bind_mounts_internal()
             .map_err(|e| Error::ContainerEnvironment {
                 operation: "bind mounts".to_string(),
                 details: format!("Failed to setup bind mounts: {e}"),
             })?;
-        sleep(Duration::from_secs(10));
 
-        // Create devices
-        self.create_devices_internal()
-            .map_err(|e| Error::ContainerEnvironment {
-                operation: "create devices".to_string(),
-                details: format!("Failed to create device nodes: {e}"),
-            })?;
-        sleep(Duration::from_secs(10));
-
-        // Set hostname
-        self.set_hostname_internal()
-            .map_err(|e| Error::ContainerEnvironment {
-                operation: "set hostname".to_string(),
-                details: format!("Failed to set hostname: {e}"),
-            })?;
-        sleep(Duration::from_secs(10));
-
-        // Pivot root
         self.pivot_root_internal()
             .map_err(|e| Error::ContainerEnvironment {
                 operation: "pivot root".to_string(),
                 details: format!("Failed to pivot root: {e}"),
             })?;
-        sleep(Duration::from_secs(10));
 
-        // Create proc sys
+        self.create_devices_internal()
+            .map_err(|e| Error::ContainerEnvironment {
+                operation: "create devices".to_string(),
+                details: format!("Failed to create device nodes: {e}"),
+            })?;
+
+        self.set_hostname_internal()
+            .map_err(|e| Error::ContainerEnvironment {
+                operation: "set hostname".to_string(),
+                details: format!("Failed to set hostname: {e}"),
+            })?;
+
         self.create_proc_sys_internal()
             .map_err(|e| Error::ContainerEnvironment {
                 operation: "create proc/sys".to_string(),
                 details: format!("Failed to create proc/sys filesystems: {e}"),
             })?;
-        sleep(Duration::from_secs(10));
 
-        // Create tmp
         self.create_tmp_internal()
             .map_err(|e| Error::ContainerEnvironment {
                 operation: "create tmp".to_string(),
                 details: format!("Failed to create tmp filesystem: {e}"),
             })?;
-        sleep(Duration::from_secs(10));
 
-        // Create work dir
         self.create_work_dir_internal()
             .map_err(|e| Error::ContainerEnvironment {
                 operation: "create work directory".to_string(),
                 details: format!("Failed to create work directory: {e}"),
             })?;
-        // No sleep after last command
 
         Ok(())
     }
@@ -243,27 +222,27 @@ impl ContainerEnvironment {
     fn create_proc_sys_internal(&self) -> Result<()> {
         // Proc
         let proc_source = Some("proc");
-        let proc_path = format!("{}/proc", self.container_root.display());
+        let proc_path = "/proc";
         let proc_fstype = "proc";
         let proc_flags = MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC;
 
         // Create proc dir
-        create_dir_all(&proc_path).map_err(|source| Error::CreateDir {
-            path: PathBuf::from(&proc_path),
+        create_dir_all(proc_path).map_err(|source| Error::CreateDir {
+            path: PathBuf::from(proc_path),
             source,
         })?;
 
         // Mount proc
         mount(
             proc_source,
-            proc_path.as_str(),
+            proc_path,
             Some(proc_fstype),
             proc_flags,
             None::<&str>,
         )
         .map_err(|e| Error::Mount {
             src: "proc".to_string(),
-            target: proc_path.clone(),
+            target: proc_path.to_string(),
             fstype: Some(proc_fstype.to_string()),
             flags: proc_flags,
             err: e,
@@ -271,27 +250,27 @@ impl ContainerEnvironment {
 
         // Sys
         let sys_source = Some("sysfs");
-        let sys_target = format!("{}/sys", self.container_root.display());
+        let sys_target = "/sys";
         let sys_fstype = "sysfs";
         let sys_flags = MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC;
 
         // Create sys dir
-        create_dir_all(&sys_target).map_err(|source| Error::CreateDir {
-            path: PathBuf::from(&sys_target),
+        create_dir_all(sys_target).map_err(|source| Error::CreateDir {
+            path: PathBuf::from(sys_target),
             source,
         })?;
 
         // Mount sys
         mount(
             sys_source,
-            sys_target.as_str(),
+            sys_target,
             Some(sys_fstype),
             sys_flags,
             None::<&str>,
         )
         .map_err(|e| Error::Mount {
             src: "sysfs".to_string(),
-            target: sys_target.clone(),
+            target: sys_target.to_string(),
             fstype: Some(sys_fstype.to_string()),
             flags: sys_flags,
             err: e,
@@ -301,25 +280,25 @@ impl ContainerEnvironment {
     }
 
     fn create_tmp_internal(&self) -> Result<()> {
-        let tmp_path = format!("{}/tmp", self.container_root.display());
+        let tmp_path = "/tmp";
 
         // Create tmp dir
-        create_dir_all(&tmp_path).map_err(|source| Error::CreateDir {
-            path: PathBuf::from(&tmp_path),
+        create_dir_all(tmp_path).map_err(|source| Error::CreateDir {
+            path: PathBuf::from(tmp_path),
             source,
         })?;
 
         // Mount tmp
         mount(
             Some("tmpfs"),
-            tmp_path.as_str(),
+            tmp_path,
             Some("tmpfs"),
             MsFlags::empty(),
             Some("size=128M,mode=1777"),
         )
         .map_err(|e| Error::Mount {
             src: "tmpfs".to_string(),
-            target: tmp_path.clone(),
+            target: tmp_path.to_string(),
             fstype: Some("tmpfs".to_string()),
             flags: MsFlags::empty(),
             err: e,
@@ -328,7 +307,7 @@ impl ContainerEnvironment {
     }
 
     fn create_work_dir_internal(&self) -> Result<()> {
-        let work_dir = format!("{}/{}", self.container_root.display(), self.work_dir);
+        let work_dir = format!("/{}", self.work_dir.trim_start_matches('/'));
         create_dir_all(&work_dir).map_err(|source| Error::CreateDir {
             path: PathBuf::from(&work_dir),
             source,
@@ -345,9 +324,9 @@ impl ContainerEnvironment {
             | Mode::S_IROTH
             | Mode::S_IWOTH;
 
-        let dev_path = format!("{}/dev", self.container_root.display());
-        create_dir_all(&dev_path).map_err(|source| Error::CreateDir {
-            path: PathBuf::from(&dev_path),
+        let dev_path = "/dev";
+        create_dir_all(dev_path).map_err(|source| Error::CreateDir {
+            path: PathBuf::from(dev_path),
             source,
         })?;
 
