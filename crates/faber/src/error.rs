@@ -86,8 +86,12 @@ pub enum Error {
     #[error("Nix error: {0}")]
     Nix(#[from] NixError),
 
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
+    #[error("IO error: {operation} at path '{path}': {details}")]
+    Io {
+        operation: String,
+        path: String,
+        details: String,
+    },
 
     // New specific error types for better error handling
     #[error("Process management error: {operation} (pid: {pid}): {details}")]
@@ -149,4 +153,29 @@ pub enum Error {
 
     #[error("Configuration error: {component} - {details}")]
     Configuration { component: String, details: String },
+
+    #[error("File system error: {operation} at path '{path}': {details}")]
+    FileSystem {
+        operation: String,
+        path: String,
+        details: String,
+    },
+
+    #[error(
+        "Mount point error: {operation} for mount '{mount_name}' (source: '{mount_source}', target: '{target}'): {details}"
+    )]
+    MountPoint {
+        operation: String,
+        mount_name: String,
+        mount_source: String,
+        target: String,
+        details: String,
+    },
+
+    #[error("Directory access error: {operation} for directory '{path}': {details}")]
+    DirectoryAccess {
+        operation: String,
+        path: String,
+        details: String,
+    },
 }
