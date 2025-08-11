@@ -83,12 +83,21 @@ impl ContainerEnvironment {
     }
 
     fn unshare_internal(&self) -> Result<()> {
+        // Note: PID namespace (CLONE_NEWPID) has special behavior
+        // unshare(CLONE_NEWPID) only affects child processes, not the calling process
+        // The calling process itself doesn't enter the new PID namespace
+        // Only child processes created AFTER the unshare will be in the new namespace
+        //
+        // This means that when we call this method, we're still in the host's PID namespace
+        // Child processes created later (like when we fork in the runtime) will inherit
+        // the new PID namespace
         let flags = CloneFlags::CLONE_NEWNS
             | CloneFlags::CLONE_NEWUTS
             | CloneFlags::CLONE_NEWIPC
             | CloneFlags::CLONE_NEWPID
             | CloneFlags::CLONE_NEWNET
             | CloneFlags::CLONE_NEWCGROUP;
+
         unshare(flags).map_err(|source| Error::Unshare { flags, source })?;
         Ok(())
     }
