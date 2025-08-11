@@ -14,8 +14,12 @@ pub(crate) struct CgroupManager {
 impl CgroupManager {
     pub fn initilize(&self) -> Result<()> {
         // Create the cgroup directory
-        create_dir_all(&self.cgroup_path)
-            .map_err(|e| Error::Cgroup(format!("Failed to create container cgroup: {e}")))?;
+        create_dir_all(&self.cgroup_path).map_err(|e| {
+            Error::Cgroup(format!(
+                "Failed to create container cgroup at '{}': {e}",
+                self.cgroup_path.display()
+            ))
+        })?;
 
         // Set initial pids.max to a reasonable default
         let pids_max_path = self.cgroup_path.join("pids.max");
@@ -23,13 +27,26 @@ impl CgroupManager {
         let mut file = OpenOptions::new()
             .write(true)
             .open(&pids_max_path)
-            .map_err(|e| Error::Cgroup(format!("Failed to open pids.max: {e}")))?;
+            .map_err(|e| {
+                Error::Cgroup(format!(
+                    "Failed to open pids.max at '{}': {e}",
+                    pids_max_path.display()
+                ))
+            })?;
 
-        file.write_all(b"100\n")
-            .map_err(|e| Error::Cgroup(format!("Failed to write to pids.max: {e}")))?;
+        file.write_all(b"100\n").map_err(|e| {
+            Error::Cgroup(format!(
+                "Failed to write to pids.max at '{}': {e}",
+                pids_max_path.display()
+            ))
+        })?;
 
-        file.flush()
-            .map_err(|e| Error::Cgroup(format!("Failed to sync pids.max: {e}")))?;
+        file.flush().map_err(|e| {
+            Error::Cgroup(format!(
+                "Failed to sync pids.max at '{}': {e}",
+                pids_max_path.display()
+            ))
+        })?;
 
         Ok(())
     }
@@ -49,17 +66,27 @@ impl CgroupManager {
         let mut file = OpenOptions::new()
             .append(true)
             .truncate(false)
-            .open(&cgroup_procs)?;
+            .open(&cgroup_procs)
+            .map_err(|e| {
+                Error::Cgroup(format!(
+                    "Failed to open cgroup.procs at '{}': {e}",
+                    cgroup_procs.display()
+                ))
+            })?;
 
         // Write the PID as bytes with newline
         file.write_all(format!("{pid}\n").as_bytes()).map_err(|e| {
-            Error::Cgroup(format!("Failed to write PID {pid} to cgroup.procs: {e}"))
+            Error::Cgroup(format!(
+                "Failed to write PID {pid} to cgroup.procs at '{}': {e}",
+                cgroup_procs.display()
+            ))
         })?;
 
         // Ensure immediate flush
         file.sync_all().map_err(|e| {
             Error::Cgroup(format!(
-                "Failed to sync cgroup.procs after adding PID {pid}: {e}"
+                "Failed to sync cgroup.procs at '{}' after adding PID {pid}: {e}",
+                cgroup_procs.display()
             ))
         })?;
 
@@ -83,18 +110,23 @@ impl CgroupManager {
             .open(&cgroup_pids)
             .map_err(|e| {
                 Error::Cgroup(format!(
-                    "Failed to open pids.max for writing limit {limit}: {e}"
+                    "Failed to open pids.max at '{}' for writing limit {limit}: {e}",
+                    cgroup_pids.display()
                 ))
             })?;
 
         file.write_all(format!("{limit}\n").as_bytes())
             .map_err(|e| {
-                Error::Cgroup(format!("Failed to write limit {limit} to pids.max: {e}"))
+                Error::Cgroup(format!(
+                    "Failed to write limit {limit} to pids.max at '{}': {e}",
+                    cgroup_pids.display()
+                ))
             })?;
 
         file.sync_all().map_err(|e| {
             Error::Cgroup(format!(
-                "Failed to sync pids.max after setting limit {limit}: {e}"
+                "Failed to sync pids.max at '{}' after setting limit {limit}: {e}",
+                cgroup_pids.display()
             ))
         })?;
 
@@ -102,7 +134,15 @@ impl CgroupManager {
     }
 
     pub fn cleanup(&self) -> Result<()> {
-        std::fs::remove_dir_all(&self.cgroup_path)?;
+        // Check if the cgroup directory exists before trying to remove it
+        if self.cgroup_path.exists() {
+            match std::fs::remove_dir_all(&self.cgroup_path) {
+                Ok(_) => {}
+                Err(e) => {
+                    println!("Failed to remove cgroup directory: {e}");
+                }
+            }
+        };
         Ok(())
     }
 }
