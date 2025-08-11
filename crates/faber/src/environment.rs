@@ -36,39 +36,89 @@ impl ContainerEnvironment {
     }
 
     pub(crate) fn initialize(&self) -> Result<()> {
+        use std::thread::sleep;
+        use std::time::Duration;
+
         // Create container root
-        create_dir_all(&self.container_root)?;
+        create_dir_all(&self.container_root).map_err(|source| Error::CreateDir {
+            path: self.container_root.clone(),
+            source,
+        })?;
+        sleep(Duration::from_secs(10));
 
         // Unshare
-        self.unshare_internal()?;
+        self.unshare_internal()
+            .map_err(|e| Error::ContainerEnvironment {
+                operation: "unshare namespaces".to_string(),
+                details: format!("Failed to unshare namespaces: {e}"),
+            })?;
+        sleep(Duration::from_secs(10));
 
         // Bind mounts
-        self.bind_mounts_internal()?;
-
-        // Pivot root
-        self.pivot_root_internal()?;
+        self.bind_mounts_internal()
+            .map_err(|e| Error::ContainerEnvironment {
+                operation: "bind mounts".to_string(),
+                details: format!("Failed to setup bind mounts: {e}"),
+            })?;
+        sleep(Duration::from_secs(10));
 
         // Create devices
-        self.create_devices_internal()?;
+        self.create_devices_internal()
+            .map_err(|e| Error::ContainerEnvironment {
+                operation: "create devices".to_string(),
+                details: format!("Failed to create device nodes: {e}"),
+            })?;
+        sleep(Duration::from_secs(10));
 
         // Set hostname
-        self.set_hostname_internal()?;
+        self.set_hostname_internal()
+            .map_err(|e| Error::ContainerEnvironment {
+                operation: "set hostname".to_string(),
+                details: format!("Failed to set hostname: {e}"),
+            })?;
+        sleep(Duration::from_secs(10));
+
+        // Pivot root
+        self.pivot_root_internal()
+            .map_err(|e| Error::ContainerEnvironment {
+                operation: "pivot root".to_string(),
+                details: format!("Failed to pivot root: {e}"),
+            })?;
+        sleep(Duration::from_secs(10));
 
         // Create proc sys
-        self.create_proc_sys_internal()?;
+        self.create_proc_sys_internal()
+            .map_err(|e| Error::ContainerEnvironment {
+                operation: "create proc/sys".to_string(),
+                details: format!("Failed to create proc/sys filesystems: {e}"),
+            })?;
+        sleep(Duration::from_secs(10));
 
         // Create tmp
-        self.create_tmp_internal()?;
+        self.create_tmp_internal()
+            .map_err(|e| Error::ContainerEnvironment {
+                operation: "create tmp".to_string(),
+                details: format!("Failed to create tmp filesystem: {e}"),
+            })?;
+        sleep(Duration::from_secs(10));
 
         // Create work dir
-        self.create_work_dir_internal()?;
+        self.create_work_dir_internal()
+            .map_err(|e| Error::ContainerEnvironment {
+                operation: "create work directory".to_string(),
+                details: format!("Failed to create work directory: {e}"),
+            })?;
+        // No sleep after last command
 
         Ok(())
     }
 
     pub(crate) fn cleanup(&self) -> Result<()> {
         // Remove container root
-        remove_dir_all(&self.container_root)?;
+        remove_dir_all(&self.container_root).map_err(|source| Error::RemoveDir {
+            path: self.container_root.clone(),
+            source,
+        })?;
         Ok(())
     }
 
@@ -121,7 +171,10 @@ impl ContainerEnvironment {
 
     fn set_hostname_internal(&self) -> Result<()> {
         // Set hostname
-        sethostname(self.hostname.as_str())?;
+        sethostname(self.hostname.as_str()).map_err(|source| Error::SetHostname {
+            hostname: self.hostname.clone(),
+            source,
+        })?;
         Ok(())
     }
 
@@ -143,7 +196,7 @@ impl ContainerEnvironment {
         })?;
 
         // Bind mounts
-        for m in &self.mounts {
+        for (_i, m) in self.mounts.iter().enumerate() {
             // Skip if source does not exist
             if !Path::new(&m.source).exists() {
                 continue;
@@ -163,7 +216,10 @@ impl ContainerEnvironment {
                 .fold(MsFlags::empty(), |acc, flag| acc | *flag);
 
             // Create target dir
-            create_dir_all(&target)?;
+            create_dir_all(&target).map_err(|source| Error::CreateDir {
+                path: PathBuf::from(&target),
+                source,
+            })?;
 
             // Mount
             mount(
@@ -192,7 +248,10 @@ impl ContainerEnvironment {
         let proc_flags = MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC;
 
         // Create proc dir
-        create_dir_all(&proc_path)?;
+        create_dir_all(&proc_path).map_err(|source| Error::CreateDir {
+            path: PathBuf::from(&proc_path),
+            source,
+        })?;
 
         // Mount proc
         mount(
@@ -217,7 +276,10 @@ impl ContainerEnvironment {
         let sys_flags = MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC;
 
         // Create sys dir
-        create_dir_all(&sys_target)?;
+        create_dir_all(&sys_target).map_err(|source| Error::CreateDir {
+            path: PathBuf::from(&sys_target),
+            source,
+        })?;
 
         // Mount sys
         mount(
@@ -242,7 +304,10 @@ impl ContainerEnvironment {
         let tmp_path = format!("{}/tmp", self.container_root.display());
 
         // Create tmp dir
-        create_dir_all(&tmp_path)?;
+        create_dir_all(&tmp_path).map_err(|source| Error::CreateDir {
+            path: PathBuf::from(&tmp_path),
+            source,
+        })?;
 
         // Mount tmp
         mount(
@@ -264,7 +329,10 @@ impl ContainerEnvironment {
 
     fn create_work_dir_internal(&self) -> Result<()> {
         let work_dir = format!("{}/{}", self.container_root.display(), self.work_dir);
-        create_dir_all(&work_dir)?;
+        create_dir_all(&work_dir).map_err(|source| Error::CreateDir {
+            path: PathBuf::from(&work_dir),
+            source,
+        })?;
         Ok(())
     }
 
@@ -283,25 +351,60 @@ impl ContainerEnvironment {
             source,
         })?;
 
+        // Create null device
         let device_path = format!("{dev_path}/null");
         let device_id = makedev(1, 3);
-        let _ = mknod(device_path.as_str(), flags, mode, device_id);
+        mknod(device_path.as_str(), flags, mode, device_id).map_err(|source| {
+            Error::FileSystem {
+                operation: "create device node".to_string(),
+                path: device_path.clone(),
+                details: format!("Failed to create null device: {source}"),
+            }
+        })?;
 
+        // Create zero device
         let device_path = format!("{dev_path}/zero");
         let device_id = makedev(1, 5);
-        let _ = mknod(device_path.as_str(), flags, mode, device_id);
+        mknod(device_path.as_str(), flags, mode, device_id).map_err(|source| {
+            Error::FileSystem {
+                operation: "create device node".to_string(),
+                path: device_path.clone(),
+                details: format!("Failed to create zero device: {source}"),
+            }
+        })?;
 
+        // Create full device
         let device_path = format!("{dev_path}/full");
         let device_id = makedev(1, 7);
-        let _ = mknod(device_path.as_str(), flags, mode, device_id);
+        mknod(device_path.as_str(), flags, mode, device_id).map_err(|source| {
+            Error::FileSystem {
+                operation: "create device node".to_string(),
+                path: device_path.clone(),
+                details: format!("Failed to create full device: {source}"),
+            }
+        })?;
 
+        // Create random device
         let device_path = format!("{dev_path}/random");
         let device_id = makedev(1, 8);
-        let _ = mknod(device_path.as_str(), flags, mode, device_id);
+        mknod(device_path.as_str(), flags, mode, device_id).map_err(|source| {
+            Error::FileSystem {
+                operation: "create device node".to_string(),
+                path: device_path.clone(),
+                details: format!("Failed to create random device: {source}"),
+            }
+        })?;
 
+        // Create urandom device
         let device_path = format!("{dev_path}/urandom");
         let device_id = makedev(1, 9);
-        let _ = mknod(device_path.as_str(), flags, mode, device_id);
+        mknod(device_path.as_str(), flags, mode, device_id).map_err(|source| {
+            Error::FileSystem {
+                operation: "create device node".to_string(),
+                path: device_path.clone(),
+                details: format!("Failed to create urandom device: {source}"),
+            }
+        })?;
 
         Ok(())
     }
@@ -349,18 +452,22 @@ impl ContainerEnvironment {
 
         // Set current directory to the root of the container which is now `/`
         set_current_dir("/").map_err(|source| Error::Chdir {
-            path: "/".into(),
+            path: "/".to_string(),
             source,
         })?;
 
         // Umount old root
-        umount2("/oldroot", MntFlags::empty()).map_err(|e| Error::Umount {
+        umount2("/oldroot", MntFlags::MNT_DETACH).map_err(|e| Error::Umount {
             target: "/oldroot".to_string(),
-            flags: MntFlags::empty(),
+            flags: MntFlags::MNT_DETACH,
             err: e,
         })?;
+
         // Remove old root
-        let _ = remove_dir_all("/oldroot");
+        remove_dir_all("/oldroot").map_err(|source| Error::RemoveDir {
+            path: PathBuf::from("/oldroot"),
+            source,
+        })?;
 
         Ok(())
     }
