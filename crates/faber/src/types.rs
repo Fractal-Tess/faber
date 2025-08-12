@@ -38,9 +38,11 @@ pub struct TaskResult {
 
 impl From<Output> for TaskResult {
     fn from(output: Output) -> Self {
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         Self {
-            stdout: String::from_utf8(output.stdout).unwrap(),
-            stderr: String::from_utf8(output.stderr).unwrap(),
+            stdout,
+            stderr,
             exit_code: output.status.code().unwrap_or(-1),
         }
     }
