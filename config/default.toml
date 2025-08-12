@@ -20,6 +20,8 @@ file_name_prefix = "faber"
 [container.filesystem]
 base_dir = "/tmp/faber/containers"
 work_dir = "/faber"
+tmp_size = "128M"
+workdir_size = "256M"
 
 [[container.filesystem.mounts]]
 source = "/bin"
@@ -41,10 +43,6 @@ source = "/lib64"
 target = "/lib64"
 readonly = true
 
-[[container.filesystem.mounts]]
-source = "/sbin"
-target = "/sbin"
-readonly = true
 
 [container.cgroup]
 enabled = true
