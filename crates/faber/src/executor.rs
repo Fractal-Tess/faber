@@ -1,13 +1,7 @@
-use nix::sys::wait::waitpid;
-use nix::unistd::{ForkResult, fork};
-
-use std::io::{Read, Write};
-use std::os::fd::IntoRawFd;
-use std::process::{Command, Stdio, exit};
+use std::process::{Command, Stdio};
 
 use crate::environment::ContainerEnvironment;
 use crate::prelude::*;
-use crate::utils::{close_fd, mk_pipe};
 use crate::{Task, TaskResult};
 use tracing::debug;
 
@@ -34,74 +28,16 @@ impl Executor {
         Ok(())
     }
 
-    /// Runs the tasks in the execution environment.
+    /// Runs the tasks in the execution environment without additional forking.
     ///
-    /// Forks a child that executes in the isolated PID namespace, serializes
-    /// results, and passes them to the parent via a pipe.
+    /// Assumes the caller has already forked into the PID namespace. This will
+    /// complete post-PID setup and execute tasks inline, returning results to
+    /// the caller.
     pub fn run(&self) -> Result<Vec<TaskResult>> {
-        debug!("Executor::run: begin");
-        let (mut results_reader, mut results_writter) = mk_pipe()?;
-        debug!("Executor::run: pipe created, forking");
-
-        self.env.prepare_pre_pid_namespace()?;
-
-        match unsafe { fork() } {
-            Ok(ForkResult::Parent { child, .. }) => {
-                debug!(pid = child.as_raw(), "Executor::run[parent]: forked child");
-                close_fd(results_writter.into_raw_fd())?;
-
-                let mut serilized_results = String::new();
-                results_reader
-                    .read_to_string(&mut serilized_results)
-                    .expect("Failed to read results");
-                debug!(
-                    bytes = serilized_results.len(),
-                    "Executor::run[parent]: read results"
-                );
-
-                let results: Vec<TaskResult> = serde_json::from_str(&serilized_results)
-                    .expect("Failed to deserialize results");
-
-                let _ = waitpid(child, None).map_err(|e| Error::ProcessManagement {
-                    operation: "wait for child".to_string(),
-                    pid: child.as_raw(),
-                    details: format!("Failed to wait for child: {e}"),
-                })?;
-                debug!("Executor::run[parent]: child joined, returning results");
-
-                Ok(results)
-            }
-            Ok(ForkResult::Child) => {
-                debug!("Executor::run[child]: in child");
-                close_fd(results_reader.into_raw_fd())?;
-
-                let results = self.run_in_execution_environment()?;
-                debug!(
-                    result_count = results.len(),
-                    "Executor::run[child]: tasks finished"
-                );
-                let serilized_results =
-                    serde_json::to_string(&results).expect("Failed to serialize results");
-
-                results_writter
-                    .write_all(serilized_results.as_bytes())
-                    .map_err(|e| Error::ProcessManagement {
-                        operation: "write results".to_string(),
-                        pid: -1,
-                        details: format!("Failed to write results: {e}"),
-                    })?;
-
-                debug!("Executor::run[child]: exiting child");
-                exit(0);
-            }
-            Err(e) => {
-                return Err(Error::ProcessManagement {
-                    operation: "fork".to_string(),
-                    pid: -1,
-                    details: format!("Failed to fork: {e}"),
-                });
-            }
-        }
+        debug!("Executor::run (inline): begin");
+        let results = self.run_in_execution_environment()?;
+        debug!(result_count = results.len(), "Executor::run (inline): done");
+        Ok(results)
     }
 
     /// Executes inside the isolated PID namespace and returns collected results.
