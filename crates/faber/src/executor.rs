@@ -10,20 +10,31 @@ use crate::prelude::*;
 use crate::utils::{close_fd, mk_pipe};
 use crate::{Task, TaskResult};
 
+/// Executes a list of tasks inside a prepared, isolated environment.
+///
+/// This type is typically constructed and driven by [`Runtime`]. It owns the
+/// configured [`ContainerEnvironment`] and coordinates the pre/post namespace
+/// preparation steps around the actual command execution.
 pub struct Executor {
     pub(crate) tasks: Vec<Task>,
     pub(crate) env: ContainerEnvironment,
 }
 
 impl Executor {
-    /// Prepares the execution environment
+    /// Prepares the execution environment prior to entering the PID namespace.
+    ///
+    /// This sets up container root, namespaces, bind mounts, pivot root,
+    /// devices, and workdir, but does not yet create `/proc`, `/sys`, `/tmp`.
     pub fn prepare(&self) -> Result<()> {
         self.env.prepare_pre_pid_namespace()?;
 
         Ok(())
     }
 
-    /// Runs the tasks in the execution environment
+    /// Runs the tasks in the execution environment.
+    ///
+    /// Forks a child that executes in the isolated PID namespace, serializes
+    /// results, and passes them to the parent via a pipe.
     pub fn run(&self) -> Result<Vec<TaskResult>> {
         let (mut results_reader, mut results_writter) = mk_pipe()?;
 
@@ -76,6 +87,7 @@ impl Executor {
         }
     }
 
+    /// Executes inside the isolated PID namespace and returns collected results.
     fn run_in_execution_environment(&self) -> Result<Vec<TaskResult>> {
         self.env.prepare_post_pid_namespace()?;
 
