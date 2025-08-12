@@ -59,12 +59,12 @@ impl Runtime {
                 let results: Vec<TaskResult> = match serde_json::de::from_reader(&results_reader) {
                     Ok(r) => r,
                     Err(e) => {
-                        // Treat EOF as empty results (child may have exited before writing)
                         if e.is_eof() {
-                            debug!(
-                                "Runtime::run[parent]: EOF while reading results; treating as empty results"
-                            );
-                            Vec::new()
+                            return Err(Error::ProcessManagement {
+                                operation: "read results".to_string(),
+                                pid: child.as_raw(),
+                                details: "EOF before any results were written by child".to_string(),
+                            });
                         } else {
                             return Err(Error::ProcessManagement {
                                 operation: "read results".to_string(),
