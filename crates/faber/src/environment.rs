@@ -197,20 +197,16 @@ impl ContainerEnvironment {
     /// This function must be called from within the container's PID namespace
     /// to ensure proper isolation. Calling it from the parent process will
     /// create security vulnerabilities by exposing host system information.
-    pub(crate) fn prepare_post_pid_namespace(&self) -> Result<()> {
+    pub(crate) fn pre_exec() -> Result<()> {
         // Create proc
-        debug!("env: create /proc");
         Self::create_proc_internal()?;
 
         // Create sys
-        debug!("env: create /sys");
         Self::create_sys_internal()?;
 
         // Create tmp
-        debug!(size = %self.filesystem_config.tmp_size, "env: create /tmp");
-        Self::create_tmp_internal(self.filesystem_config.tmp_size.as_str())?;
+        Self::create_tmp_internal("128M")?;
 
-        debug!("env: prepare_post_pid_namespace done");
         Ok(())
     }
 
@@ -283,8 +279,8 @@ impl ContainerEnvironment {
     /// ```
     pub(crate) fn write_files_to_workdir(&self, files: &HashMap<String, String>) -> Result<()> {
         trace!(file_count = files.len(), work_dir = %self.work_dir, "env: write files to workdir");
-        // Base path
-        let base = PathBuf::from(self.work_dir.trim_start_matches('/'));
+        // Base path: absolute path to the workdir inside the container
+        let base = PathBuf::from(format!("/{}", self.work_dir.trim_start_matches('/')));
 
         // Create base dir
         create_dir_all(&base).map_err(|source| Error::CreateDir {
