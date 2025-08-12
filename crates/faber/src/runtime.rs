@@ -56,12 +56,24 @@ impl Runtime {
 
                 // Read and deserialize results to completion first to avoid
                 // potential pipe backpressure deadlocks
-                let results: Vec<TaskResult> = serde_json::de::from_reader(&results_reader)
-                    .map_err(|e| Error::ProcessManagement {
-                        operation: "read results".to_string(),
-                        pid: child.as_raw(),
-                        details: format!("Failed to read/deserialize results: {e}"),
-                    })?;
+                let results: Vec<TaskResult> = match serde_json::de::from_reader(&results_reader) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        // Treat EOF as empty results (child may have exited before writing)
+                        if e.is_eof() {
+                            debug!(
+                                "Runtime::run[parent]: EOF while reading results; treating as empty results"
+                            );
+                            Vec::new()
+                        } else {
+                            return Err(Error::ProcessManagement {
+                                operation: "read results".to_string(),
+                                pid: child.as_raw(),
+                                details: format!("Failed to read/deserialize results: {e}"),
+                            });
+                        }
+                    }
+                };
                 debug!(
                     result_count = results.len(),
                     "Runtime::run[parent]: results received, waiting for child"

@@ -37,6 +37,7 @@ impl Executor {
         debug!("Executor::run (inline): begin");
         let results = self.run_in_execution_environment()?;
         debug!(result_count = results.len(), "Executor::run (inline): done");
+        trace!("Executor::run (inline): returning results");
         Ok(results)
     }
 

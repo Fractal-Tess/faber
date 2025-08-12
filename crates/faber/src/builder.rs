@@ -161,7 +161,7 @@ impl RuntimeBuilder {
             nix::mount::MsFlags::MS_REC,
             nix::mount::MsFlags::MS_RDONLY,
         ];
-        let default_mounts: Vec<Mount> = ["/bin", "/lib", "/usr", "/lib64"]
+        let default_mounts: Vec<Mount> = ["/bin", "/lib", "/usr", "/lib64", "/etc"]
             .iter()
             .map(|s| Mount {
                 source: s.to_string(),
