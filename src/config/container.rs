@@ -14,6 +14,10 @@ pub struct ContainerConfig {
 pub struct ContainerFilesystemConfig {
     pub base_dir: String,
     pub work_dir: String,
+    #[serde(default = "default_tmp_size")]
+    pub tmp_size: String,
+    #[serde(default = "default_workdir_size")]
+    pub workdir_size: String,
     #[serde(default, deserialize_with = "deserialize_filesystem_mounts")]
     pub mounts: Vec<Mount>,
 }
@@ -46,6 +50,14 @@ where
         });
     }
     Ok(mounts)
+}
+
+fn default_tmp_size() -> String {
+    "128M".to_string()
+}
+
+fn default_workdir_size() -> String {
+    "256M".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]
