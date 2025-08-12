@@ -3,7 +3,7 @@ use std::process::{Command, Stdio};
 use crate::environment::ContainerEnvironment;
 use crate::prelude::*;
 use crate::{Task, TaskResult};
-use tracing::debug;
+use tracing::{debug, trace};
 
 /// Executes a list of tasks inside a prepared, isolated environment.
 ///
@@ -23,7 +23,7 @@ impl Executor {
     pub fn prepare(&self) -> Result<()> {
         debug!("Executor::prepare: begin");
         self.env.prepare_pre_pid_namespace()?;
-        debug!("Executor::prepare: done");
+        trace!("Executor::prepare: done");
 
         Ok(())
     }
@@ -42,7 +42,7 @@ impl Executor {
 
     /// Executes inside the isolated PID namespace and returns collected results.
     fn run_in_execution_environment(&self) -> Result<Vec<TaskResult>> {
-        debug!("Executor::run_in_execution_environment: preparing post-pid namespace");
+        trace!("Executor::run_in_execution_environment: preparing post-pid namespace");
         self.env.prepare_post_pid_namespace()?;
 
         let mut results: Vec<TaskResult> = Vec::with_capacity(self.tasks.len());

@@ -21,9 +21,7 @@ pub fn mk_pipe() -> Result<(PipeReader, PipeWriter)> {
     })
 }
 
-/// Close a raw file descriptor.
-///
-/// Uses `nix::unistd::close` to ensure the FD is actually closed.
+/// Close a raw file descriptor using `nix::unistd::close`.
 pub fn close_fd(fd: RawFd) -> Result<()> {
     debug!(fd, "utils::close_fd");
     close(fd).map_err(|e| Error::ProcessManagement {
@@ -34,14 +32,14 @@ pub fn close_fd(fd: RawFd) -> Result<()> {
     Ok(())
 }
 
-/// Wait for a child process to exit.
+/// Wait for a child process to exit and propagate errors.
 pub fn wait_for_child(pid: Pid) -> Result<()> {
     debug!(pid = pid.as_raw(), "utils::wait_for_child: waiting");
-    let _ = waitpid(pid, None).map_err(|e| Error::ProcessManagement {
+    waitpid(pid, None).map_err(|e| Error::ProcessManagement {
         operation: "wait for child".to_string(),
         pid: pid.as_raw(),
         details: format!("Failed to wait for child: {e}"),
-    });
+    })?;
     debug!(pid = pid.as_raw(), "utils::wait_for_child: done");
 
     Ok(())

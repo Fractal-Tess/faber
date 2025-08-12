@@ -11,7 +11,7 @@ use crate::executor::Executor;
 use crate::prelude::*;
 use crate::types::Task;
 use crate::utils::{close_fd, mk_pipe, wait_for_child};
-use tracing::debug;
+use tracing::{debug, trace};
 
 /// High-level entry point for preparing an isolated environment and running tasks.
 #[derive(Debug)]
@@ -29,8 +29,8 @@ impl Runtime {
     ///
     /// This method forks a child process to own the isolated namespaces and
     /// uses a pipe to shuttle serialized task results back to the parent.
-    /// After the child exits, the parent deserializes results and performs
-    /// environment cleanup.
+    /// The parent reads results to completion, then waits for the child to exit
+    /// and performs environment cleanup.
     ///
     /// # Errors
     /// Returns an error if validation fails, process management calls fail,
@@ -39,28 +39,47 @@ impl Runtime {
         debug!(task_count = tasks.len(), "Runtime::run: start");
         // Validate tasks
         self.validate_tasks(&tasks)?;
-        debug!("Runtime::run: validation ok");
+        trace!("Runtime::run: validation ok");
 
         // Create pipe for task results
-        let (results_reader, mut results_writter) = mk_pipe()?;
-        debug!("Runtime::run: pipe created");
+        let (results_reader, mut results_writer) = mk_pipe()?;
+        trace!("Runtime::run: pipe created");
 
         // Fork
         debug!("Runtime::run: forking child");
         match unsafe { fork() } {
             Ok(ForkResult::Parent { child, .. }) => {
                 debug!(pid = child.as_raw(), "Runtime::run[parent]: forked child");
-                // Close write end of the pipe
-                close_fd(results_writter.into_raw_fd())?;
-                debug!("Runtime::run[parent]: closed write end, waiting for child");
+                // Close write end of the pipe in parent
+                close_fd(results_writer.into_raw_fd())?;
+                trace!("Runtime::run[parent]: closed write end, reading results");
+
+                // Read and deserialize results to completion first to avoid
+                // potential pipe backpressure deadlocks
+                let results: Vec<TaskResult> = serde_json::de::from_reader(&results_reader)
+                    .map_err(|e| Error::ProcessManagement {
+                        operation: "read results".to_string(),
+                        pid: child.as_raw(),
+                        details: format!("Failed to read/deserialize results: {e}"),
+                    })?;
+                debug!(
+                    result_count = results.len(),
+                    "Runtime::run[parent]: results received, waiting for child"
+                );
 
                 // Wait for child to exit
                 wait_for_child(child)?;
-                debug!("Runtime::run[parent]: child exited, deserializing results");
+                trace!("Runtime::run[parent]: child exited");
+
+                // Cleanup environment
+                self.env.cleanup()?;
+                debug!("Runtime::run[parent]: cleanup done, returning results");
+
+                Ok(results)
             }
             Ok(ForkResult::Child) => {
-                debug!("Runtime::run[child]: in child, closing read end");
-                // Close read end of the pipe
+                trace!("Runtime::run[child]: in child, closing read end");
+                // Close read end of the pipe in child
                 close_fd(results_reader.into_raw_fd())?;
 
                 // Create executor
@@ -72,26 +91,26 @@ impl Runtime {
                 // Prepare the execution environment
                 debug!("Runtime::run[child]: preparing execution environment");
                 executor.prepare()?;
-                debug!("Runtime::run[child]: prepare done, running tasks");
+                trace!("Runtime::run[child]: prepare done, running tasks");
 
                 // Run the tasks
                 let results = executor.run()?;
-                debug!(
+                trace!(
                     result_count = results.len(),
                     "Runtime::run[child]: tasks finished, serializing"
                 );
 
                 // Serialize results
-                let serilized_results =
+                let serialized_results =
                     serde_json::to_string(&results).expect("Failed to serialize results");
 
                 // Write task results to parent
-                debug!(
-                    bytes = serilized_results.len(),
+                trace!(
+                    bytes = serialized_results.len(),
                     "Runtime::run[child]: writing results to pipe"
                 );
-                results_writter
-                    .write_all(serilized_results.as_bytes())
+                results_writer
+                    .write_all(serialized_results.as_bytes())
                     .map_err(|e| Error::ProcessManagement {
                         operation: "write results".to_string(),
                         pid: -1,
@@ -99,7 +118,7 @@ impl Runtime {
                     })?;
 
                 // Exit child
-                debug!("Runtime::run[child]: exiting");
+                trace!("Runtime::run[child]: exiting");
                 exit(0);
             }
             Err(e) => {
@@ -109,21 +128,7 @@ impl Runtime {
                     details: format!("Fork failed in parent process: {e:?}"),
                 });
             }
-        };
-
-        // Deserialize results
-        let results: Vec<TaskResult> =
-            serde_json::de::from_reader(&results_reader).expect("Failed to deserialize results");
-        debug!(
-            result_count = results.len(),
-            "Runtime::run[parent]: deserialized results"
-        );
-
-        // Cleanup environment
-        self.env.cleanup()?;
-        debug!("Runtime::run[parent]: cleanup done, returning results");
-
-        Ok(results)
+        }
     }
 
     /// Basic validation for task lists.

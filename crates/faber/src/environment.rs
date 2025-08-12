@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::env::set_current_dir;
 use std::fs::{create_dir_all, remove_dir_all, write};
 use std::path::{Path, PathBuf};
-use tracing::debug;
+use tracing::{debug, trace};
 
 /// Container environment configuration and management.
 ///
@@ -142,7 +142,7 @@ impl ContainerEnvironment {
         self.create_container_root_internal()?;
 
         // Unshare namespaces
-        debug!("env: unshare namespaces");
+        trace!("env: unshare namespaces");
         self.unshare_internal()?;
 
         // Bind mounts
@@ -154,7 +154,7 @@ impl ContainerEnvironment {
         self.pivot_root_internal()?;
 
         // Create devices
-        debug!("env: create devices");
+        trace!("env: create devices");
         self.create_devices_internal()?;
 
         // Create work directory
@@ -162,7 +162,7 @@ impl ContainerEnvironment {
         self.create_work_dir_internal(true)?;
 
         // Set hostname
-        debug!(hostname = %self.hostname, "env: set hostname");
+        trace!(hostname = %self.hostname, "env: set hostname");
         self.set_hostname_internal()?;
 
         debug!("env: prepare_pre_pid_namespace done");
@@ -282,7 +282,7 @@ impl ContainerEnvironment {
     /// env.write_files_to_workdir(&files)?;
     /// ```
     pub(crate) fn write_files_to_workdir(&self, files: &HashMap<String, String>) -> Result<()> {
-        debug!(file_count = files.len(), work_dir = %self.work_dir, "env: write files to workdir");
+        trace!(file_count = files.len(), work_dir = %self.work_dir, "env: write files to workdir");
         // Base path
         let base = PathBuf::from(self.work_dir.trim_start_matches('/'));
 
@@ -481,7 +481,7 @@ impl ContainerEnvironment {
                 source,
             })?;
 
-            debug!(src = %m.source, %target, ?flags, "env: bind mount");
+            trace!(src = %m.source, %target, ?flags, "env: bind mount");
             // Mount
             mount(
                 Some(m.source.as_str()),
@@ -540,7 +540,7 @@ impl ContainerEnvironment {
             source,
         })?;
 
-        debug!(
+        trace!(
             target = proc_path,
             fstype = proc_fstype,
             ?proc_flags,
@@ -603,7 +603,7 @@ impl ContainerEnvironment {
             path: PathBuf::from(sys_target),
             source,
         })?;
-        debug!(
+        trace!(
             target = sys_target,
             fstype = sys_fstype,
             ?sys_flags,
@@ -668,7 +668,7 @@ impl ContainerEnvironment {
 
         // Mount tmp with configured size
         let mount_options = format!("size={},mode=1777", self.filesystem_config.tmp_size);
-        debug!(target = tmp_path, opts = %mount_options, "env: mount tmpfs");
+        trace!(target = tmp_path, opts = %mount_options, "env: mount tmpfs");
         mount(
             Some("tmpfs"),
             tmp_path,
@@ -729,7 +729,7 @@ impl ContainerEnvironment {
 
         // Mount workdir as tmpfs with configured size
         let mount_options = format!("size={},mode=755", self.filesystem_config.workdir_size);
-        debug!(target = %work_dir, opts = %mount_options, "env: mount workdir tmpfs");
+        trace!(target = %work_dir, opts = %mount_options, "env: mount workdir tmpfs");
         mount(
             Some("tmpfs"),
             work_dir.as_str(),
@@ -804,7 +804,7 @@ impl ContainerEnvironment {
         // Create null device
         let device_path = format!("{dev_path}/null");
         let device_id = makedev(1, 3);
-        debug!(%device_path, "env: mknod null");
+        trace!(%device_path, "env: mknod null");
         mknod(device_path.as_str(), flags, mode, device_id).map_err(|source| {
             Error::FileSystem {
                 operation: "create device node".to_string(),
@@ -816,7 +816,7 @@ impl ContainerEnvironment {
         // Create zero device
         let device_path = format!("{dev_path}/zero");
         let device_id = makedev(1, 5);
-        debug!(%device_path, "env: mknod zero");
+        trace!(%device_path, "env: mknod zero");
         mknod(device_path.as_str(), flags, mode, device_id).map_err(|source| {
             Error::FileSystem {
                 operation: "create device node".to_string(),
@@ -828,7 +828,7 @@ impl ContainerEnvironment {
         // Create full device
         let device_path = format!("{dev_path}/full");
         let device_id = makedev(1, 7);
-        debug!(%device_path, "env: mknod full");
+        trace!(%device_path, "env: mknod full");
         mknod(device_path.as_str(), flags, mode, device_id).map_err(|source| {
             Error::FileSystem {
                 operation: "create device node".to_string(),
@@ -840,7 +840,7 @@ impl ContainerEnvironment {
         // Create random device
         let device_path = format!("{dev_path}/random");
         let device_id = makedev(1, 8);
-        debug!(%device_path, "env: mknod random");
+        trace!(%device_path, "env: mknod random");
         mknod(device_path.as_str(), flags, mode, device_id).map_err(|source| {
             Error::FileSystem {
                 operation: "create device node".to_string(),
@@ -852,7 +852,7 @@ impl ContainerEnvironment {
         // Create urandom device
         let device_path = format!("{dev_path}/urandom");
         let device_id = makedev(1, 9);
-        debug!(%device_path, "env: mknod urandom");
+        trace!(%device_path, "env: mknod urandom");
         mknod(device_path.as_str(), flags, mode, device_id).map_err(|source| {
             Error::FileSystem {
                 operation: "create device node".to_string(),
