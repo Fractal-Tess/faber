@@ -1,8 +1,7 @@
-use crate::cgroup::CgroupManager;
 use crate::environment::ContainerEnvironment;
 use crate::prelude::*;
 use crate::runtime::Runtime;
-use crate::types::{CgroupConfig, Mount, RuntimeLimits};
+use crate::types::{FilesystemConfig, Mount, RuntimeLimits};
 use rand::{Rng, distr::Alphanumeric};
 use std::path::PathBuf;
 
@@ -12,7 +11,7 @@ pub struct RuntimeBuilder {
     hostname: Option<String>,
     mounts: Option<Vec<Mount>>,
     work_dir: Option<String>,
-    limits: Option<RuntimeLimits>,
+    filesystem_config: Option<FilesystemConfig>,
 
     id: Option<String>,
 }
@@ -36,16 +35,86 @@ impl RuntimeBuilder {
         self.work_dir = Some(work_dir);
         self
     }
+
     pub fn with_container_root(mut self, container_root: impl Into<PathBuf>) -> Self {
         self.container_root = Some(container_root.into());
         self
     }
+
     pub fn with_hostname(mut self, hostname: String) -> Self {
         self.hostname = Some(hostname);
         self
     }
-    pub fn with_runtime_limits(mut self, limits: RuntimeLimits) -> Self {
-        self.limits = Some(limits);
+
+    /// Sets the filesystem configuration for tmp and workdir sizes.
+    ///
+    /// # Arguments
+    ///
+    /// * `tmp_size` - Size limit for the `/tmp` filesystem (e.g., "128M", "1G")
+    /// * `workdir_size` - Size limit for the working directory filesystem (e.g., "256M", "2G")
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use faber::RuntimeBuilder;
+    ///
+    /// let runtime = RuntimeBuilder::new()
+    ///     .with_filesystem_config("64M", "128M")
+    ///     .build()?;
+    /// ```
+    pub fn with_filesystem_config(
+        mut self,
+        tmp_size: impl Into<String>,
+        workdir_size: impl Into<String>,
+    ) -> Self {
+        self.filesystem_config = Some(FilesystemConfig {
+            tmp_size: tmp_size.into(),
+            workdir_size: workdir_size.into(),
+        });
+        self
+    }
+
+    /// Sets the tmp filesystem size.
+    ///
+    /// # Arguments
+    ///
+    /// * `tmp_size` - Size limit for the `/tmp` filesystem (e.g., "128M", "1G")
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use faber::RuntimeBuilder;
+    ///
+    /// let runtime = RuntimeBuilder::new()
+    ///     .with_tmp_size("64M")
+    ///     .build()?;
+    /// ```
+    pub fn with_tmp_size(mut self, tmp_size: impl Into<String>) -> Self {
+        let mut config = self.filesystem_config.unwrap_or_default();
+        config.tmp_size = tmp_size.into();
+        self.filesystem_config = Some(config);
+        self
+    }
+
+    /// Sets the workdir filesystem size.
+    ///
+    /// # Arguments
+    ///
+    /// * `workdir_size` - Size limit for the working directory filesystem (e.g., "256M", "2G")
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use faber::RuntimeBuilder;
+    ///
+    /// let runtime = RuntimeBuilder::new()
+    ///     .with_workdir_size("128M")
+    ///     .build()?;
+    /// ```
+    pub fn with_workdir_size(mut self, workdir_size: impl Into<String>) -> Self {
+        let mut config = self.filesystem_config.unwrap_or_default();
+        config.workdir_size = workdir_size.into();
+        self.filesystem_config = Some(config);
         self
     }
 
@@ -73,7 +142,7 @@ impl RuntimeBuilder {
             nix::mount::MsFlags::MS_REC,
             nix::mount::MsFlags::MS_RDONLY,
         ];
-        let default_mounts: Vec<Mount> = ["/bin", "/lib", "/usr", "/lib64", "/sbin"]
+        let default_mounts: Vec<Mount> = ["/bin", "/lib", "/usr", "/lib64"]
             .iter()
             .map(|s| Mount {
                 source: s.to_string(),
@@ -97,6 +166,7 @@ impl RuntimeBuilder {
         let hostname = self.hostname.unwrap_or_else(|| "faber".into());
         let mounts = self.mounts.unwrap_or(default_mounts);
         let work_dir = self.work_dir.unwrap_or_else(|| "/faber".into());
+        let filesystem_config = self.filesystem_config.unwrap_or_default();
 
         // Validate work_dir
         if work_dir.is_empty() {
@@ -106,9 +176,14 @@ impl RuntimeBuilder {
             });
         }
 
-        let env = ContainerEnvironment::new(container_root, hostname, mounts, work_dir);
-        let limits = self.limits.unwrap_or_default();
+        let env = ContainerEnvironment::new(
+            container_root,
+            hostname,
+            mounts,
+            work_dir,
+            filesystem_config,
+        );
 
-        Ok(Runtime { id, env, limits })
+        Ok(Runtime { env })
     }
 }
