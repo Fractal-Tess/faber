@@ -12,16 +12,28 @@ use crate::prelude::*;
 use crate::types::Task;
 use crate::utils::{close_fd, mk_pipe, wait_for_child};
 
+/// High-level entry point for preparing an isolated environment and running tasks.
 #[derive(Debug)]
 pub struct Runtime {
     pub(crate) env: ContainerEnvironment,
 }
 
 impl Runtime {
+    /// Get a builder to configure and construct a [`Runtime`].
     pub fn builder() -> RuntimeBuilder {
         RuntimeBuilder::new()
     }
 
+    /// Run a sequence of tasks within a prepared, isolated environment.
+    ///
+    /// This method forks a child process to own the isolated namespaces and
+    /// uses a pipe to shuttle serialized task results back to the parent.
+    /// After the child exits, the parent deserializes results and performs
+    /// environment cleanup.
+    ///
+    /// # Errors
+    /// Returns an error if validation fails, process management calls fail,
+    /// or if serialization/deserialization encounters issues.
     pub fn run(self, tasks: Vec<Task>) -> Result<Vec<TaskResult>> {
         // Validate tasks
         self.validate_tasks(&tasks)?;
@@ -89,6 +101,7 @@ impl Runtime {
         Ok(results)
     }
 
+    /// Basic validation for task lists.
     fn validate_tasks(&self, tasks: &[Task]) -> Result<()> {
         // Ensure tasks are not empty
         if tasks.is_empty() {
