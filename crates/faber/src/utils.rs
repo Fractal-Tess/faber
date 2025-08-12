@@ -1,5 +1,8 @@
 use crate::prelude::*;
-use nix::{sys::wait::waitpid, unistd::Pid};
+use nix::{
+    sys::wait::waitpid,
+    unistd::{Pid, close},
+};
 use std::{
     io::{PipeReader, PipeWriter, pipe},
     os::fd::RawFd,
@@ -20,12 +23,14 @@ pub fn mk_pipe() -> Result<(PipeReader, PipeWriter)> {
 
 /// Close a raw file descriptor.
 ///
-/// Currently a no-op placeholder; kept to centralize FD lifecycle and allow
-/// future platform-specific handling.
+/// Uses `nix::unistd::close` to ensure the FD is actually closed.
 pub fn close_fd(fd: RawFd) -> Result<()> {
     debug!(fd, "utils::close_fd");
-    let _ = fd;
-
+    close(fd).map_err(|e| Error::ProcessManagement {
+        operation: "close fd".to_string(),
+        pid: -1,
+        details: format!("Failed to close fd {fd}: {e}"),
+    })?;
     Ok(())
 }
 
