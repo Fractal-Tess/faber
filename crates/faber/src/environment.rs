@@ -5,7 +5,10 @@ use nix::{
     unistd::{pivot_root, sethostname},
 };
 
-use crate::{prelude::*, types::Mount};
+use crate::{
+    prelude::*,
+    types::{FilesystemConfig, Mount},
+};
 
 use std::collections::HashMap;
 use std::env::set_current_dir;
@@ -38,15 +41,19 @@ pub(crate) struct ContainerEnvironment {
     /// This directory serves as the default location for user files and
     /// command execution within the container environment.
     pub(crate) work_dir: String,
+
+    /// Filesystem configuration for tmp and workdir sizes.
+    /// Controls the size limits for temporary and working directory filesystems.
+    pub(crate) filesystem_config: FilesystemConfig,
 }
 
 impl ContainerEnvironment {
     /// Creates a new container environment with the specified configuration.
     ///
     /// This constructor initializes a container environment with the given
-    /// root directory, hostname, mount points, and working directory. The
-    /// environment is not yet prepared for use - call the prepare methods
-    /// to set up the actual container filesystem and namespaces.
+    /// root directory, hostname, mount points, working directory, and filesystem
+    /// configuration. The environment is not yet prepared for use - call the prepare
+    /// methods to set up the actual container filesystem and namespaces.
     ///
     /// # Arguments
     ///
@@ -54,6 +61,7 @@ impl ContainerEnvironment {
     /// * `hostname` - The hostname to set inside the container for network isolation
     /// * `mounts` - List of mount points to bind from the host into the container
     /// * `work_dir` - Working directory within the container environment that will be the default when executing commands
+    /// * `filesystem_config` - Configuration for filesystem sizes (tmp and workdir)
     ///
     /// # Returns
     ///
@@ -63,13 +71,14 @@ impl ContainerEnvironment {
     ///
     /// ```rust
     /// use std::path::PathBuf;
-    /// use faber::types::Mount;
+    /// use faber::types::{Mount, FilesystemConfig};
     ///
     /// let env = ContainerEnvironment::new(
     ///     PathBuf::from("/tmp/container"),
     ///     "my-container".to_string(),
-    ///     vec![Mount { source: "/usr/bin".to_string(), target: "/bin".to_string(), flags: vec![], data: None }],
+    ///     vec![Mount { source: "/usr/bin".to_string(), target: "/bin".to_string(), flags: vec![], options: vec![], data: None }],
     ///     "workspace".to_string(),
+    ///     FilesystemConfig { tmp_size: "64M".to_string(), workdir_size: "128M".to_string() },
     /// );
     /// ```
     pub(crate) fn new(
@@ -77,12 +86,14 @@ impl ContainerEnvironment {
         hostname: String,
         mounts: Vec<Mount>,
         work_dir: String,
+        filesystem_config: FilesystemConfig,
     ) -> Self {
         Self {
             host_container_root: container_root,
             hostname,
             mounts,
             work_dir,
+            filesystem_config,
         }
     }
 
@@ -585,12 +596,12 @@ impl ContainerEnvironment {
 
     /// Creates and mounts a temporary filesystem.
     ///
-    /// Mounts a tmpfs at `/tmp` with a 128MB size limit and appropriate permissions
+    /// Mounts a tmpfs at `/tmp` with a configurable size limit and appropriate permissions
     /// (mode 1777 - readable, writable, and executable by all users). This provides
     /// temporary storage for the container with automatic cleanup when unmounted.
     ///
     /// The tmpfs filesystem:
-    /// - Has a 128MB size limit to prevent disk space exhaustion
+    /// - Has a configurable size limit to prevent disk space exhaustion
     /// - Uses mode 1777 for full user access (sticky bit prevents deletion of others' files)
     /// - Is automatically cleaned up when the container terminates
     /// - Provides fast access for temporary file operations
@@ -621,13 +632,14 @@ impl ContainerEnvironment {
             source,
         })?;
 
-        // Mount tmp
+        // Mount tmp with configured size
+        let mount_options = format!("size={},mode=1777", self.filesystem_config.tmp_size);
         mount(
             Some("tmpfs"),
             tmp_path,
             Some("tmpfs"),
             MsFlags::empty(),
-            Some("size=128M,mode=1777"),
+            Some(mount_options.as_str()),
         )
         .map_err(|e| Error::Mount {
             src: "tmpfs".to_string(),
@@ -644,6 +656,8 @@ impl ContainerEnvironment {
     /// Creates the directory specified in the container configuration where
     /// user files will be placed. This directory serves as the default
     /// location for file operations and command execution within the container.
+    /// The working directory is mounted as a tmpfs with configurable size limits
+    /// to provide isolated storage for user files.
     ///
     /// # Arguments
     ///
@@ -661,16 +675,38 @@ impl ContainerEnvironment {
     /// - The working directory cannot be created due to permission or filesystem issues
     /// - The current directory cannot be changed (when `change_dir` is `true`)
     /// - Invalid working directory paths are specified
+    /// - The tmpfs cannot be mounted due to insufficient privileges or memory constraints
     ///
     /// # Safety
     ///
     /// When `change_dir` is `true`, this function changes the current working directory
     /// for the process. This change affects all subsequent relative path operations.
+    /// The working directory is mounted as a tmpfs, so files will be lost when the
+    /// container terminates.
     fn create_work_dir_internal(&self, change_dir: bool) -> Result<()> {
         let work_dir = format!("/{}", self.work_dir.trim_start_matches('/'));
+
+        // Create the work directory
         create_dir_all(&work_dir).map_err(|source| Error::CreateDir {
             path: PathBuf::from(&work_dir),
             source,
+        })?;
+
+        // Mount workdir as tmpfs with configured size
+        let mount_options = format!("size={},mode=755", self.filesystem_config.workdir_size);
+        mount(
+            Some("tmpfs"),
+            work_dir.as_str(),
+            Some("tmpfs"),
+            MsFlags::empty(),
+            Some(mount_options.as_str()),
+        )
+        .map_err(|e| Error::Mount {
+            src: "tmpfs".to_string(),
+            target: work_dir.clone(),
+            fstype: Some("tmpfs".to_string()),
+            flags: MsFlags::empty(),
+            err: e,
         })?;
 
         // Change directory to the work dir
