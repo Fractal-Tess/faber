@@ -8,17 +8,24 @@ use tracing::debug;
 
 use tokio::sync::{OnceCell, Semaphore};
 
+/// Error payload returned by the API on failures.
 #[derive(Debug, Clone, Serialize)]
 pub struct ErrorPayload {
     request_id: String,
     message: String,
 }
 
+/// Successful response containing a list of task results.
 #[derive(Serialize)]
 pub struct ExecutionResponse(pub Vec<TaskResult>);
 
 static CONTAINER_SEM: OnceCell<Arc<Semaphore>> = OnceCell::const_new();
 
+/// Execute one or more tasks inside an isolated container-like environment.
+///
+/// This endpoint builds a runtime using configured mounts and filesystem limits,
+/// then spawns a blocking task to run the workload while respecting a global
+/// semaphore to limit concurrent executions.
 #[axum::debug_handler]
 pub async fn execution(
     Extension(config): Extension<Arc<FaberConfig>>,
