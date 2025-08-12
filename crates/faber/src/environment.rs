@@ -1,3 +1,9 @@
+//! Container environment lifecycle helpers.
+//!
+//! This module encapsulates low-level operations for setting up an isolated
+//! filesystem and basic devices using Linux namespaces and mount operations.
+//! It is intentionally kept `pub(crate)` and driven by higher-level types.
+
 use nix::{
     mount::{MntFlags, MsFlags, mount, umount2},
     sched::{CloneFlags, unshare},
