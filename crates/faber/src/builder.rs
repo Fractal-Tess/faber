@@ -5,6 +5,11 @@ use crate::types::{FilesystemConfig, Mount, RuntimeLimits};
 use rand::{Rng, distr::Alphanumeric};
 use std::path::PathBuf;
 
+/// Builder for constructing a `Runtime` with clear, typed configuration.
+///
+/// Use fluent methods to customize the container root, hostname, bind mounts,
+/// working directory, and filesystem sizes. Call [`build`](Self::build) to
+/// produce a ready-to-run [`Runtime`].
 #[derive(Default)]
 pub struct RuntimeBuilder {
     container_root: Option<PathBuf>,
@@ -17,30 +22,36 @@ pub struct RuntimeBuilder {
 }
 
 impl RuntimeBuilder {
+    /// Create a new builder with default settings.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Provide custom bind mounts.
     pub fn with_mounts(mut self, mounts: Vec<Mount>) -> Self {
         self.mounts = Some(mounts);
         self
     }
 
+    /// Set an explicit runtime identifier.
     pub fn with_id(mut self, id: String) -> Self {
         self.id = Some(id);
         self
     }
 
+    /// Set the working directory path inside the container view.
     pub fn with_workdir(mut self, work_dir: String) -> Self {
         self.work_dir = Some(work_dir);
         self
     }
 
+    /// Set the host path that will become the container root.
     pub fn with_container_root(mut self, container_root: impl Into<PathBuf>) -> Self {
         self.container_root = Some(container_root.into());
         self
     }
 
+    /// Set the container hostname (UTS namespace).
     pub fn with_hostname(mut self, hostname: String) -> Self {
         self.hostname = Some(hostname);
         self
@@ -118,6 +129,12 @@ impl RuntimeBuilder {
         self
     }
 
+    /// Finalize the configuration and create a [`Runtime`].
+    ///
+    /// Performs validation of mount entries and ensures defaults are applied:
+    /// - Readonly bind mounts for common system paths (`/bin`, `/lib`, `/usr`, `/lib64`)
+    /// - Random ID and container root under `/tmp/faber/containers/{id}`
+    /// - Default hostname `"faber"` and workdir `"/faber"`
     pub fn build(self) -> Result<Runtime> {
         // Validate required fields
         if let Some(ref mounts) = self.mounts {
