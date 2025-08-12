@@ -32,6 +32,7 @@ pub async fn execution(
     Extension(request_id): Extension<RequestId>,
     Json(tasks): Json<Vec<Task>>,
 ) -> Result<Json<ExecutionResponse>, (StatusCode, Json<ErrorPayload>)> {
+    debug!(%request_id, task_count = tasks.len(), "execution: request start");
     if tasks.is_empty() {
         debug!("Request {request_id} is empty");
         return Err((
@@ -63,8 +64,10 @@ pub async fn execution(
             }),
         )
     })?;
+    debug!("execution: semaphore acquired");
 
     // Build runtime
+    debug!("execution: building runtime");
     let runtime = faber::Runtime::builder()
         .with_mounts(config.container.filesystem.mounts.clone())
         .with_container_root(format!(
@@ -87,8 +90,7 @@ pub async fn execution(
                 }),
             )
         })?;
-
-    debug!("Spawning blocking runtime.run");
+    debug!("execution: runtime built, spawning blocking run");
 
     let run_future = tokio::task::spawn_blocking(move || -> Result<Vec<TaskResult>, String> {
         // Catch panic to avoid poisoning the runtime
@@ -100,21 +102,33 @@ pub async fn execution(
     });
 
     match run_future.await {
-        Ok(Ok(results)) => Ok(Json(ExecutionResponse(results))),
-        Ok(Err(e)) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorPayload {
-                request_id,
-                message: e.to_string(),
-            }),
-        )),
-        Err(_) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorPayload {
-                request_id,
-                message: "join error".to_string(),
-            }),
-        )),
+        Ok(Ok(results)) => {
+            debug!(
+                result_count = results.len(),
+                "execution: run finished successfully"
+            );
+            Ok(Json(ExecutionResponse(results)))
+        }
+        Ok(Err(e)) => {
+            debug!(error = %e, "execution: runtime error");
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorPayload {
+                    request_id,
+                    message: e.to_string(),
+                }),
+            ))
+        }
+        Err(e) => {
+            debug!(error = ?e, "execution: join error");
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorPayload {
+                    request_id,
+                    message: "join error".to_string(),
+                }),
+            ))
+        }
     }
 
     // Ok(Json(ExecutionResponse(results)))
