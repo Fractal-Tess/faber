@@ -133,6 +133,7 @@ impl Executor {
         } else {
             cmd.stdin(Stdio::null());
         }
+        // Set stdout and stderr to piped
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
         // Run the command
