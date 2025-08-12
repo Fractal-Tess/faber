@@ -200,15 +200,15 @@ impl ContainerEnvironment {
     pub(crate) fn prepare_post_pid_namespace(&self) -> Result<()> {
         // Create proc
         debug!("env: create /proc");
-        self.create_proc_internal()?;
+        Self::create_proc_internal()?;
 
         // Create sys
         debug!("env: create /sys");
-        self.create_sys_internal()?;
+        Self::create_sys_internal()?;
 
         // Create tmp
         debug!(size = %self.filesystem_config.tmp_size, "env: create /tmp");
-        self.create_tmp_internal()?;
+        Self::create_tmp_internal(self.filesystem_config.tmp_size.as_str())?;
 
         debug!("env: prepare_post_pid_namespace done");
         Ok(())
@@ -315,21 +315,6 @@ impl ContainerEnvironment {
     }
 
     /// Creates the container root directory.
-    ///
-    /// Creates the base directory structure for the container filesystem on the
-    /// host system. This directory will serve as the mount point for the
-    /// container's root filesystem and contain all container-related files.
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(())` on success, or an `Error` if directory creation fails.
-    ///
-    /// # Errors
-    ///
-    /// This function may fail if:
-    /// - Insufficient permissions to create the directory
-    /// - The parent directory doesn't exist or isn't writable
-    /// - Filesystem errors prevent directory creation
     fn create_container_root_internal(&self) -> Result<()> {
         create_dir_all(&self.host_container_root).map_err(|source| Error::CreateDir {
             path: self.host_container_root.clone(),
@@ -339,31 +324,6 @@ impl ContainerEnvironment {
     }
 
     /// Unshares namespaces to isolate the container from the host system.
-    ///
-    /// Creates new namespaces for complete isolation from the host system:
-    /// - **Mount namespace** (`CLONE_NEWNS`): Isolated filesystem view
-    /// - **UTS namespace** (`CLONE_NEWUTS`): Isolated hostname and domain name
-    /// - **IPC namespace** (`CLONE_NEWIPC`): Isolated inter-process communication
-    /// - **PID namespace** (`CLONE_NEWPID`): Isolated process tree
-    /// - **Cgroup namespace** (`CLONE_NEWCGROUP`): Isolated resource limits
-    /// - **Signal namespace** (`CLONE_SIGHAND`): Isolated signal handling
-    /// - **Network namespace** (`CLONE_NEWNET`): Isolated network stack
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(())` on success, or an `Error` if unshare fails.
-    ///
-    /// # Errors
-    ///
-    /// This function may fail if:
-    /// - The process lacks sufficient privileges (typically requires root)
-    /// - The kernel doesn't support the requested namespaces
-    /// - System resource limits prevent namespace creation
-    ///
-    /// # Safety
-    ///
-    /// This function permanently changes the process's namespace context.
-    /// It should only be called once and cannot be undone without process termination.
     fn unshare_internal(&self) -> Result<()> {
         // Unshare flags
         let flags = CloneFlags::CLONE_NEWNS // Mount namespace
@@ -380,28 +340,7 @@ impl ContainerEnvironment {
     }
 
     /// Sets the hostname for the container.
-    ///
-    /// Changes the system hostname to the value specified in the container configuration.
-    /// This provides network identity isolation from the host system and allows the
-    /// container to have its own network identity.
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(())` on success, or an `Error` if setting hostname fails.
-    ///
-    /// # Errors
-    ///
-    /// This function may fail if:
-    /// - The process lacks sufficient privileges to change the hostname
-    /// - The hostname contains invalid characters
-    /// - System calls fail due to kernel constraints
-    ///
-    /// # Safety
-    ///
-    /// This function changes the system hostname for the current process and its
-    /// descendants. The change is isolated within the UTS namespace.
     fn set_hostname_internal(&self) -> Result<()> {
-        // Set hostname
         sethostname(self.hostname.as_str()).map_err(|source| Error::SetHostname {
             hostname: self.hostname.clone(),
             source,
@@ -410,34 +349,6 @@ impl ContainerEnvironment {
     }
 
     /// Sets up bind mounts for the container filesystem.
-    ///
-    /// First makes the root filesystem private to prevent mount propagation,
-    /// then creates bind mounts for each mount point specified in the container
-    /// configuration. This allows the container to access specific host directories
-    /// while maintaining isolation boundaries.
-    ///
-    /// The function:
-    /// 1. Makes the root filesystem private to prevent mount propagation
-    /// 2. Iterates through the configured mount points
-    /// 3. Creates target directories as needed
-    /// 4. Establishes bind mounts with the specified flags
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(())` on success, or an `Error` if any mount operation fails.
-    ///
-    /// # Errors
-    ///
-    /// This function may fail if:
-    /// - The root filesystem cannot be made private
-    /// - Target directories cannot be created
-    /// - Mount operations fail due to filesystem or permission issues
-    /// - Invalid mount configurations are provided
-    ///
-    /// # Safety
-    ///
-    /// This function modifies the mount namespace and should only be called
-    /// after unsharing the mount namespace to ensure proper isolation.
     fn bind_mounts_internal(&self) -> Result<()> {
         // Rebind `/` to make it private
         mount(
@@ -501,34 +412,8 @@ impl ContainerEnvironment {
         Ok(())
     }
 
-    /// Creates the `/proc` filesystem.
-    ///
-    /// Creates a new `/proc` filesystem with appropriate security flags for
-    /// isolation from the host system. This provides process information,
-    /// system statistics, and kernel parameters within the container.
-    ///
-    /// The filesystem is mounted with the following security flags:
-    /// - `MS_NODEV`: Prevents access to device files
-    /// - `MS_NOSUID`: Ignores set-user-ID and set-group-ID bits
-    /// - `MS_NOEXEC`: Prevents execution of files from this filesystem
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(())` on success, or an `Error` if any mount operation fails.
-    ///
-    /// # Errors
-    ///
-    /// This function may fail if:
-    /// - The `/proc` directory cannot be created
-    /// - The proc filesystem cannot be mounted
-    /// - Insufficient privileges to create or mount the filesystem
-    ///
-    /// # Safety
-    ///
-    /// This function must be called from within the container's PID namespace
-    /// to ensure proper isolation. The created proc filesystem will only
-    /// show processes from the container's namespace.
-    fn create_proc_internal(&self) -> Result<()> {
+    /// Creates the `/proc` filesystem (non-self).
+    fn create_proc_internal() -> Result<()> {
         // Proc - mount a new proc filesystem to isolate from host
         let proc_path = "/proc";
         let proc_fstype = "proc";
@@ -565,34 +450,8 @@ impl ContainerEnvironment {
         Ok(())
     }
 
-    /// Creates the `/sys` filesystem.
-    ///
-    /// Creates a new `/sys` filesystem (sysfs) with appropriate security flags
-    /// for isolation from the host system. This provides access to kernel and
-    /// device information within the container.
-    ///
-    /// The filesystem is mounted with the following security flags:
-    /// - `MS_NODEV`: Prevents access to device files
-    /// - `MS_NOSUID`: Ignores set-user-ID and set-group-ID bits
-    /// - `MS_NOEXEC`: Prevents execution of files from this filesystem
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(())` on success, or an `Error` if any mount operation fails.
-    ///
-    /// # Errors
-    ///
-    /// This function may fail if:
-    /// - The `/sys` directory cannot be created
-    /// - The sysfs cannot be mounted
-    /// - Insufficient privileges to create or mount the filesystem
-    ///
-    /// # Safety
-    ///
-    /// This function must be called from within the container's PID namespace
-    /// to ensure proper isolation. The created sysfs will only show
-    /// kernel and device information relevant to the container.
-    fn create_sys_internal(&self) -> Result<()> {
+    /// Creates the `/sys` filesystem (non-self).
+    fn create_sys_internal() -> Result<()> {
         // Sys - mount a new sysfs to isolate from host
         let sys_target = "/sys";
         let sys_fstype = "sysfs";
@@ -628,36 +487,8 @@ impl ContainerEnvironment {
         Ok(())
     }
 
-    /// Creates and mounts a temporary filesystem.
-    ///
-    /// Mounts a tmpfs at `/tmp` with a configurable size limit and appropriate permissions
-    /// (mode 1777 - readable, writable, and executable by all users). This provides
-    /// temporary storage for the container with automatic cleanup when unmounted.
-    ///
-    /// The tmpfs filesystem:
-    /// - Has a configurable size limit to prevent disk space exhaustion
-    /// - Uses mode 1777 for full user access (sticky bit prevents deletion of others' files)
-    /// - Is automatically cleaned up when the container terminates
-    /// - Provides fast access for temporary file operations
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(())` on success, or an `Error` if the mount operation fails.
-    ///
-    /// # Errors
-    ///
-    /// This function may fail if:
-    /// - The `/tmp` directory cannot be created
-    /// - The tmpfs cannot be mounted
-    /// - Insufficient privileges to create or mount the filesystem
-    /// - System memory constraints prevent tmpfs creation
-    ///
-    /// # Safety
-    ///
-    /// This function creates a temporary filesystem that will be automatically
-    /// cleaned up when unmounted. Files stored in `/tmp` will be lost when
-    /// the container terminates.
-    fn create_tmp_internal(&self) -> Result<()> {
+    /// Creates and mounts a temporary filesystem at `/tmp` (non-self).
+    fn create_tmp_internal(tmp_size: &str) -> Result<()> {
         let tmp_path = "/tmp";
 
         // Create tmp dir
@@ -667,7 +498,7 @@ impl ContainerEnvironment {
         })?;
 
         // Mount tmp with configured size
-        let mount_options = format!("size={},mode=1777", self.filesystem_config.tmp_size);
+        let mount_options = format!("size={},mode=1777", tmp_size);
         trace!(target = tmp_path, opts = %mount_options, "env: mount tmpfs");
         mount(
             Some("tmpfs"),
@@ -687,37 +518,6 @@ impl ContainerEnvironment {
     }
 
     /// Creates the working directory for user files within the container.
-    ///
-    /// Creates the directory specified in the container configuration where
-    /// user files will be placed. This directory serves as the default
-    /// location for file operations and command execution within the container.
-    /// The working directory is mounted as a tmpfs with configurable size limits
-    /// to provide isolated storage for user files.
-    ///
-    /// # Arguments
-    ///
-    /// * `change_dir` - Whether to change the current working directory to the work directory
-    ///                  If `true`, the process will change to the work directory after creation.
-    ///                  If `false`, the directory is created but the current directory remains unchanged.
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(())` on success, or an `Error` if directory creation fails.
-    ///
-    /// # Errors
-    ///
-    /// This function may fail if:
-    /// - The working directory cannot be created due to permission or filesystem issues
-    /// - The current directory cannot be changed (when `change_dir` is `true`)
-    /// - Invalid working directory paths are specified
-    /// - The tmpfs cannot be mounted due to insufficient privileges or memory constraints
-    ///
-    /// # Safety
-    ///
-    /// When `change_dir` is `true`, this function changes the current working directory
-    /// for the process. This change affects all subsequent relative path operations.
-    /// The working directory is mounted as a tmpfs, so files will be lost when the
-    /// container terminates.
     fn create_work_dir_internal(&self, change_dir: bool) -> Result<()> {
         let work_dir = format!("/{}", self.work_dir.trim_start_matches('/'));
 
@@ -756,36 +556,6 @@ impl ContainerEnvironment {
     }
 
     /// Creates essential device nodes for the container.
-    ///
-    /// Creates the following character devices that are commonly needed
-    /// for basic container operations:
-    ///
-    /// - `/dev/null` - Null device for discarding output (major: 1, minor: 3)
-    /// - `/dev/zero` - Zero device for reading zeros (major: 1, minor: 5)
-    /// - `/dev/full` - Full device for testing write failures (major: 1, minor: 7)
-    /// - `/dev/random` - Random number generator (major: 1, minor: 8)
-    /// - `/dev/urandom` - Non-blocking random number generator (major: 1, minor: 9)
-    ///
-    /// All devices are created with permissions 666 (readable and writable by all users)
-    /// and are character devices (`S_IFCHR`).
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(())` on success, or an `Error` if any device creation fails.
-    ///
-    /// # Errors
-    ///
-    /// This function may fail if:
-    /// - The `/dev` directory cannot be created
-    /// - Device nodes cannot be created due to permission or filesystem constraints
-    /// - Invalid device major/minor numbers are used
-    /// - The filesystem doesn't support device node creation
-    ///
-    /// # Safety
-    ///
-    /// This function creates device nodes that provide access to system resources.
-    /// The devices are created with broad permissions to ensure container processes
-    /// can access them, but this also means they should be used carefully.
     fn create_devices_internal(&self) -> Result<()> {
         let flags = SFlag::S_IFCHR;
         let mode = Mode::S_IRUSR
@@ -865,47 +635,6 @@ impl ContainerEnvironment {
     }
 
     /// Performs a pivot root operation to change the filesystem root.
-    ///
-    /// This function changes the root filesystem from the host root to the
-    /// container directory, effectively isolating the container's view of
-    /// the filesystem. The operation follows these steps:
-    ///
-    /// 1. Creates an `oldroot` directory within the container for the pivot operation
-    /// 2. Bind mounts the new root (container directory) to itself to maintain references
-    /// 3. Changes the root filesystem to the container directory using `pivot_root`
-    /// 4. Changes the current working directory to the new root (`/`)
-    /// 5. Unmounts the old root to complete the isolation
-    /// 6. Removes the `oldroot` directory to clean up
-    ///
-    /// After this operation, the container process will see the container directory
-    /// as its root filesystem (`/`), providing complete filesystem isolation.
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(())` on success, or an `Error` if any step fails.
-    ///
-    /// # Errors
-    ///
-    /// This function may fail if:
-    /// - The `oldroot` directory cannot be created
-    /// - Bind mounting the new root fails
-    /// - The `pivot_root` system call fails
-    /// - Changing the current directory fails
-    /// - Unmounting the old root fails
-    /// - Removing the `oldroot` directory fails
-    ///
-    /// # Safety
-    ///
-    /// This function permanently changes the root filesystem for the current process
-    /// and cannot be undone without process termination. It should only be called
-    /// after proper namespace isolation is established.
-    ///
-    /// # Notes
-    ///
-    /// The pivot root operation is a critical security feature that ensures the
-    /// container cannot access files outside its designated filesystem. After this
-    /// operation, the container's view of the filesystem is completely isolated
-    /// from the host system.
     fn pivot_root_internal(&self) -> Result<()> {
         // New root path (which is essentially the container root)
         let new_root = self.host_container_root.clone();
@@ -925,7 +654,7 @@ impl ContainerEnvironment {
             details: "Container root path contains invalid UTF-8 characters".to_string(),
         })?;
 
-        debug!(new_root = new_root_str, old_root = %old_root, "env: bind+pivot root");
+        trace!(new_root = new_root_str, old_root = %old_root, "env: bind+pivot root");
         mount(
             Some(new_root_str),
             new_root_str,
