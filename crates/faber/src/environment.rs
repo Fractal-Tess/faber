@@ -20,6 +20,7 @@ use std::collections::HashMap;
 use std::env::set_current_dir;
 use std::fs::{create_dir_all, remove_dir_all, write};
 use std::path::{Path, PathBuf};
+use tracing::debug;
 
 /// Container environment configuration and management.
 ///
@@ -136,27 +137,35 @@ impl ContainerEnvironment {
     /// This function must be called with appropriate privileges (typically root)
     /// and should only be called once per container environment.
     pub(crate) fn prepare_pre_pid_namespace(&self) -> Result<()> {
+        debug!(root = %self.host_container_root.display(), "env: create container root");
         // Create the container root
         self.create_container_root_internal()?;
 
         // Unshare namespaces
+        debug!("env: unshare namespaces");
         self.unshare_internal()?;
 
         // Bind mounts
+        debug!(count = self.mounts.len(), "env: bind mounts");
         self.bind_mounts_internal()?;
 
         // Pivot root
+        debug!("env: pivot root");
         self.pivot_root_internal()?;
 
         // Create devices
+        debug!("env: create devices");
         self.create_devices_internal()?;
 
         // Create work directory
+        debug!(work_dir = %self.work_dir, "env: create work dir");
         self.create_work_dir_internal(true)?;
 
         // Set hostname
+        debug!(hostname = %self.hostname, "env: set hostname");
         self.set_hostname_internal()?;
 
+        debug!("env: prepare_pre_pid_namespace done");
         Ok(())
     }
 
@@ -190,14 +199,18 @@ impl ContainerEnvironment {
     /// create security vulnerabilities by exposing host system information.
     pub(crate) fn prepare_post_pid_namespace(&self) -> Result<()> {
         // Create proc
+        debug!("env: create /proc");
         self.create_proc_internal()?;
 
         // Create sys
+        debug!("env: create /sys");
         self.create_sys_internal()?;
 
         // Create tmp
+        debug!(size = %self.filesystem_config.tmp_size, "env: create /tmp");
         self.create_tmp_internal()?;
 
+        debug!("env: prepare_post_pid_namespace done");
         Ok(())
     }
 
@@ -224,6 +237,7 @@ impl ContainerEnvironment {
     /// This function should only be called after ensuring the container process
     /// has completely terminated to avoid removing files that are still in use.
     pub(crate) fn cleanup(&self) -> Result<()> {
+        debug!(root = %self.host_container_root.display(), "env: cleanup container root");
         // Remove container root
         remove_dir_all(&self.host_container_root).map_err(|source| Error::RemoveDir {
             path: self.host_container_root.clone(),
@@ -268,6 +282,7 @@ impl ContainerEnvironment {
     /// env.write_files_to_workdir(&files)?;
     /// ```
     pub(crate) fn write_files_to_workdir(&self, files: &HashMap<String, String>) -> Result<()> {
+        debug!(file_count = files.len(), work_dir = %self.work_dir, "env: write files to workdir");
         // Base path
         let base = PathBuf::from(self.work_dir.trim_start_matches('/'));
 
@@ -466,6 +481,7 @@ impl ContainerEnvironment {
                 source,
             })?;
 
+            debug!(src = %m.source, %target, ?flags, "env: bind mount");
             // Mount
             mount(
                 Some(m.source.as_str()),
@@ -524,6 +540,12 @@ impl ContainerEnvironment {
             source,
         })?;
 
+        debug!(
+            target = proc_path,
+            fstype = proc_fstype,
+            ?proc_flags,
+            "env: mount proc"
+        );
         // Mount a new proc filesystem (not bind mount from host)
         mount(
             None::<&str>, // No source - create new filesystem
@@ -581,6 +603,12 @@ impl ContainerEnvironment {
             path: PathBuf::from(sys_target),
             source,
         })?;
+        debug!(
+            target = sys_target,
+            fstype = sys_fstype,
+            ?sys_flags,
+            "env: mount sys"
+        );
         // Mount a new sysfs (not bind mount from host)
         mount(
             None::<&str>, // No source - create new filesystem
@@ -640,6 +668,7 @@ impl ContainerEnvironment {
 
         // Mount tmp with configured size
         let mount_options = format!("size={},mode=1777", self.filesystem_config.tmp_size);
+        debug!(target = tmp_path, opts = %mount_options, "env: mount tmpfs");
         mount(
             Some("tmpfs"),
             tmp_path,
@@ -700,6 +729,7 @@ impl ContainerEnvironment {
 
         // Mount workdir as tmpfs with configured size
         let mount_options = format!("size={},mode=755", self.filesystem_config.workdir_size);
+        debug!(target = %work_dir, opts = %mount_options, "env: mount workdir tmpfs");
         mount(
             Some("tmpfs"),
             work_dir.as_str(),
@@ -774,6 +804,7 @@ impl ContainerEnvironment {
         // Create null device
         let device_path = format!("{dev_path}/null");
         let device_id = makedev(1, 3);
+        debug!(%device_path, "env: mknod null");
         mknod(device_path.as_str(), flags, mode, device_id).map_err(|source| {
             Error::FileSystem {
                 operation: "create device node".to_string(),
@@ -785,6 +816,7 @@ impl ContainerEnvironment {
         // Create zero device
         let device_path = format!("{dev_path}/zero");
         let device_id = makedev(1, 5);
+        debug!(%device_path, "env: mknod zero");
         mknod(device_path.as_str(), flags, mode, device_id).map_err(|source| {
             Error::FileSystem {
                 operation: "create device node".to_string(),
@@ -796,6 +828,7 @@ impl ContainerEnvironment {
         // Create full device
         let device_path = format!("{dev_path}/full");
         let device_id = makedev(1, 7);
+        debug!(%device_path, "env: mknod full");
         mknod(device_path.as_str(), flags, mode, device_id).map_err(|source| {
             Error::FileSystem {
                 operation: "create device node".to_string(),
@@ -807,6 +840,7 @@ impl ContainerEnvironment {
         // Create random device
         let device_path = format!("{dev_path}/random");
         let device_id = makedev(1, 8);
+        debug!(%device_path, "env: mknod random");
         mknod(device_path.as_str(), flags, mode, device_id).map_err(|source| {
             Error::FileSystem {
                 operation: "create device node".to_string(),
@@ -818,6 +852,7 @@ impl ContainerEnvironment {
         // Create urandom device
         let device_path = format!("{dev_path}/urandom");
         let device_id = makedev(1, 9);
+        debug!(%device_path, "env: mknod urandom");
         mknod(device_path.as_str(), flags, mode, device_id).map_err(|source| {
             Error::FileSystem {
                 operation: "create device node".to_string(),
@@ -890,6 +925,7 @@ impl ContainerEnvironment {
             details: "Container root path contains invalid UTF-8 characters".to_string(),
         })?;
 
+        debug!(new_root = new_root_str, old_root = %old_root, "env: bind+pivot root");
         mount(
             Some(new_root_str),
             new_root_str,

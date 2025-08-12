@@ -4,6 +4,7 @@ use crate::runtime::Runtime;
 use crate::types::{FilesystemConfig, Mount, RuntimeLimits};
 use rand::{Rng, distr::Alphanumeric};
 use std::path::PathBuf;
+use tracing::debug;
 
 /// Builder for constructing a `Runtime` with clear, typed configuration.
 ///
@@ -136,6 +137,7 @@ impl RuntimeBuilder {
     /// - Random ID and container root under `/tmp/faber/containers/{id}`
     /// - Default hostname `"faber"` and workdir `"/faber"`
     pub fn build(self) -> Result<Runtime> {
+        debug!("RuntimeBuilder::build: begin validation");
         // Validate required fields
         if let Some(ref mounts) = self.mounts {
             for mount in mounts {
@@ -185,6 +187,17 @@ impl RuntimeBuilder {
         let work_dir = self.work_dir.unwrap_or_else(|| "/faber".into());
         let filesystem_config = self.filesystem_config.unwrap_or_default();
 
+        debug!(
+            %id,
+            root = %container_root.display(),
+            %hostname,
+            work_dir = %work_dir,
+            tmp_size = %filesystem_config.tmp_size,
+            workdir_size = %filesystem_config.workdir_size,
+            mounts = mounts.len(),
+            "RuntimeBuilder::build: resolved config"
+        );
+
         // Validate work_dir
         if work_dir.is_empty() {
             return Err(Error::Validation {
@@ -201,6 +214,7 @@ impl RuntimeBuilder {
             filesystem_config,
         );
 
+        debug!("RuntimeBuilder::build: environment created, returning runtime");
         Ok(Runtime { env })
     }
 }
