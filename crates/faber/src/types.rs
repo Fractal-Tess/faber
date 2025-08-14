@@ -10,15 +10,13 @@ use serde::{Deserialize, Serialize};
 /// to execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
-    /// Executable to run (e.g. `"/bin/sh"` or `"gcc"`).
+    /// Executable to run (e.g., `"/bin/sh"` or `"gcc"`).
     pub cmd: String,
     /// Optional list of arguments passed to the command.
     pub args: Option<Vec<String>>,
     /// Environment variables for the command. When not provided, a minimal
     /// environment is used; PATH will be injected if missing.
     pub env: Option<HashMap<String, String>>,
-    /// Current working directory for the command (inside the container view).
-    pub cwd: Option<String>,
     /// Optional stdin contents to feed to the command.
     pub stdin: Option<String>,
     /// Files to materialize relative to the workdir before running the task.
@@ -34,6 +32,16 @@ pub struct TaskResult {
     pub stderr: String,
     /// Process exit code. `-1` if not available.
     pub exit_code: i32,
+    /// Wall execution time in milliseconds.
+    pub execution_time_ms: Option<u64>,
+    /// Total CPU usage of the task cgroup in microseconds.
+    pub cpu_usage_usec: Option<u64>,
+    /// User CPU time in microseconds.
+    pub cpu_user_usec: Option<u64>,
+    /// System CPU time in microseconds.
+    pub cpu_system_usec: Option<u64>,
+    /// Peak memory usage in bytes (from cgroup).
+    pub memory_peak_bytes: Option<u64>,
 }
 
 impl From<Output> for TaskResult {
@@ -44,6 +52,11 @@ impl From<Output> for TaskResult {
             stdout,
             stderr,
             exit_code: output.status.code().unwrap_or(-1),
+            execution_time_ms: None,
+            cpu_usage_usec: None,
+            cpu_user_usec: None,
+            cpu_system_usec: None,
+            memory_peak_bytes: None,
         }
     }
 }

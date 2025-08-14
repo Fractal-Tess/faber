@@ -34,7 +34,10 @@ pub async fn timing_middleware(mut request: Request, next: Next) -> Result<Respo
         warn!("Failed to create X-Response-Time header value");
     }
 
-    debug!("=== Request {request_id:?} took {duration:?} ===");
+    debug!(
+        "=== Request {request_id:?} took {}ms ===",
+        duration.as_millis()
+    );
 
     Ok(response)
 }
