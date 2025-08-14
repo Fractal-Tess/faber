@@ -1,10 +1,8 @@
-use crate::environment::ContainerEnvironment;
 use crate::prelude::*;
 use crate::runtime::Runtime;
-use crate::types::{FilesystemConfig, Mount, RuntimeLimits};
+use crate::types::{CgroupConfig, FilesystemConfig, Mount, RuntimeLimits};
 use rand::{Rng, distr::Alphanumeric};
 use std::path::PathBuf;
-use tracing::debug;
 
 /// Builder for constructing a `Runtime` with clear, typed configuration.
 ///
@@ -18,8 +16,11 @@ pub struct RuntimeBuilder {
     mounts: Option<Vec<Mount>>,
     work_dir: Option<String>,
     filesystem_config: Option<FilesystemConfig>,
+    cgroup: Option<CgroupConfig>,
 
     id: Option<String>,
+
+    runtime_limits: Option<RuntimeLimits>,
 }
 
 impl RuntimeBuilder {
@@ -59,21 +60,6 @@ impl RuntimeBuilder {
     }
 
     /// Sets the filesystem configuration for tmp and workdir sizes.
-    ///
-    /// # Arguments
-    ///
-    /// * `tmp_size` - Size limit for the `/tmp` filesystem (e.g., "128M", "1G")
-    /// * `workdir_size` - Size limit for the working directory filesystem (e.g., "256M", "2G")
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use faber::RuntimeBuilder;
-    ///
-    /// let runtime = RuntimeBuilder::new()
-    ///     .with_filesystem_config("64M", "128M")
-    ///     .build()?;
-    /// ```
     pub fn with_filesystem_config(
         mut self,
         tmp_size: impl Into<String>,
@@ -87,20 +73,6 @@ impl RuntimeBuilder {
     }
 
     /// Sets the tmp filesystem size.
-    ///
-    /// # Arguments
-    ///
-    /// * `tmp_size` - Size limit for the `/tmp` filesystem (e.g., "128M", "1G")
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use faber::RuntimeBuilder;
-    ///
-    /// let runtime = RuntimeBuilder::new()
-    ///     .with_tmp_size("64M")
-    ///     .build()?;
-    /// ```
     pub fn with_tmp_size(mut self, tmp_size: impl Into<String>) -> Self {
         let mut config = self.filesystem_config.unwrap_or_default();
         config.tmp_size = tmp_size.into();
@@ -109,20 +81,6 @@ impl RuntimeBuilder {
     }
 
     /// Sets the workdir filesystem size.
-    ///
-    /// # Arguments
-    ///
-    /// * `workdir_size` - Size limit for the working directory filesystem (e.g., "256M", "2G")
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use faber::RuntimeBuilder;
-    ///
-    /// let runtime = RuntimeBuilder::new()
-    ///     .with_workdir_size("128M")
-    ///     .build()?;
-    /// ```
     pub fn with_workdir_size(mut self, workdir_size: impl Into<String>) -> Self {
         let mut config = self.filesystem_config.unwrap_or_default();
         config.workdir_size = workdir_size.into();
@@ -130,14 +88,22 @@ impl RuntimeBuilder {
         self
     }
 
+    /// Configure cgroup limits.
+    pub fn with_cgroup_config(mut self, cfg: CgroupConfig) -> Self {
+        self.cgroup = Some(cfg);
+        self
+    }
+
+    /// Configure runtime limits.
+    pub fn with_kill_timeout_seconds(mut self, kill_timeout_seconds: Option<u64>) -> Self {
+        let mut limits = self.runtime_limits.unwrap_or_default();
+        limits.kill_timeout_seconds = kill_timeout_seconds;
+        self.runtime_limits = Some(limits);
+        self
+    }
+
     /// Finalize the configuration and create a [`Runtime`].
-    ///
-    /// Performs validation of mount entries and ensures defaults are applied:
-    /// - Readonly bind mounts for common system paths (`/bin`, `/lib`, `/usr`, `/lib64`)
-    /// - Random ID and container root under `/tmp/faber/containers/{id}`
-    /// - Default hostname `"faber"` and workdir `"/faber"`
     pub fn build(self) -> Result<Runtime> {
-        debug!("RuntimeBuilder::build: begin validation");
         // Validate required fields
         if let Some(ref mounts) = self.mounts {
             for mount in mounts {
@@ -186,17 +152,8 @@ impl RuntimeBuilder {
         let mounts = self.mounts.unwrap_or(default_mounts);
         let work_dir = self.work_dir.unwrap_or_else(|| "/faber".into());
         let filesystem_config = self.filesystem_config.unwrap_or_default();
-
-        debug!(
-            %id,
-            root = %container_root.display(),
-            %hostname,
-            work_dir = %work_dir,
-            tmp_size = %filesystem_config.tmp_size,
-            workdir_size = %filesystem_config.workdir_size,
-            mounts = mounts.len(),
-            "RuntimeBuilder::build: resolved config"
-        );
+        let cgroup = self.cgroup.unwrap_or_default();
+        let runtime_limits = self.runtime_limits.unwrap_or_default();
 
         // Validate work_dir
         if work_dir.is_empty() {
@@ -206,15 +163,14 @@ impl RuntimeBuilder {
             });
         }
 
-        let env = ContainerEnvironment::new(
-            container_root,
+        Ok(Runtime {
+            host_container_root: container_root,
             hostname,
             mounts,
-            work_dir,
+            work_dir: work_dir.into(),
             filesystem_config,
-        );
-
-        debug!("RuntimeBuilder::build: environment created, returning runtime");
-        Ok(Runtime { env })
+            cgroup,
+            runtime_limits,
+        })
     }
 }

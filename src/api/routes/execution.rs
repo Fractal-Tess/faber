@@ -79,6 +79,8 @@ pub async fn execution(
             config.container.filesystem.tmp_size.clone(),
             config.container.filesystem.workdir_size.clone(),
         )
+        .with_cgroup_config(config.container.cgroup.clone().into())
+        .with_kill_timeout_seconds(config.container.runtime.kill_timeout_seconds)
         .with_id(request_id.clone())
         .build()
         .map_err(|e| {
