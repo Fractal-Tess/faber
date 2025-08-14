@@ -1,223 +1,108 @@
 use crate::prelude::*;
+use crate::types::CgroupConfig;
 use std::{
-    fs::{OpenOptions, create_dir_all},
+    fs::{OpenOptions, create_dir_all, remove_dir},
     io::Write,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
-#[derive(Debug)]
-pub(crate) struct CgroupManager {
-    pub(crate) cgroup_path: PathBuf,
-    pub(crate) pids_max: u64,
+/// Enable one or more controllers at the specified cgroup directory.
+pub(crate) fn enable_subtree_controllers_at(dir: &Path, controllers: &[&str]) -> Result<()> {
+    let control_path = dir.join("cgroup.subtree_control");
+    let controllers = controllers
+        .iter()
+        .map(|c| format!("+{c}"))
+        .collect::<Vec<String>>()
+        .join(" ");
+
+    write_file(&control_path, controllers.as_bytes())?;
+    Ok(())
 }
 
-impl CgroupManager {
-    pub fn initilize(&self) -> Result<()> {
-        // Create the cgroup directory on the host
-        println!(
-            "[DEBUG] Creating cgroup directory at: {}",
-            self.cgroup_path.display()
-        );
+/// Create a leaf cgroup under the given base directory.
+pub(crate) fn create_cgroup_at(base: &PathBuf) -> Result<()> {
+    create_dir_all(base).map_err(|source| Error::CreateDir {
+        path: base.clone(),
+        source,
+        details: "Failed to create cgroup".to_string(),
+    })?;
 
-        create_dir_all(&self.cgroup_path).map_err(|e| {
-            Error::Cgroup(format!(
-                "Failed to create container cgroup at '{}': {e}",
-                self.cgroup_path.display()
-            ))
+    Ok(())
+}
+
+/// Apply limits for pids, memory, and cpu to a cgroup leaf according to the config.
+pub(crate) fn set_limits(cg: &Path, cfg: &CgroupConfig) -> Result<()> {
+    if let Some(pids) = cfg.pids_max {
+        let pids_path = cg.join("pids.max");
+        write_file(&pids_path, pids.to_string().as_bytes())?;
+    }
+
+    if let Some(mem) = &cfg.memory_max {
+        let mem_path = cg.join("memory.max");
+        write_file(&mem_path, mem.to_string().as_bytes())?;
+    }
+    if let Some(cpu) = &cfg.cpu_max {
+        let cpu_path = cg.join("cpu.max");
+        write_file(&cpu_path, cpu.to_string().as_bytes())?;
+    }
+    Ok(())
+}
+
+pub(crate) fn remove_cgroup(cg: &Path) -> Result<()> {
+    remove_dir(cg).map_err(|source| Error::RemoveDir {
+        path: cg.to_path_buf(),
+        source,
+        details: "Failed to remove cgroup".to_string(),
+    })?;
+    Ok(())
+}
+
+/// Add a process to the cgroup by pid.
+pub(crate) fn add_pid(cg: &Path, pid: i32) -> Result<()> {
+    let procs_path = cg.join("cgroup.procs");
+    write_file(&procs_path, pid.to_string().as_bytes()).map_err(|e| Error::Io {
+        operation: format!("write {procs_path:?}"),
+        path: procs_path.to_string_lossy().to_string(),
+        details: format!("{e}"),
+    })?;
+    Ok(())
+}
+
+// Small helper to write to files in cgroup directories.
+fn write_file(path: &Path, contents: &[u8]) -> Result<()> {
+    let mut f = OpenOptions::new()
+        .create(false)
+        .write(true)
+        .open(&path)
+        .map_err(|e| Error::Io {
+            operation: format!("open {path:?}"),
+            path: path.to_string_lossy().to_string(),
+            details: format!("{e}"),
         })?;
+    f.write_all(contents).map_err(|e| Error::Io {
+        operation: format!("write {path:?}"),
+        path: path.to_string_lossy().to_string(),
+        details: format!("{e}"),
+    })?;
+    f.flush().map_err(|e| Error::Io {
+        operation: format!("flush {path:?}"),
+        path: path.to_string_lossy().to_string(),
+        details: format!("{e}"),
+    })?;
+    Ok(())
+}
 
-        println!("[DEBUG] Cgroup directory created successfully");
-        println!("[DEBUG] Directory exists: {}", self.cgroup_path.exists());
-        println!(
-            "[DEBUG] Directory contents: {:?}",
-            std::fs::read_dir(&self.cgroup_path)
-                .map(|d| d.collect::<Vec<_>>().len())
-                .unwrap_or(0)
-        );
-
-        // Set the configured PID limit
-        println!("[DEBUG] Setting PID limit to: {}", self.pids_max);
-        self.set_max_procs(self.pids_max)?;
-        println!("[DEBUG] PID limit set successfully");
-
-        Ok(())
+// TODO: Remove below functions
+// Debug helper - will be removed
+pub(crate) fn list_files(path: &Path) {
+    let entries = std::fs::read_dir(path).unwrap();
+    for entry in entries {
+        let entry = entry.unwrap();
+        eprintln!("[faber][debug] list_files: {}", entry.path().display());
     }
+}
 
-    pub fn add_host_process(&self, pid: i32) -> Result<()> {
-        // Add a process to the cgroup from the host side
-        // Skip the process existence check since we're adding from host context
-        let cgroup_procs = self.cgroup_path.join("cgroup.procs");
-
-        let mut file = OpenOptions::new()
-            .append(true)
-            .truncate(false)
-            .open(&cgroup_procs)
-            .map_err(|e| {
-                Error::Cgroup(format!(
-                    "Failed to open cgroup.procs at '{}': {e}",
-                    cgroup_procs.display()
-                ))
-            })?;
-
-        // Write the PID as bytes with newline
-        file.write_all(format!("{pid}\n").as_bytes())
-            .map_err(|e| Error::Cgroup(format!("Cannot write PID {}: {}", pid, e)))?;
-
-        // Ensure immediate flush
-        file.sync_all()
-            .map_err(|e| Error::Cgroup(format!("Cannot sync cgroup.procs: {}", e)))?;
-
-        Ok(())
-    }
-
-    pub fn add_proc(&self, pid: i32) -> Result<()> {
-        // Check if process exists first
-        if !PathBuf::from(format!("/proc/{pid}")).exists() {
-            return Err(Error::ProcessManagement {
-                operation: "add process to cgroup".to_string(),
-                pid,
-                details: "Process does not exist in /proc".to_string(),
-            });
-        }
-
-        let cgroup_procs = self.cgroup_path.join("cgroup.procs");
-
-        let mut file = OpenOptions::new()
-            .append(true)
-            .truncate(false)
-            .open(&cgroup_procs)
-            .map_err(|e| {
-                Error::Cgroup(format!(
-                    "Failed to open cgroup.procs at '{}': {e}",
-                    cgroup_procs.display()
-                ))
-            })?;
-
-        // Write the PID as bytes with newline
-        file.write_all(format!("{pid}\n").as_bytes()).map_err(|e| {
-            Error::Cgroup(format!(
-                "Failed to write PID {pid} to cgroup.procs at '{}': {e}",
-                cgroup_procs.display()
-            ))
-        })?;
-
-        // Ensure immediate flush
-        file.sync_all().map_err(|e| {
-            Error::Cgroup(format!(
-                "Failed to sync cgroup.procs at '{}' after adding PID {pid}: {e}",
-                cgroup_procs.display()
-            ))
-        })?;
-
-        Ok(())
-    }
-
-    pub fn set_max_procs(&self, limit: u64) -> Result<()> {
-        let cgroup_pids = self.cgroup_path.join("pids.max");
-
-        // Check if the pids.max file exists
-        if !cgroup_pids.exists() {
-            return Err(Error::Cgroup(format!(
-                "pids.max file not found in cgroup. Path: {:?}",
-                self.cgroup_path
-            )));
-        }
-
-        let mut file = OpenOptions::new()
-            .write(true)
-            .truncate(false)
-            .open(&cgroup_pids)
-            .map_err(|e| {
-                Error::Cgroup(format!(
-                    "Failed to open pids.max at '{}' for writing limit {limit}: {e}",
-                    cgroup_pids.display()
-                ))
-            })?;
-
-        file.write_all(format!("{limit}\n").as_bytes())
-            .map_err(|e| {
-                Error::Cgroup(format!(
-                    "Failed to write limit {limit} to pids.max at '{}': {e}",
-                    cgroup_pids.display()
-                ))
-            })?;
-
-        file.sync_all().map_err(|e| {
-            Error::Cgroup(format!(
-                "Failed to sync pids.max at '{}' after setting limit {limit}: {e}",
-                cgroup_pids.display()
-            ))
-        })?;
-
-        Ok(())
-    }
-
-    pub fn cleanup(&self) -> Result<()> {
-        // Check if the cgroup directory exists before trying to remove it
-        if self.cgroup_path.exists() {
-            match std::fs::remove_dir_all(&self.cgroup_path) {
-                Ok(_) => {}
-                Err(e) => {
-                    println!("Failed to remove cgroup directory: {e}");
-                }
-            }
-        };
-        Ok(())
-    }
-
-    pub fn get_current_pids(&self) -> Result<u64> {
-        let cgroup_pids = self.cgroup_path.join("pids.current");
-
-        if !cgroup_pids.exists() {
-            return Err(Error::Cgroup(format!(
-                "pids.current file not found in cgroup. Path: {:?}",
-                self.cgroup_path
-            )));
-        }
-
-        let content = std::fs::read_to_string(&cgroup_pids).map_err(|e| {
-            Error::Cgroup(format!(
-                "Failed to read pids.current from '{}': {e}",
-                cgroup_pids.display()
-            ))
-        })?;
-
-        content.trim().parse::<u64>().map_err(|e| {
-            Error::Cgroup(format!(
-                "Failed to parse pids.current value '{}': {e}",
-                content.trim()
-            ))
-        })
-    }
-
-    pub fn check_pid_limit(&self) -> Result<bool> {
-        let current = self.get_current_pids()?;
-        Ok(current < self.pids_max)
-    }
-
-    pub fn enforce_pid_limit(&self) -> Result<()> {
-        if !self.check_pid_limit()? {
-            return Err(Error::Cgroup(format!(
-                "PID limit exceeded: current {} >= max {}",
-                self.get_current_pids()?,
-                self.pids_max
-            )));
-        }
-        Ok(())
-    }
-
-    pub fn add_child_process(&self, pid: i32) -> Result<()> {
-        // Add child process to cgroup and check limits
-        self.add_proc(pid)?;
-
-        // Enforce PID limit after adding
-        self.enforce_pid_limit()?;
-
-        Ok(())
-    }
-
-    pub fn get_pid_stats(&self) -> Result<(u64, u64)> {
-        let current = self.get_current_pids()?;
-        Ok((current, self.pids_max))
-    }
+pub(crate) fn debug(path: &Path) {
+    let contents = std::fs::read_to_string(path).unwrap_or_default();
+    eprintln!("[faber][debug]debug: {path:?} = {contents}");
 }
