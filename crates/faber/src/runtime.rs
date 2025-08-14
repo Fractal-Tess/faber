@@ -186,11 +186,20 @@ impl Runtime {
                         if let Ok(ct) = std::fs::read_to_string(cg.join("cgroup.type")) {
                             eprintln!("[faber][debug] leaf cgroup.type: {}", ct.trim());
                         }
+                        if let Ok(p) = std::fs::read_to_string(cg.join("cgroup.procs")) {
+                            eprintln!("[faber][debug] leaf cgroup.procs (before): {}", p.trim());
+                        }
+                        if let Ok(t) = std::fs::read_to_string(cg.join("cgroup.threads")) {
+                            eprintln!("[faber][debug] leaf cgroup.threads (before): {}", t.trim());
+                        }
                         if let Ok(s) = std::fs::read_to_string(cg.join("memory.current")) {
                             eprintln!("[faber][debug] before-run memory.current: {}", s.trim());
                         }
                         if let Ok(s) = std::fs::read_to_string(cg.join("memory.peak")) {
                             eprintln!("[faber][debug] before-run memory.peak: {}", s.trim());
+                        }
+                        if let Ok(s) = std::fs::read_to_string(cg.join("memory.stat")) {
+                            eprintln!("[faber][debug] before-run memory.stat:\n{}", s);
                         }
 
                         cgroup::debug(&cg.join("memory.max"));
@@ -251,6 +260,15 @@ impl Runtime {
                         }
                         if let Ok(s) = std::fs::read_to_string(cg.join("memory.peak")) {
                             eprintln!("[faber][debug] after-run memory.peak: {}", s.trim());
+                        }
+                        if let Ok(s) = std::fs::read_to_string(cg.join("memory.stat")) {
+                            eprintln!("[faber][debug] after-run memory.stat:\n{}", s);
+                        }
+                        if let Ok(p) = std::fs::read_to_string(cg.join("cgroup.procs")) {
+                            eprintln!("[faber][debug] leaf cgroup.procs (after): {}", p.trim());
+                        }
+                        if let Ok(t) = std::fs::read_to_string(cg.join("cgroup.threads")) {
+                            eprintln!("[faber][debug] leaf cgroup.threads (after): {}", t.trim());
                         }
 
                         cgroup::remove_cgroup(&cg)?;
