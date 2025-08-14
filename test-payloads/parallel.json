@@ -1,4 +1,0 @@
-[
-  { "cmd": "/bin/pwd" },
-  { "cmd": "/bin/echo", "args": ["parallel job 2"] }
-]
