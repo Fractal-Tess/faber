@@ -165,6 +165,34 @@ impl Runtime {
                         cgroup::set_limits(&cg, &self.cgroup)?;
                         cgroup::add_pid(&cg, child.as_raw())?;
 
+                        // Debug: verify process cgroup membership and leaf accounting before run
+                        let proc_cgroup_path = format!("/proc/{}/cgroup", child.as_raw());
+                        match std::fs::read_to_string(&proc_cgroup_path) {
+                            Ok(contents) => {
+                                eprintln!(
+                                    "[faber][debug] proc_cgroup: pid={} contents:\n{}",
+                                    child.as_raw(),
+                                    contents
+                                );
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "[faber][debug] proc_cgroup: pid={} read failed: {}",
+                                    child.as_raw(),
+                                    e
+                                );
+                            }
+                        }
+                        if let Ok(ct) = std::fs::read_to_string(cg.join("cgroup.type")) {
+                            eprintln!("[faber][debug] leaf cgroup.type: {}", ct.trim());
+                        }
+                        if let Ok(s) = std::fs::read_to_string(cg.join("memory.current")) {
+                            eprintln!("[faber][debug] before-run memory.current: {}", s.trim());
+                        }
+                        if let Ok(s) = std::fs::read_to_string(cg.join("memory.peak")) {
+                            eprintln!("[faber][debug] before-run memory.peak: {}", s.trim());
+                        }
+
                         cgroup::debug(&cg.join("memory.max"));
                         task_cg = Some(cg);
                     }
@@ -216,6 +244,13 @@ impl Runtime {
                             if let Ok(num) = s.trim().parse::<u64>() {
                                 task_result.memory_peak_bytes = Some(num);
                             }
+                        }
+                        // Debug: log memory after run
+                        if let Ok(s) = std::fs::read_to_string(cg.join("memory.current")) {
+                            eprintln!("[faber][debug] after-run memory.current: {}", s.trim());
+                        }
+                        if let Ok(s) = std::fs::read_to_string(cg.join("memory.peak")) {
+                            eprintln!("[faber][debug] after-run memory.peak: {}", s.trim());
                         }
 
                         cgroup::remove_cgroup(&cg)?;
