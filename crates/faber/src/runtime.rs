@@ -391,9 +391,28 @@ impl Runtime {
                         }
                     };
 
+                    // Fallback VmHWM sampler: track peak RSS via /proc/<pid>/status while running
+                    let mut vmm_hwm_bytes: u64 = 0;
+
                     let output = if let Some(secs) = self.runtime_limits.kill_timeout_seconds {
                         let deadline = Instant::now() + Duration::from_secs(secs);
                         loop {
+                            // sample VmHWM
+                            let status_path = format!("/proc/{}/status", child.id());
+                            if let Ok(contents) = std::fs::read_to_string(&status_path) {
+                                for line in contents.lines() {
+                                    if let Some(rest) = line.strip_prefix("VmHWM:") {
+                                        let parts: Vec<&str> =
+                                            rest.trim().split_whitespace().collect();
+                                        if parts.len() >= 2 {
+                                            if let Ok(kb) = parts[0].parse::<u64>() {
+                                                vmm_hwm_bytes = vmm_hwm_bytes.max(kb * 1024);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             if Instant::now() >= deadline {
                                 let _ = child.kill();
                                 break match child.wait_with_output() {
@@ -438,7 +457,7 @@ impl Runtime {
                                     };
                                 }
                                 Ok(None) => {
-                                    std::thread::sleep(Duration::from_millis(10));
+                                    std::thread::sleep(Duration::from_millis(5));
                                 }
                                 Err(e) => {
                                     let result = TaskResult {
@@ -458,27 +477,70 @@ impl Runtime {
                             }
                         }
                     } else {
-                        match child.wait_with_output() {
-                            Ok(o) => o,
-                            Err(e) => {
-                                let result = TaskResult {
-                                    stdout: String::new(),
-                                    stderr: format!("wait failed: {e}"),
-                                    exit_code: -1,
-                                    execution_time_ms: None,
-                                    cpu_usage_usec: None,
-                                    cpu_user_usec: None,
-                                    cpu_system_usec: None,
-                                    memory_peak_bytes: None,
-                                };
-                                let _ = serde_json::to_writer(&mut task_writer, &result);
-                                let _ = task_writer.flush();
-                                exit(0);
+                        // No timeout: still sample VmHWM while waiting
+                        loop {
+                            let status_path = format!("/proc/{}/status", child.id());
+                            if let Ok(contents) = std::fs::read_to_string(&status_path) {
+                                for line in contents.lines() {
+                                    if let Some(rest) = line.strip_prefix("VmHWM:") {
+                                        let parts: Vec<&str> =
+                                            rest.trim().split_whitespace().collect();
+                                        if parts.len() >= 2 {
+                                            if let Ok(kb) = parts[0].parse::<u64>() {
+                                                vmm_hwm_bytes = vmm_hwm_bytes.max(kb * 1024);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            match child.try_wait() {
+                                Ok(Some(_)) => {
+                                    break match child.wait_with_output() {
+                                        Ok(o) => o,
+                                        Err(e) => {
+                                            let result = TaskResult {
+                                                stdout: String::new(),
+                                                stderr: format!("wait failed: {e}"),
+                                                exit_code: -1,
+                                                execution_time_ms: None,
+                                                cpu_usage_usec: None,
+                                                cpu_user_usec: None,
+                                                cpu_system_usec: None,
+                                                memory_peak_bytes: None,
+                                            };
+                                            let _ =
+                                                serde_json::to_writer(&mut task_writer, &result);
+                                            let _ = task_writer.flush();
+                                            exit(0);
+                                        }
+                                    };
+                                }
+                                Ok(None) => std::thread::sleep(Duration::from_millis(5)),
+                                Err(e) => {
+                                    let result = TaskResult {
+                                        stdout: String::new(),
+                                        stderr: format!("try_wait failed: {e}"),
+                                        exit_code: -1,
+                                        execution_time_ms: None,
+                                        cpu_usage_usec: None,
+                                        cpu_user_usec: None,
+                                        cpu_system_usec: None,
+                                        memory_peak_bytes: None,
+                                    };
+                                    let _ = serde_json::to_writer(&mut task_writer, &result);
+                                    let _ = task_writer.flush();
+                                    exit(0);
+                                }
                             }
                         }
                     };
 
-                    let result = TaskResult::from(output);
+                    let mut result = TaskResult::from(output);
+
+                    // Prefer cgroup memory.peak when non-trivial; otherwise fall back to VmHWM
+                    if result.memory_peak_bytes.unwrap_or(0) < 1024 * 1024 && vmm_hwm_bytes > 0 {
+                        result.memory_peak_bytes = Some(vmm_hwm_bytes);
+                    }
 
                     if serde_json::to_writer(&mut task_writer, &result).is_err() {
                         // If writing fails, just exit; parent will see read error, but we tried

@@ -57,15 +57,67 @@ pub(crate) fn remove_cgroup(cg: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Add a process to the cgroup by pid.
+/// Add a process to the cgroup by pid, verifying membership and falling back to cgroup.threads when needed.
 pub(crate) fn add_pid(cg: &Path, pid: i32) -> Result<()> {
     let procs_path = cg.join("cgroup.procs");
-    write_file(&procs_path, pid.to_string().as_bytes()).map_err(|e| Error::Io {
-        operation: format!("write {procs_path:?}"),
-        path: procs_path.to_string_lossy().to_string(),
-        details: format!("{e}"),
-    })?;
-    Ok(())
+    let threads_path = cg.join("cgroup.threads");
+
+    // Path that should appear in /proc/<pid>/cgroup (cgroup v2 format: 0::/path)
+    let expected_rel = match cg.strip_prefix("/sys/fs/cgroup") {
+        Ok(p) => PathBuf::from("/").join(p),
+        Err(_) => cg.to_path_buf(),
+    };
+    let expected_str = expected_rel.to_string_lossy().to_string();
+
+    // Try writing to cgroup.procs first
+    if let Err(e) = write_file(&procs_path, pid.to_string().as_bytes()) {
+        // If not supported, attempt cgroup.threads
+        if e.to_string().contains("95") || e.to_string().contains("EOPNOTSUPP") {
+            if let Err(e2) = write_file(&threads_path, pid.to_string().as_bytes()) {
+                return Err(Error::Io {
+                    operation: "write cgroup.threads".to_string(),
+                    path: threads_path.to_string_lossy().to_string(),
+                    details: format!("{e2}"),
+                });
+            }
+        } else {
+            return Err(Error::Io {
+                operation: "write cgroup.procs".to_string(),
+                path: procs_path.to_string_lossy().to_string(),
+                details: format!("{e}"),
+            });
+        }
+    }
+
+    // Verify process membership
+    let proc_cgroup_path = format!("/proc/{}/cgroup", pid);
+    if let Ok(contents) = std::fs::read_to_string(&proc_cgroup_path) {
+        if contents.contains(&expected_str) {
+            return Ok(());
+        }
+    }
+
+    // Fallback: try writing to cgroup.threads explicitly if not yet attempted
+    if let Err(e3) = write_file(&threads_path, pid.to_string().as_bytes()) {
+        return Err(Error::Io {
+            operation: "write cgroup.threads".to_string(),
+            path: threads_path.to_string_lossy().to_string(),
+            details: format!("{e3}"),
+        });
+    }
+
+    // Re-verify
+    if let Ok(contents) = std::fs::read_to_string(&proc_cgroup_path) {
+        if contents.contains(&expected_str) {
+            return Ok(());
+        }
+    }
+
+    Err(Error::Io {
+        operation: "verify cgroup membership".to_string(),
+        path: expected_str,
+        details: format!("pid {pid} not found in cgroup after attach"),
+    })
 }
 
 // Small helper to write to files in cgroup directories.
