@@ -1,18 +1,15 @@
 use nix::sched::CloneFlags;
-use nix::unistd::{ForkResult, fork};
+use nix::unistd::{ForkResult, Pid, fork};
 
-use rand::Rng;
-use rand::distr::Alphanumeric;
-
-use std::io::{PipeWriter, Write};
+use std::io::Write;
 use std::os::fd::IntoRawFd;
 use std::path::PathBuf;
 use std::process::{Command, exit};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::TaskResult;
 use crate::builder::RuntimeBuilder;
-use crate::cgroup;
+
 use crate::environment;
 use crate::prelude::*;
 use crate::types::{CgroupConfig, FilesystemConfig, Mount, RuntimeLimits, Task};
@@ -26,8 +23,8 @@ pub struct Runtime {
     pub(crate) mounts: Vec<Mount>,
     pub(crate) work_dir: PathBuf,
     pub(crate) filesystem_config: FilesystemConfig,
-    pub(crate) cgroup: CgroupConfig,
     pub(crate) runtime_limits: RuntimeLimits,
+    pub(crate) cgroup_config: CgroupConfig,
 }
 
 impl Runtime {
@@ -104,462 +101,227 @@ impl Runtime {
     }
 
     fn run_in_manager(&self, tasks: Vec<Task>) -> Result<Vec<TaskResult>> {
+        self.setup_container_environment()?;
+        self.execute_tasks(tasks)
+    }
+
+    /// Sets up the container environment with namespaces, mounts, and basic filesystem.
+    fn setup_container_environment(&self) -> Result<()> {
         environment::create_container_root(&self.host_container_root)?;
 
         let unshare_flags = CloneFlags::CLONE_NEWNS // # mount
             | CloneFlags::CLONE_NEWUTS // # hostname
             | CloneFlags::CLONE_NEWIPC // # ipc
+            | CloneFlags::CLONE_NEWCGROUP // # cgroup
             | CloneFlags::CLONE_NEWNET; // # net
 
         environment::unshare(unshare_flags)?;
         environment::bind_mounts(&self.host_container_root, &self.mounts)?;
         environment::pivot_root_to(&self.host_container_root)?;
         environment::create_dev_devices()?;
-        environment::create_proc()?; // #Not used for now
+        environment::create_proc()?;
         environment::create_sys()?;
         environment::create_cgroup()?;
         environment::create_work_dir(&self.work_dir, &self.filesystem_config.workdir_size)?;
         environment::create_tmp_dir(&self.work_dir, &self.filesystem_config.tmp_size)?;
         environment::set_container_hostname(&self.hostname)?;
 
-        let mut results = Vec::with_capacity(tasks.len());
-        let mut skip_rest = false;
+        Ok(())
+    }
 
-        for t in tasks.into_iter() {
-            // If a previous task failed, mark remaining tasks as skipped without executing them
-            if skip_rest {
-                results.push(TaskResult {
-                    stdout: String::new(),
-                    stderr: "skipped: previous task failed".to_string(),
-                    exit_code: -1,
-                    execution_time_ms: None,
-                    cpu_usage_usec: None,
-                    cpu_user_usec: None,
-                    cpu_system_usec: None,
-                    memory_peak_bytes: None,
-                });
-                continue;
-            }
+    /// Executes all tasks and returns their results.
+    fn execute_tasks(&self, tasks: Vec<Task>) -> Result<Vec<TaskResult>> {
+        let mut results: Vec<TaskResult> = Vec::with_capacity(tasks.len());
 
-            // Create a pipe for this task's result
-            let (task_reader, mut task_writer) = mk_pipe()?;
-
-            // Track wall time
-            let start_time = Instant::now();
-
-            match unsafe { fork() } {
-                Ok(ForkResult::Parent { child, .. }) => {
-                    // Parent side: set up and attach cgroup if enabled
-                    let mut task_cg: Option<PathBuf> = None;
-                    if self.cgroup.enabled {
-                        let base = PathBuf::from("/sys/fs/cgroup/faber");
-                        cgroup::create_cgroup_at(&base)?;
-                        cgroup::enable_subtree_controllers_at(&base, &["pids", "memory", "cpu"])?;
-                        let task_id: String = rand::rng()
-                            .sample_iter(&Alphanumeric)
-                            .take(16)
-                            .map(char::from)
-                            .collect();
-                        let cg = base.join(format!("task-{task_id}"));
-                        cgroup::create_cgroup_at(&cg)?;
-                        cgroup::set_limits(&cg, &self.cgroup)?;
-                        cgroup::add_pid(&cg, child.as_raw())?;
-
-                        // Debug: verify process cgroup membership and leaf accounting before run
-                        let proc_cgroup_path = format!("/proc/{}/cgroup", child.as_raw());
-                        match std::fs::read_to_string(&proc_cgroup_path) {
-                            Ok(contents) => {
-                                eprintln!(
-                                    "[faber][debug] proc_cgroup: pid={} contents:\n{}",
-                                    child.as_raw(),
-                                    contents
-                                );
-                            }
-                            Err(e) => {
-                                eprintln!(
-                                    "[faber][debug] proc_cgroup: pid={} read failed: {}",
-                                    child.as_raw(),
-                                    e
-                                );
-                            }
-                        }
-                        if let Ok(ct) = std::fs::read_to_string(cg.join("cgroup.type")) {
-                            eprintln!("[faber][debug] leaf cgroup.type: {}", ct.trim());
-                        }
-                        if let Ok(p) = std::fs::read_to_string(cg.join("cgroup.procs")) {
-                            eprintln!("[faber][debug] leaf cgroup.procs (before): {}", p.trim());
-                        }
-                        if let Ok(t) = std::fs::read_to_string(cg.join("cgroup.threads")) {
-                            eprintln!("[faber][debug] leaf cgroup.threads (before): {}", t.trim());
-                        }
-                        if let Ok(s) = std::fs::read_to_string(cg.join("memory.current")) {
-                            eprintln!("[faber][debug] before-run memory.current: {}", s.trim());
-                        }
-                        if let Ok(s) = std::fs::read_to_string(cg.join("memory.peak")) {
-                            eprintln!("[faber][debug] before-run memory.peak: {}", s.trim());
-                        }
-                        if let Ok(s) = std::fs::read_to_string(cg.join("memory.stat")) {
-                            eprintln!("[faber][debug] before-run memory.stat:\n{}", s);
-                        }
-
-                        cgroup::debug(&cg.join("memory.max"));
-                        task_cg = Some(cg);
-                    }
-
-                    // Close writer end
-                    close_fd(task_writer.into_raw_fd())?;
-
-                    // Read TaskResult from child
-                    let mut task_result: TaskResult =
-                        match serde_json::de::from_reader(&task_reader) {
-                            Ok(res) => res,
-                            Err(e) => {
-                                return Err(Error::ProcessManagement {
-                                    operation: "read task result".to_string(),
-                                    pid: child.as_raw(),
-                                    details: format!("Failed to read/deserialize task result: {e}"),
-                                });
-                            }
-                        };
-
-                    // Wait for per-task child to finish
-                    wait_for_child(child)?;
-
-                    // Populate metrics
-                    task_result.execution_time_ms = Some(start_time.elapsed().as_millis() as u64);
-                    if let Some(cg) = task_cg {
-                        // cpu.stat
-                        let cpu_stat_path = cg.join("cpu.stat");
-                        if let Ok(contents) = std::fs::read_to_string(&cpu_stat_path) {
-                            for line in contents.lines() {
-                                let mut parts = line.split_whitespace();
-                                if let (Some(key), Some(val)) = (parts.next(), parts.next()) {
-                                    if let Ok(num) = val.parse::<u64>() {
-                                        match key {
-                                            "usage_usec" => task_result.cpu_usage_usec = Some(num),
-                                            "user_usec" => task_result.cpu_user_usec = Some(num),
-                                            "system_usec" => {
-                                                task_result.cpu_system_usec = Some(num)
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        // memory.peak
-                        let mem_peak_path = cg.join("memory.peak");
-                        if let Ok(s) = std::fs::read_to_string(&mem_peak_path) {
-                            if let Ok(num) = s.trim().parse::<u64>() {
-                                task_result.memory_peak_bytes = Some(num);
-                            }
-                        }
-                        // Debug: log memory after run
-                        if let Ok(s) = std::fs::read_to_string(cg.join("memory.current")) {
-                            eprintln!("[faber][debug] after-run memory.current: {}", s.trim());
-                        }
-                        if let Ok(s) = std::fs::read_to_string(cg.join("memory.peak")) {
-                            eprintln!("[faber][debug] after-run memory.peak: {}", s.trim());
-                        }
-                        if let Ok(s) = std::fs::read_to_string(cg.join("memory.stat")) {
-                            eprintln!("[faber][debug] after-run memory.stat:\n{}", s);
-                        }
-                        if let Ok(p) = std::fs::read_to_string(cg.join("cgroup.procs")) {
-                            eprintln!("[faber][debug] leaf cgroup.procs (after): {}", p.trim());
-                        }
-                        if let Ok(t) = std::fs::read_to_string(cg.join("cgroup.threads")) {
-                            eprintln!("[faber][debug] leaf cgroup.threads (after): {}", t.trim());
-                        }
-
-                        cgroup::remove_cgroup(&cg)?;
-                    }
-
-                    // If non-zero exit, mark the rest as skipped
-                    if task_result.exit_code != 0 {
-                        skip_rest = true;
-                    }
-
-                    results.push(task_result);
-                }
-                Ok(ForkResult::Child) => {
-                    close_fd(task_reader.into_raw_fd())?;
-
-                    let flags = CloneFlags::CLONE_NEWPID | CloneFlags::CLONE_NEWNS;
-                    if let Err(e) = environment::unshare(flags) {
-                        let result = TaskResult {
-                            stdout: String::new(),
-                            stderr: format!("unshare failed: {e}"),
-                            exit_code: -1,
-                            execution_time_ms: None,
-                            cpu_usage_usec: None,
-                            cpu_user_usec: None,
-                            cpu_system_usec: None,
-                            memory_peak_bytes: None,
-                        };
-                        let _ = serde_json::to_writer(&mut task_writer, &result);
-                        let _ = task_writer.flush();
-                        exit(0);
-                    }
-
-                    if let Err(e) = environment::mask_mounts(&["/proc", "/sys"]) {
-                        let result = TaskResult {
-                            stdout: String::new(),
-                            stderr: format!("mask mounts failed: {e}"),
-                            exit_code: -1,
-                            execution_time_ms: None,
-                            cpu_usage_usec: None,
-                            cpu_user_usec: None,
-                            cpu_system_usec: None,
-                            memory_peak_bytes: None,
-                        };
-                        let _ = serde_json::to_writer(&mut task_writer, &result);
-                        let _ = task_writer.flush();
-                        exit(0);
-                    }
-
-                    if let Some(files) = &t.files {
-                        if let Err(e) = environment::write_files(&self.work_dir, files) {
-                            let result = TaskResult {
-                                stdout: String::new(),
-                                stderr: format!("write files failed: {e}"),
-                                exit_code: -1,
-                                execution_time_ms: None,
-                                cpu_usage_usec: None,
-                                cpu_user_usec: None,
-                                cpu_system_usec: None,
-                                memory_peak_bytes: None,
-                            };
-                            let _ = serde_json::to_writer(&mut task_writer, &result);
-                            let _ = task_writer.flush();
-                            exit(0);
-                        }
-                    }
-
-                    // list all files
-                    let files = std::fs::read_dir(&self.work_dir).map_err(|e| Error::Io {
-                        operation: "read workdir".to_string(),
-                        path: self.work_dir.to_string_lossy().to_string(),
-                        details: format!("Failed to read workdir: {e}"),
-                    })?;
-                    for file in files {
-                        println!("File: {:?}", file.unwrap().path());
-                    }
-
-                    let mut cmd = Command::new(&t.cmd);
-                    cmd.current_dir(&self.work_dir);
-
-                    if let Some(args) = &t.args {
-                        cmd.args(args);
-                    }
-
-                    cmd.env_clear();
-
-                    if let Some(env) = &t.env {
-                        cmd.envs(env);
-                    }
-
-                    let has_path = cmd.get_envs().any(|(key, _)| key == "PATH");
-                    if !has_path {
-                        cmd.env("PATH", "/usr/local/bin:/usr/bin:/bin");
-                    }
-
-                    if t.stdin.is_some() {
-                        cmd.stdin(std::process::Stdio::piped());
-                    } else {
-                        cmd.stdin(std::process::Stdio::null());
-                    }
-
-                    cmd.stdout(std::process::Stdio::piped())
-                        .stderr(std::process::Stdio::piped());
-
-                    let mut child = match cmd.spawn() {
-                        Ok(c) => c,
-                        Err(e) => {
-                            let result = TaskResult {
-                                stdout: String::new(),
-                                stderr: format!("spawn failed: {e}"),
-                                exit_code: -1,
-                                execution_time_ms: None,
-                                cpu_usage_usec: None,
-                                cpu_user_usec: None,
-                                cpu_system_usec: None,
-                                memory_peak_bytes: None,
-                            };
-                            let _ = serde_json::to_writer(&mut task_writer, &result);
-                            let _ = task_writer.flush();
-                            exit(0);
-                        }
-                    };
-
-                    // Fallback VmHWM sampler: track peak RSS via /proc/<pid>/status while running
-                    let mut vmm_hwm_bytes: u64 = 0;
-
-                    let output = if let Some(secs) = self.runtime_limits.kill_timeout_seconds {
-                        let deadline = Instant::now() + Duration::from_secs(secs);
-                        loop {
-                            // sample VmHWM
-                            let status_path = format!("/proc/{}/status", child.id());
-                            if let Ok(contents) = std::fs::read_to_string(&status_path) {
-                                for line in contents.lines() {
-                                    if let Some(rest) = line.strip_prefix("VmHWM:") {
-                                        let parts: Vec<&str> =
-                                            rest.trim().split_whitespace().collect();
-                                        if parts.len() >= 2 {
-                                            if let Ok(kb) = parts[0].parse::<u64>() {
-                                                vmm_hwm_bytes = vmm_hwm_bytes.max(kb * 1024);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            if Instant::now() >= deadline {
-                                let _ = child.kill();
-                                break match child.wait_with_output() {
-                                    Ok(o) => o,
-                                    Err(e) => {
-                                        let result = TaskResult {
-                                            stdout: String::new(),
-                                            stderr: format!("wait failed after kill: {e}"),
-                                            exit_code: -1,
-                                            execution_time_ms: None,
-                                            cpu_usage_usec: None,
-                                            cpu_user_usec: None,
-                                            cpu_system_usec: None,
-                                            memory_peak_bytes: None,
-                                        };
-                                        let _ = serde_json::to_writer(&mut task_writer, &result);
-                                        let _ = task_writer.flush();
-                                        exit(0);
-                                    }
-                                };
-                            }
-                            match child.try_wait() {
-                                Ok(Some(_status)) => {
-                                    break match child.wait_with_output() {
-                                        Ok(o) => o,
-                                        Err(e) => {
-                                            let result = TaskResult {
-                                                stdout: String::new(),
-                                                stderr: format!("wait failed: {e}"),
-                                                exit_code: -1,
-                                                execution_time_ms: None,
-                                                cpu_usage_usec: None,
-                                                cpu_user_usec: None,
-                                                cpu_system_usec: None,
-                                                memory_peak_bytes: None,
-                                            };
-                                            let _ =
-                                                serde_json::to_writer(&mut task_writer, &result);
-                                            let _ = task_writer.flush();
-                                            exit(0);
-                                        }
-                                    };
-                                }
-                                Ok(None) => {
-                                    std::thread::sleep(Duration::from_millis(5));
-                                }
-                                Err(e) => {
-                                    let result = TaskResult {
-                                        stdout: String::new(),
-                                        stderr: format!("try_wait failed: {e}"),
-                                        exit_code: -1,
-                                        execution_time_ms: None,
-                                        cpu_usage_usec: None,
-                                        cpu_user_usec: None,
-                                        cpu_system_usec: None,
-                                        memory_peak_bytes: None,
-                                    };
-                                    let _ = serde_json::to_writer(&mut task_writer, &result);
-                                    let _ = task_writer.flush();
-                                    exit(0);
-                                }
-                            }
-                        }
-                    } else {
-                        // No timeout: still sample VmHWM while waiting
-                        loop {
-                            let status_path = format!("/proc/{}/status", child.id());
-                            if let Ok(contents) = std::fs::read_to_string(&status_path) {
-                                for line in contents.lines() {
-                                    if let Some(rest) = line.strip_prefix("VmHWM:") {
-                                        let parts: Vec<&str> =
-                                            rest.trim().split_whitespace().collect();
-                                        if parts.len() >= 2 {
-                                            if let Ok(kb) = parts[0].parse::<u64>() {
-                                                vmm_hwm_bytes = vmm_hwm_bytes.max(kb * 1024);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            match child.try_wait() {
-                                Ok(Some(_)) => {
-                                    break match child.wait_with_output() {
-                                        Ok(o) => o,
-                                        Err(e) => {
-                                            let result = TaskResult {
-                                                stdout: String::new(),
-                                                stderr: format!("wait failed: {e}"),
-                                                exit_code: -1,
-                                                execution_time_ms: None,
-                                                cpu_usage_usec: None,
-                                                cpu_user_usec: None,
-                                                cpu_system_usec: None,
-                                                memory_peak_bytes: None,
-                                            };
-                                            let _ =
-                                                serde_json::to_writer(&mut task_writer, &result);
-                                            let _ = task_writer.flush();
-                                            exit(0);
-                                        }
-                                    };
-                                }
-                                Ok(None) => std::thread::sleep(Duration::from_millis(5)),
-                                Err(e) => {
-                                    let result = TaskResult {
-                                        stdout: String::new(),
-                                        stderr: format!("try_wait failed: {e}"),
-                                        exit_code: -1,
-                                        execution_time_ms: None,
-                                        cpu_usage_usec: None,
-                                        cpu_user_usec: None,
-                                        cpu_system_usec: None,
-                                        memory_peak_bytes: None,
-                                    };
-                                    let _ = serde_json::to_writer(&mut task_writer, &result);
-                                    let _ = task_writer.flush();
-                                    exit(0);
-                                }
-                            }
-                        }
-                    };
-
-                    let mut result = TaskResult::from(output);
-
-                    // Prefer cgroup memory.peak when non-trivial; otherwise fall back to VmHWM
-                    if result.memory_peak_bytes.unwrap_or(0) < 1024 * 1024 && vmm_hwm_bytes > 0 {
-                        result.memory_peak_bytes = Some(vmm_hwm_bytes);
-                    }
-
-                    if serde_json::to_writer(&mut task_writer, &result).is_err() {
-                        // If writing fails, just exit; parent will see read error, but we tried
-                    }
-                    let _ = task_writer.flush();
-
-                    exit(0);
-                }
-                Err(e) => {
-                    return Err(Error::ProcessManagement {
-                        operation: "fork per-task".to_string(),
-                        pid: -1,
-                        details: format!("Fork failed in task loop: {e:?}"),
-                    });
+        for task in tasks {
+            if let Some(last_task) = results.last() {
+                if last_task.exit_code != 0 {
+                    results.push(self.create_skipped_result());
+                    continue;
                 }
             }
+
+            let task_result = self.execute_single_task(task)?;
+
+            results.push(task_result);
         }
 
         Ok(results)
+    }
+
+    /// Executes a single task and returns its result.
+    fn execute_single_task(&self, task: Task) -> Result<TaskResult> {
+        let (task_reader, task_writer) = mk_pipe()?;
+        let start_time = Instant::now();
+
+        match unsafe { fork() } {
+            Ok(ForkResult::Parent { child, .. }) => {
+                close_fd(task_writer.into_raw_fd())?;
+                self.handle_parent_process(child, task_reader, start_time)
+            }
+            Ok(ForkResult::Child) => {
+                close_fd(task_reader.into_raw_fd())?;
+                self.handle_child_process(task, task_writer)
+            }
+            Err(e) => Err(Error::ProcessManagement {
+                operation: "fork per-task".to_string(),
+                pid: -1,
+                details: format!("Fork failed in task loop: {e:?}"),
+            }),
+        }
+    }
+
+    /// Handles the parent process side of task execution.
+    fn handle_parent_process(
+        &self,
+        pid: Pid,
+        task_reader: std::io::PipeReader,
+        start_time: Instant,
+    ) -> Result<TaskResult> {
+        // Read TaskResult from child
+        let mut task_result: TaskResult = match serde_json::de::from_reader(&task_reader) {
+            Ok(res) => res,
+            Err(e) => {
+                return Err(Error::ProcessManagement {
+                    operation: "read task result".to_string(),
+                    pid: pid.as_raw(),
+                    details: format!("Failed to read/deserialize task result: {e}"),
+                });
+            }
+        };
+
+        // Wait for per-task child to finish
+        wait_for_child(pid)?;
+
+        // Populate metrics
+        task_result.execution_time_ms = Some(start_time.elapsed().as_millis() as u64);
+
+        Ok(task_result)
+    }
+
+    /// Handles the child process side of task execution.
+    fn handle_child_process(&self, task: Task, mut task_writer: std::io::PipeWriter) -> ! {
+        // Set up task-specific namespaces
+        let flags = CloneFlags::CLONE_NEWPID | CloneFlags::CLONE_NEWNS;
+        if let Err(e) = environment::unshare(flags) {
+            let result = self.create_error_result("unshare failed", &e.to_string());
+            self.write_result_and_exit(&mut task_writer, &result);
+        }
+
+        // Write files if specified
+        if let Some(files) = &task.files {
+            if let Err(e) = environment::write_files(&self.work_dir, files) {
+                let result = self.create_error_result("write files failed", &e.to_string());
+                self.write_result_and_exit(&mut task_writer, &result);
+            }
+        }
+
+        // Prepare and execute command
+        let child = match self.prepare_and_spawn_command(&task, &mut task_writer) {
+            Ok(child) => child,
+            Err(_) => exit(0), // Error already written to pipe
+        };
+
+        // Execute the command and get result
+        let output = match child.wait_with_output() {
+            Ok(o) => o,
+            Err(e) => {
+                let result = self.create_error_result("wait failed", &e.to_string());
+                self.write_result_and_exit(&mut task_writer, &result);
+            }
+        };
+
+        let result = TaskResult::from(output);
+        self.write_result_and_exit(&mut task_writer, &result);
+    }
+
+    /// Prepares and spawns a command for execution.
+    fn prepare_and_spawn_command(
+        &self,
+        task: &Task,
+        task_writer: &mut std::io::PipeWriter,
+    ) -> Result<std::process::Child> {
+        let mut cmd = Command::new(&task.cmd);
+        cmd.current_dir(&self.work_dir);
+
+        if let Some(args) = &task.args {
+            cmd.args(args);
+        }
+
+        cmd.env_clear();
+
+        if let Some(env) = &task.env {
+            cmd.envs(env);
+        }
+
+        let has_path = cmd.get_envs().any(|(key, _)| key == "PATH");
+        if !has_path {
+            cmd.env("PATH", "/usr/local/bin:/usr/bin:/bin");
+        }
+
+        if task.stdin.is_some() {
+            cmd.stdin(std::process::Stdio::piped());
+        } else {
+            cmd.stdin(std::process::Stdio::null());
+        }
+
+        cmd.stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+
+        // Drop privileges to nobody user for security before spawning the command
+        if let Err(e) = environment::drop_privileges_to_nobody() {
+            let result = self.create_error_result("failed to drop privileges", &e.to_string());
+            self.write_result_and_exit(task_writer, &result);
+        }
+
+        cmd.spawn().map_err(|e| {
+            let result = self.create_error_result("spawn failed", &e.to_string());
+            self.write_result_and_exit(task_writer, &result);
+            Error::ProcessManagement {
+                operation: "spawn command".to_string(),
+                pid: -1,
+                details: e.to_string(),
+            }
+        })
+    }
+
+    /// Creates a TaskResult for skipped tasks.
+    fn create_skipped_result(&self) -> TaskResult {
+        TaskResult {
+            stdout: String::new(),
+            stderr: "skipped: previous task failed".to_string(),
+            exit_code: -1,
+            execution_time_ms: None,
+            cpu_usage_usec: None,
+            cpu_user_usec: None,
+            cpu_system_usec: None,
+            memory_peak_bytes: None,
+        }
+    }
+
+    /// Creates a TaskResult for error conditions.
+    fn create_error_result(&self, operation: &str, details: &str) -> TaskResult {
+        TaskResult {
+            stdout: String::new(),
+            stderr: format!("{operation}: {details}"),
+            exit_code: -1,
+            execution_time_ms: None,
+            cpu_usage_usec: None,
+            cpu_user_usec: None,
+            cpu_system_usec: None,
+            memory_peak_bytes: None,
+        }
+    }
+
+    /// Writes a result to the task writer and exits the process.
+    fn write_result_and_exit(
+        &self,
+        task_writer: &mut std::io::PipeWriter,
+        result: &TaskResult,
+    ) -> ! {
+        let _ = serde_json::to_writer(&mut *task_writer, result);
+        let _ = task_writer.flush();
+        exit(0);
     }
 
     /// Basic validation for task lists.

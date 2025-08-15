@@ -8,20 +8,17 @@ use nix::{
     mount::{MntFlags, MsFlags, mount, umount2},
     sched::CloneFlags,
     sys::stat::{Mode, SFlag, makedev, mknod},
-    unistd::{pivot_root, sethostname},
+    unistd::{Gid, Uid, pivot_root, setgid, sethostname, setuid},
 };
 
-use crate::{
-    prelude::*,
-    types::{FilesystemConfig, Mount},
-};
+use crate::{prelude::*, types::Mount};
 
+use std::env::set_current_dir;
 use std::path::{Path, PathBuf};
 use std::{
     collections::HashMap,
     fs::{create_dir_all, remove_dir_all, write},
 };
-use std::{env::set_current_dir, fs::remove_dir};
 
 /// Cleans up the container environment by removing the container root directory.
 pub(crate) fn cleanup(host_container_root: &Path) -> Result<()> {
@@ -495,6 +492,27 @@ pub(crate) fn create_dev_devices() -> Result<()> {
             source,
             details: "Failed to create urandom device".to_string(),
         }
+    })?;
+
+    Ok(())
+}
+
+/// Drops privileges to the nobody user (uid=65534, gid=65534).
+/// This function should be called after setting up the container environment
+/// but before executing user tasks to ensure security.
+pub(crate) fn drop_privileges_to_nobody() -> Result<()> {
+    // Set group ID first (setgid must be called before setuid)
+    setgid(Gid::from_raw(65534)).map_err(|source| Error::SetGid {
+        gid: 65534,
+        source,
+        details: "Failed to set group ID to nobody".to_string(),
+    })?;
+
+    // Set user ID
+    setuid(Uid::from_raw(65534)).map_err(|source| Error::SetUid {
+        uid: 65534,
+        source,
+        details: "Failed to set user ID to nobody".to_string(),
     })?;
 
     Ok(())

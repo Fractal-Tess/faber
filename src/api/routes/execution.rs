@@ -81,6 +81,7 @@ pub async fn execution(
         )
         .with_cgroup_config(config.container.cgroup.clone().into())
         .with_kill_timeout_seconds(config.container.runtime.kill_timeout_seconds)
+        .with_cpu_time_limit_ms(config.container.runtime.cpu_time_limit_ms)
         .with_id(request_id.clone())
         .build()
         .map_err(|e| {

@@ -62,21 +62,14 @@ fn default_workdir_size() -> String {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CgroupConfig {
-    #[serde(default = "default_enabled_true")]
-    pub enabled: bool,
     pub pids_max: Option<u64>,
     pub memory_max: Option<String>,
     pub cpu_max: Option<String>,
 }
 
-fn default_enabled_true() -> bool {
-    true
-}
-
 impl From<CgroupConfig> for faber::CgroupConfig {
     fn from(cfg: CgroupConfig) -> Self {
         faber::CgroupConfig {
-            enabled: cfg.enabled,
             pids_max: cfg.pids_max,
             memory_max: cfg.memory_max,
             cpu_max: cfg.cpu_max,
@@ -87,4 +80,5 @@ impl From<CgroupConfig> for faber::CgroupConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ContainerRuntimeConfig {
     pub kill_timeout_seconds: Option<u64>,
+    pub cpu_time_limit_ms: Option<u64>,
 }

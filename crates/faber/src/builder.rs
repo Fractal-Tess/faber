@@ -1,7 +1,7 @@
 use crate::prelude::*;
 use crate::runtime::Runtime;
 use crate::types::{CgroupConfig, FilesystemConfig, Mount, RuntimeLimits};
-use rand::{Rng, distr::Alphanumeric};
+use rand::Rng;
 use std::path::PathBuf;
 
 /// Builder for constructing a `Runtime` with clear, typed configuration.
@@ -102,6 +102,14 @@ impl RuntimeBuilder {
         self
     }
 
+    /// Configure CPU time limit in milliseconds.
+    pub fn with_cpu_time_limit_ms(mut self, cpu_time_limit_ms: Option<u64>) -> Self {
+        let mut limits = self.runtime_limits.unwrap_or_default();
+        limits.cpu_time_limit_ms = cpu_time_limit_ms;
+        self.runtime_limits = Some(limits);
+        self
+    }
+
     /// Finalize the configuration and create a [`Runtime`].
     pub fn build(self) -> Result<Runtime> {
         // Validate required fields
@@ -139,8 +147,9 @@ impl RuntimeBuilder {
             .collect();
 
         let id: String = self.id.unwrap_or_else(|| {
-            rand::rng()
-                .sample_iter(&Alphanumeric)
+            let mut rng = rand::thread_rng();
+            std::iter::repeat(())
+                .map(|_| rng.sample(rand::distributions::Alphanumeric))
                 .take(12)
                 .map(char::from)
                 .collect()
@@ -152,8 +161,8 @@ impl RuntimeBuilder {
         let mounts = self.mounts.unwrap_or(default_mounts);
         let work_dir = self.work_dir.unwrap_or_else(|| "/faber".into());
         let filesystem_config = self.filesystem_config.unwrap_or_default();
-        let cgroup = self.cgroup.unwrap_or_default();
         let runtime_limits = self.runtime_limits.unwrap_or_default();
+        let cgroup_config = self.cgroup.unwrap_or_default();
 
         // Validate work_dir
         if work_dir.is_empty() {
@@ -169,8 +178,8 @@ impl RuntimeBuilder {
             mounts,
             work_dir: work_dir.into(),
             filesystem_config,
-            cgroup,
             runtime_limits,
+            cgroup_config,
         })
     }
 }

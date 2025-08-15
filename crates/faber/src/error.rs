@@ -87,6 +87,22 @@ pub enum Error {
         details: String,
     },
 
+    #[error("Failed to set group ID to {gid}: {source}: {details}")]
+    SetGid {
+        gid: u32,
+        #[source]
+        source: NixError,
+        details: String,
+    },
+
+    #[error("Failed to set user ID to {uid}: {source}: {details}")]
+    SetUid {
+        uid: u32,
+        #[source]
+        source: NixError,
+        details: String,
+    },
+
     #[error("Pivot_root failed (new_root={new_root}, old_root={old_root}): {source}: {details}")]
     PivotRoot {
         new_root: PathBuf,

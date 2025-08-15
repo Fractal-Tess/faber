@@ -94,22 +94,22 @@ impl Default for FilesystemConfig {
     }
 }
 
-/// Container cgroup configuration (placeholder; not yet wired fully).
+/// Container cgroup configuration.
 #[derive(Debug, Clone, Default)]
 pub struct CgroupConfig {
-    /// Enable or disable cgroup limits.
-    pub enabled: bool,
     /// Max number of processes allowed.
     pub pids_max: Option<u64>,
     /// Max memory, as a string (e.g., `"256M"`).
     pub memory_max: Option<String>,
-    /// CPU max configuration, as a string (e.g., `"max 100000"`).
+    /// CPU max configuration, as a string (e.g., `"max"` or `"20000 100000"`).
     pub cpu_max: Option<String>,
 }
 
 /// Runtime-level limits and controls.
 #[derive(Debug, Clone, Default)]
 pub struct RuntimeLimits {
-    /// Time to wait before force-killing stuck processes.
+    /// Time to wait before force-killing stuck processes (wall-clock timeout).
     pub kill_timeout_seconds: Option<u64>,
+    /// CPU time limit in milliseconds (CPU time TLE threshold).
+    pub cpu_time_limit_ms: Option<u64>,
 }
