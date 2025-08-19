@@ -1,6 +1,7 @@
 use crate::prelude::*;
 use crate::runtime::Runtime;
 use crate::types::{CgroupConfig, FilesystemConfig, Mount, RuntimeLimits};
+use nix::mount::MsFlags;
 use rand::Rng;
 use std::path::PathBuf;
 
@@ -130,11 +131,7 @@ impl RuntimeBuilder {
             }
         }
 
-        let flags = vec![
-            nix::mount::MsFlags::MS_BIND,
-            nix::mount::MsFlags::MS_REC,
-            nix::mount::MsFlags::MS_RDONLY,
-        ];
+        let flags = vec![MsFlags::MS_BIND, MsFlags::MS_REC, MsFlags::MS_RDONLY];
         let default_mounts: Vec<Mount> = ["/bin", "/lib", "/usr", "/lib64", "/etc"]
             .iter()
             .map(|s| Mount {
