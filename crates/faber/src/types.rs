@@ -46,6 +46,10 @@ pub struct TaskResult {
     pub memory_peak_bytes: Option<u64>,
     /// Memory limit in bytes (from cgroup).
     pub memory_limit_bytes: Option<u64>,
+    /// Current number of processes in the task cgroup.
+    pub pids_current: Option<u64>,
+    /// Maximum number of processes allowed in the task cgroup.
+    pub pids_max: Option<u64>,
 }
 
 impl From<Output> for TaskResult {
@@ -63,6 +67,8 @@ impl From<Output> for TaskResult {
             memory_current_bytes: None,
             memory_peak_bytes: None,
             memory_limit_bytes: None,
+            pids_current: None,
+            pids_max: None,
         }
     }
 }

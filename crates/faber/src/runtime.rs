@@ -160,7 +160,7 @@ impl Runtime {
         // Create task-specific cgroup for this task
         eprintln!("[RUNTIME] Creating task-specific cgroup for task execution");
 
-        let task_cgroup_path = cgroup::create_task_cgroup()?;
+        let task_cgroup_path = cgroup::create_task_cgroup(&self.cgroup_config)?;
 
         match unsafe { fork() } {
             Ok(ForkResult::Parent { child, .. }) => {
@@ -232,6 +232,8 @@ impl Runtime {
         task_result.memory_current_bytes = Some(task_stats.memory.current);
         task_result.memory_peak_bytes = Some(task_stats.memory.peak);
         task_result.memory_limit_bytes = Some(task_stats.memory.max);
+        task_result.pids_current = Some(task_stats.pids.current);
+        task_result.pids_max = Some(task_stats.pids.max);
 
         Ok(task_result)
     }
@@ -347,6 +349,8 @@ impl Runtime {
             memory_peak_bytes: None,
             memory_current_bytes: None,
             memory_limit_bytes: None,
+            pids_current: None,
+            pids_max: None,
         }
     }
 
@@ -363,6 +367,8 @@ impl Runtime {
             memory_peak_bytes: None,
             memory_current_bytes: None,
             memory_limit_bytes: None,
+            pids_current: None,
+            pids_max: None,
         }
     }
 
