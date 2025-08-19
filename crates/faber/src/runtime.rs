@@ -70,7 +70,10 @@ impl Runtime {
                     }
                 };
 
-                let _timeout_killed = crate::utils::wait_for_child_with_timeout(child, self.runtime_limits.kill_timeout_seconds)?;
+                let _timeout_killed = crate::utils::wait_for_child_with_timeout(
+                    child,
+                    self.runtime_limits.kill_timeout_seconds,
+                )?;
 
                 environment::cleanup(&self.host_container_root)?;
 
@@ -206,40 +209,115 @@ impl Runtime {
 
         // Wait for per-task child to finish with timeout
         let timeout_killed = if let Some(timeout) = self.runtime_limits.kill_timeout_seconds {
+            eprintln!(
+                "[RUNTIME] Setting up timeout monitoring for {} seconds",
+                timeout
+            );
             let timeout_duration = std::time::Duration::from_secs(timeout);
             let start_time = std::time::Instant::now();
-            
+
             // Spawn a monitoring thread to kill the child after timeout
             let pid_clone = pid;
             let timeout_handle = std::thread::spawn(move || {
                 std::thread::sleep(timeout_duration);
-                let _ = nix::sys::signal::kill(pid_clone, nix::sys::signal::Signal::SIGKILL);
+                eprintln!(
+                    "[RUNTIME] Timeout reached, killing process {}",
+                    pid_clone.as_raw()
+                );
+                let kill_result =
+                    nix::sys::signal::kill(pid_clone, nix::sys::signal::Signal::SIGKILL);
+                match kill_result {
+                    Ok(_) => eprintln!(
+                        "[RUNTIME] Successfully sent SIGKILL to process {}",
+                        pid_clone.as_raw()
+                    ),
+                    Err(e) => eprintln!(
+                        "[RUNTIME] Failed to send SIGKILL to process {}: {:?}",
+                        pid_clone.as_raw(),
+                        e
+                    ),
+                }
             });
-            
-            // Wait for the child to exit
-            let wait_result = crate::utils::wait_for_child(pid);
-            
-            // Cancel the timeout thread if child exited before timeout
-            drop(timeout_handle);
-            
-            match wait_result {
-                Ok(_) => false, // Child exited normally
-                Err(_) => {
-                    // Check if the child was killed due to timeout
-                    if start_time.elapsed() >= timeout_duration {
-                        true // Child was killed due to timeout
-                    } else {
-                        // Some other error occurred
-                        return Err(Error::ProcessManagement {
-                            operation: "wait for child".to_string(),
-                            pid: pid.as_raw(),
-                            details: "Failed to wait for child process".to_string(),
-                        });
+
+            // Wait for the child to exit with a shorter timeout to check periodically
+            let mut timeout_occurred = false;
+            let check_interval = std::time::Duration::from_millis(100); // Check every 100ms
+
+            loop {
+                // Try to wait for the child with a short timeout
+                match nix::sys::wait::waitpid(pid, Some(nix::sys::wait::WaitPidFlag::WNOHANG)) {
+                    Ok(nix::sys::wait::WaitStatus::Exited(_, _)) => {
+                        eprintln!("[RUNTIME] Child process {} exited normally", pid.as_raw());
+                        break;
+                    }
+                    Ok(nix::sys::wait::WaitStatus::Signaled(_, signal, _)) => {
+                        eprintln!(
+                            "[RUNTIME] Child process {} was killed by signal {:?}",
+                            pid.as_raw(),
+                            signal
+                        );
+                        if signal == nix::sys::signal::Signal::SIGKILL {
+                            timeout_occurred = true;
+                        }
+                        break;
+                    }
+                    Ok(nix::sys::wait::WaitStatus::StillAlive) => {
+                        // Process is still running, check if we've exceeded timeout
+                        if start_time.elapsed() >= timeout_duration {
+                            eprintln!(
+                                "[RUNTIME] Timeout exceeded, waiting for kill to take effect"
+                            );
+                            timeout_occurred = true;
+                            // Give the kill signal a moment to take effect
+                            std::thread::sleep(std::time::Duration::from_millis(500));
+                            break;
+                        }
+                        // Wait a bit before checking again
+                        std::thread::sleep(check_interval);
+                    }
+                    Ok(nix::sys::wait::WaitStatus::Stopped(_, _)) => {
+                        // Process stopped, continue monitoring
+                        std::thread::sleep(check_interval);
+                    }
+                    Ok(nix::sys::wait::WaitStatus::PtraceEvent(_, _, _)) => {
+                        // Ptrace event, continue monitoring
+                        std::thread::sleep(check_interval);
+                    }
+                    Ok(nix::sys::wait::WaitStatus::PtraceSyscall(_)) => {
+                        // Ptrace syscall, continue monitoring
+                        std::thread::sleep(check_interval);
+                    }
+                    Ok(nix::sys::wait::WaitStatus::Continued(_)) => {
+                        // Process continued, continue monitoring
+                        std::thread::sleep(check_interval);
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[RUNTIME] Error waiting for child process {}: {:?}",
+                            pid.as_raw(),
+                            e
+                        );
+                        break;
                     }
                 }
             }
+
+            // Cancel the timeout thread
+            drop(timeout_handle);
+
+            // Final wait to ensure the process is gone
+            if timeout_occurred {
+                // Wait a bit more for the process to actually exit
+                let _ = nix::sys::wait::waitpid(pid, None);
+            }
+
+            timeout_occurred
         } else {
             // No timeout configured, wait normally
+            eprintln!(
+                "[RUNTIME] No timeout configured, waiting for child process {} to exit",
+                pid.as_raw()
+            );
             crate::utils::wait_for_child(pid)?;
             false
         };
@@ -249,8 +327,10 @@ impl Runtime {
             return Err(Error::ProcessManagement {
                 operation: "task execution".to_string(),
                 pid: pid.as_raw(),
-                details: format!("Task killed due to timeout ({} seconds)", 
-                    self.runtime_limits.kill_timeout_seconds.unwrap_or(0)),
+                details: format!(
+                    "Task killed due to timeout ({} seconds)",
+                    self.runtime_limits.kill_timeout_seconds.unwrap_or(0)
+                ),
             });
         }
 
