@@ -185,7 +185,8 @@ pub(crate) fn create_cgroup() -> Result<()> {
     let cgroup_path = std::path::PathBuf::from("/sys/fs/cgroup");
     let cgroup_path_str = cgroup_path.to_str().unwrap();
     let cgroup_fstype = "cgroup2";
-    let cgroup_flags = MsFlags::MS_RELATIME;
+    let cgroup_flags =
+        MsFlags::MS_RELATIME | MsFlags::MS_NOSUID | MsFlags::MS_NODEV | MsFlags::MS_NOEXEC;
     mount(
         None::<&str>,
         cgroup_path_str,
@@ -432,66 +433,45 @@ pub(crate) fn create_dev_devices() -> Result<()> {
         | Mode::S_IROTH
         | Mode::S_IWOTH;
 
-    let dev_path = "/dev";
-    create_dir_all(dev_path).map_err(|source| Error::CreateDir {
-        path: PathBuf::from(dev_path),
+    create_dir_all("/dev").map_err(|source| Error::CreateDir {
+        path: PathBuf::from("/dev"),
         source,
         details: "Failed to create dev directory".to_string(),
     })?;
 
-    // Create null device
-    let device_path = format!("{dev_path}/null");
     let device_id = makedev(1, 3);
-    mknod(device_path.as_str(), flags, mode, device_id).map_err(|source| {
-        Error::CreateDeviceNode {
-            path: PathBuf::from(device_path.clone()),
-            source,
-            details: "Failed to create null device".to_string(),
-        }
+    mknod("/dev/null", flags, mode, device_id).map_err(|source| Error::CreateDeviceNode {
+        path: "/dev/null",
+        source,
+        details: "Failed to create null device",
     })?;
 
-    // Create zero device
-    let device_path = format!("{dev_path}/zero");
     let device_id = makedev(1, 5);
-    mknod(device_path.as_str(), flags, mode, device_id).map_err(|source| {
-        Error::CreateDeviceNode {
-            path: PathBuf::from(device_path.clone()),
-            source,
-            details: "Failed to create zero device".to_string(),
-        }
+    mknod("/dev/zero", flags, mode, device_id).map_err(|source| Error::CreateDeviceNode {
+        path: "/dev/zero",
+        source,
+        details: "Failed to create zero device",
     })?;
 
-    // Create full device
-    let device_path = format!("{dev_path}/full");
     let device_id = makedev(1, 7);
-    mknod(device_path.as_str(), flags, mode, device_id).map_err(|source| {
-        Error::CreateDeviceNode {
-            path: PathBuf::from(device_path.clone()),
-            source,
-            details: "Failed to create full device".to_string(),
-        }
+    mknod("/dev/full", flags, mode, device_id).map_err(|source| Error::CreateDeviceNode {
+        path: "/dev/full",
+        source,
+        details: "Failed to create full device",
     })?;
 
-    // Create random device
-    let device_path = format!("{dev_path}/random");
     let device_id = makedev(1, 8);
-    mknod(device_path.as_str(), flags, mode, device_id).map_err(|source| {
-        Error::CreateDeviceNode {
-            path: PathBuf::from(device_path.clone()),
-            source,
-            details: "Failed to create random device".to_string(),
-        }
+    mknod("/dev/random", flags, mode, device_id).map_err(|source| Error::CreateDeviceNode {
+        path: "/dev/random",
+        source,
+        details: "Failed to create random device",
     })?;
 
-    // Create urandom device
-    let device_path = format!("{dev_path}/urandom");
     let device_id = makedev(1, 9);
-    mknod(device_path.as_str(), flags, mode, device_id).map_err(|source| {
-        Error::CreateDeviceNode {
-            path: PathBuf::from(device_path.clone()),
-            source,
-            details: "Failed to create urandom device".to_string(),
-        }
+    mknod("/dev/urandom", flags, mode, device_id).map_err(|source| Error::CreateDeviceNode {
+        path: "/dev/urandom",
+        source,
+        details: "Failed to create urandom device",
     })?;
 
     Ok(())

@@ -56,10 +56,10 @@ pub enum Error {
 
     #[error("Failed to create device node: {path}: {source}: {details}")]
     CreateDeviceNode {
-        path: PathBuf,
+        path: &'static str,
         #[source]
         source: Errno,
-        details: String,
+        details: &'static str,
     },
 
     #[error("Failed to remove directory: {path}: {source}: {details}")]

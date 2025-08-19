@@ -10,10 +10,10 @@ use std::time::Instant;
 use crate::TaskResult;
 use crate::builder::RuntimeBuilder;
 
-use crate::environment;
 use crate::prelude::*;
 use crate::types::{CgroupConfig, FilesystemConfig, Mount, RuntimeLimits, Task};
 use crate::utils::{close_fd, mk_pipe, wait_for_child};
+use crate::{cgroup, environment};
 
 /// High-level entry point for preparing an isolated environment and running tasks.
 #[derive(Debug)]
@@ -36,6 +36,10 @@ impl Runtime {
     pub fn run(self, tasks: Vec<Task>) -> Result<Vec<TaskResult>> {
         // Validate tasks
         self.validate_tasks(&tasks)?;
+
+        // Create the main faber cgroup hierarchy once per request
+        eprintln!("[RUNTIME] Creating main faber cgroup hierarchy for request");
+        cgroup::create_faber_cgroup_hierarchy()?;
 
         // Create pipe for task results
         let (results_reader, mut results_writer) = mk_pipe()?;
@@ -112,7 +116,6 @@ impl Runtime {
         let unshare_flags = CloneFlags::CLONE_NEWNS // # mount
             | CloneFlags::CLONE_NEWUTS // # hostname
             | CloneFlags::CLONE_NEWIPC // # ipc
-            | CloneFlags::CLONE_NEWCGROUP // # cgroup
             | CloneFlags::CLONE_NEWNET; // # net
 
         environment::unshare(unshare_flags)?;
@@ -154,14 +157,24 @@ impl Runtime {
         let (task_reader, task_writer) = mk_pipe()?;
         let start_time = Instant::now();
 
+        // Create task-specific cgroup for this task
+        eprintln!("[RUNTIME] Creating task-specific cgroup for task execution");
+
+        let task_cgroup_path = cgroup::create_task_cgroup()?;
+
         match unsafe { fork() } {
             Ok(ForkResult::Parent { child, .. }) => {
+                eprintln!("[RUNTIME] Parent process: child PID = {}", child.as_raw());
                 close_fd(task_writer.into_raw_fd())?;
-                self.handle_parent_process(child, task_reader, start_time)
+
+                let task_result =
+                    self.handle_parent_process(child, task_reader, start_time, &task_cgroup_path)?;
+                Ok(task_result)
             }
             Ok(ForkResult::Child) => {
+                eprintln!("[RUNTIME] Child process starting");
                 close_fd(task_reader.into_raw_fd())?;
-                self.handle_child_process(task, task_writer)
+                self.handle_child_process(task, task_writer, &task_cgroup_path)
             }
             Err(e) => Err(Error::ProcessManagement {
                 operation: "fork per-task".to_string(),
@@ -177,6 +190,7 @@ impl Runtime {
         pid: Pid,
         task_reader: std::io::PipeReader,
         start_time: Instant,
+        task_cgroup_path: &str,
     ) -> Result<TaskResult> {
         // Read TaskResult from child
         let mut task_result: TaskResult = match serde_json::de::from_reader(&task_reader) {
@@ -193,18 +207,50 @@ impl Runtime {
         // Wait for per-task child to finish
         wait_for_child(pid)?;
 
-        // Populate metrics
+        // Read CPU statistics from the task cgroup before cleanup
+        let cpu_stats = match cgroup::read_task_cpu_stats(&task_cgroup_path) {
+            Ok(stats) => {
+                eprintln!("[RUNTIME] Successfully read CPU statistics from cgroup");
+                stats
+            }
+            Err(e) => {
+                eprintln!("[RUNTIME] Warning: Failed to read task CPU stats: {}", e);
+                cgroup::CpuStats::default()
+            }
+        };
+
+        // Clean up the task cgroup directory
+        if let Err(e) = cgroup::cleanup_task_cgroup(&task_cgroup_path) {
+            eprintln!("[RUNTIME] Warning: Failed to cleanup task cgroup: {}", e);
+        }
+
+        // Populate metrics including CPU statistics from cgroup
         task_result.execution_time_ms = Some(start_time.elapsed().as_millis() as u64);
+        task_result.cpu_usage_usec = cpu_stats.usage_usec;
+        task_result.cpu_user_usec = cpu_stats.user_usec;
+        task_result.cpu_system_usec = cpu_stats.system_usec;
 
         Ok(task_result)
     }
 
     /// Handles the child process side of task execution.
-    fn handle_child_process(&self, task: Task, mut task_writer: std::io::PipeWriter) -> ! {
+    fn handle_child_process(
+        &self,
+        task: Task,
+        mut task_writer: std::io::PipeWriter,
+        task_cgroup_path: &str,
+    ) -> ! {
         // Set up task-specific namespaces
         let flags = CloneFlags::CLONE_NEWPID | CloneFlags::CLONE_NEWNS;
         if let Err(e) = environment::unshare(flags) {
             let result = self.create_error_result("unshare failed", &e.to_string());
+            self.write_result_and_exit(&mut task_writer, &result);
+        }
+
+        // Add this child process to the task cgroup
+        let current_pid = std::process::id();
+        if let Err(e) = cgroup::add_process_to_task_cgroup(task_cgroup_path, current_pid) {
+            let result = self.create_error_result("add process to cgroup failed", &e.to_string());
             self.write_result_and_exit(&mut task_writer, &result);
         }
 
@@ -216,13 +262,13 @@ impl Runtime {
             }
         }
 
-        // Prepare and execute command
+        // Prepare and spawn the command
         let child = match self.prepare_and_spawn_command(&task, &mut task_writer) {
             Ok(child) => child,
             Err(_) => exit(0), // Error already written to pipe
         };
 
-        // Execute the command and get result
+        // Wait for command to finish and get result
         let output = match child.wait_with_output() {
             Ok(o) => o,
             Err(e) => {
@@ -231,7 +277,10 @@ impl Runtime {
             }
         };
 
+        // Parse the command output
         let result = TaskResult::from(output);
+
+        // Write the result to the pipe and exit
         self.write_result_and_exit(&mut task_writer, &result);
     }
 
@@ -277,11 +326,8 @@ impl Runtime {
         cmd.spawn().map_err(|e| {
             let result = self.create_error_result("spawn failed", &e.to_string());
             self.write_result_and_exit(task_writer, &result);
-            Error::ProcessManagement {
-                operation: "spawn command".to_string(),
-                pid: -1,
-                details: e.to_string(),
-            }
+            // This error is never returned since write_result_and_exit calls exit(0)
+            unreachable!("write_result_and_exit should have called exit(0)")
         })
     }
 

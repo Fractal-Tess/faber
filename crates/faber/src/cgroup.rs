@@ -5,7 +5,8 @@
 //! and metrics reading. It's designed to work with the existing Faber
 //! runtime architecture.
 
-use std::fs;
+use rand::Rng;
+use std::fs::{self, create_dir_all, read_to_string, remove_dir_all, write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -32,9 +33,9 @@ impl Controller {
 /// CPU usage statistics from cgroup.
 #[derive(Debug, Clone, Default)]
 pub struct CpuStats {
-    pub usage_usec: u64,
-    pub user_usec: u64,
-    pub system_usec: u64,
+    pub usage_usec: Option<u64>,
+    pub user_usec: Option<u64>,
+    pub system_usec: Option<u64>,
 }
 
 /// Memory statistics from cgroup.
@@ -191,9 +192,9 @@ impl CgroupManager {
             if parts.len() >= 2 {
                 if let Ok(value) = u64::from_str(parts[1]) {
                     match parts[0] {
-                        "usage_usec" => stats.usage_usec = value,
-                        "user_usec" => stats.user_usec = value,
-                        "system_usec" => stats.system_usec = value,
+                        "usage_usec" => stats.usage_usec = Some(value),
+                        "user_usec" => stats.user_usec = Some(value),
+                        "system_usec" => stats.system_usec = Some(value),
                         _ => {}
                     }
                 }
@@ -296,4 +297,281 @@ mod tests {
         let manager = CgroupManager::new(PathBuf::from("/tmp/test"));
         assert_eq!(manager.path(), Path::new("/tmp/test"));
     }
+}
+
+// ===== Functions moved from environment.rs =====
+
+/// Creates the main faber cgroup hierarchy.
+/// This should be called once per request in the parent process.
+pub(crate) fn create_faber_cgroup_hierarchy() -> Result<()> {
+    eprintln!("[CGROUP] Starting to create main faber cgroup hierarchy");
+
+    // Step 1: Write +cpu to /sys/fs/cgroup/cgroup.subtree_control
+    eprintln!("[CGROUP] Step 1: Writing +cpu to /sys/fs/cgroup/cgroup.subtree_control");
+    write("/sys/fs/cgroup/cgroup.subtree_control", "+cpu").map_err(|source| Error::WriteFile {
+        path: PathBuf::from("/sys/fs/cgroup/cgroup.subtree_control"),
+        bytes: "+cpu".len(),
+        source,
+        details: "Failed to write +cpu to cgroup.subtree_control".to_string(),
+    })?;
+    debug_read_file("/sys/fs/cgroup/cgroup.subtree_control")?;
+
+    // Step 2: Create the folder /sys/fs/cgroup/faber
+    eprintln!("[CGROUP] Step 2: Creating /sys/fs/cgroup/faber directory");
+    let faber_cgroup_path = "/sys/fs/cgroup/faber";
+    create_dir_all(faber_cgroup_path).map_err(|source| Error::CreateDir {
+        path: PathBuf::from(faber_cgroup_path),
+        source,
+        details: "Failed to create faber cgroup directory".to_string(),
+    })?;
+    debug_list_files("/sys/fs/cgroup/faber")?;
+
+    // Step 3: Write +cpu to /sys/fs/cgroup/faber/cgroup.subtree_control
+    eprintln!("[CGROUP] Step 3: Writing +cpu to /sys/fs/cgroup/faber/cgroup.subtree_control");
+    let faber_subtree_control = format!("{faber_cgroup_path}/cgroup.subtree_control");
+    write(&faber_subtree_control, "+cpu").map_err(|source| Error::WriteFile {
+        path: PathBuf::from(&faber_subtree_control),
+        bytes: "+cpu".len(),
+        source,
+        details: "Failed to write +cpu to faber cgroup.subtree_control".to_string(),
+    })?;
+    debug_read_file(&faber_subtree_control)?;
+
+    eprintln!("[CGROUP] Successfully completed main faber cgroup setup");
+    Ok(())
+}
+
+/// Creates a task-specific cgroup within the faber hierarchy.
+/// This should be called once per task in the parent process.
+/// Returns the path to the created task directory for cleanup.
+pub(crate) fn create_task_cgroup() -> Result<String> {
+    eprintln!("[CGROUP] Creating task-specific cgroup");
+
+    let faber_cgroup_path = "/sys/fs/cgroup/faber";
+
+    // Step 4: Create the folder task-{random_16_characters}
+    eprintln!("[CGROUP] Step 4: Creating task directory with random name");
+    let task_id = generate_random_task_id();
+    let task_cgroup_path = format!("{faber_cgroup_path}/task-{task_id}");
+    create_dir_all(&task_cgroup_path).map_err(|source| Error::CreateDir {
+        path: PathBuf::from(&task_cgroup_path),
+        source,
+        details: "Failed to create task cgroup directory".to_string(),
+    })?;
+    debug_list_files(&task_cgroup_path)?;
+
+    // Step 5: Write 50000 100000 to /sys/fs/cgroup/faber/task-{}/cpu.max
+    eprintln!("[CGROUP] Step 5: Writing CPU limits to task cgroup");
+    let cpu_max_path = format!("{task_cgroup_path}/cpu.max");
+    write(&cpu_max_path, "50000 100000").map_err(|source| Error::WriteFile {
+        path: PathBuf::from(&cpu_max_path),
+        bytes: "50000 100000".len(),
+        source,
+        details: "Failed to write CPU limits to task cgroup".to_string(),
+    })?;
+    debug_read_file(&cpu_max_path)?;
+
+    eprintln!(
+        "[CGROUP] Successfully created task cgroup: {}",
+        task_cgroup_path
+    );
+    Ok(task_cgroup_path)
+}
+
+/// Generates a random 16-character task ID using alphanumeric characters.
+fn generate_random_task_id() -> String {
+    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    let mut rng = rand::thread_rng();
+
+    (0..16)
+        .map(|_| {
+            let idx = rng.gen_range(0..CHARSET.len());
+            CHARSET[idx] as char
+        })
+        .collect()
+}
+
+/// Removes a task cgroup directory and its contents.
+pub(crate) fn cleanup_task_cgroup(task_cgroup_path: &str) -> Result<()> {
+    eprintln!(
+        "[CGROUP] Cleaning up task cgroup directory: {}",
+        task_cgroup_path
+    );
+
+    // Remove the task directory and all its contents
+    remove_dir_all(task_cgroup_path).map_err(|source| Error::RemoveDir {
+        path: PathBuf::from(task_cgroup_path),
+        source,
+        details: "Failed to remove task cgroup directory".to_string(),
+    })?;
+
+    eprintln!(
+        "[CGROUP] Successfully cleaned up task cgroup directory: {}",
+        task_cgroup_path
+    );
+    Ok(())
+}
+
+/// Removes the main faber cgroup directory and all its contents.
+pub(crate) fn cleanup_faber_cgroup() -> Result<()> {
+    let faber_cgroup_path = "/sys/fs/cgroup/faber";
+    eprintln!(
+        "[CGROUP] Cleaning up main faber cgroup directory: {}",
+        faber_cgroup_path
+    );
+
+    // Remove the faber cgroup directory and all its contents
+    remove_dir_all(faber_cgroup_path).map_err(|source| Error::RemoveDir {
+        path: PathBuf::from(faber_cgroup_path),
+        source,
+        details: "Failed to remove main faber cgroup directory".to_string(),
+    })?;
+
+    eprintln!(
+        "[CGROUP] Successfully cleaned up main faber cgroup directory: {}",
+        faber_cgroup_path
+    );
+    Ok(())
+}
+
+/// Adds a process to the task cgroup by writing its PID to cgroup.procs.
+pub(crate) fn add_process_to_task_cgroup(task_cgroup_path: &str, pid: u32) -> Result<()> {
+    let cgroup_procs_path = format!("{}/cgroup.procs", task_cgroup_path);
+    let pid_str = pid.to_string();
+
+    eprintln!(
+        "[CGROUP] Adding process {} to task cgroup: {}",
+        pid, task_cgroup_path
+    );
+
+    write(&cgroup_procs_path, &pid_str).map_err(|source| Error::WriteFile {
+        path: PathBuf::from(&cgroup_procs_path),
+        bytes: pid_str.len(),
+        source,
+        details: format!("Failed to add process {} to task cgroup", pid),
+    })?;
+
+    eprintln!("[CGROUP] Successfully added process {} to task cgroup", pid);
+    debug_read_file(&cgroup_procs_path)?;
+
+    Ok(())
+}
+
+/// Reads and parses CPU statistics from a task cgroup after task completion.
+/// Returns parsed CPU statistics that can be attached to TaskResult.
+pub(crate) fn read_task_cpu_stats(task_cgroup_path: &str) -> Result<CpuStats> {
+    eprintln!(
+        "[CGROUP] Reading CPU statistics for task cgroup: {}",
+        task_cgroup_path
+    );
+
+    let mut cpu_stats = CpuStats::default();
+
+    // Read cpu.stat file which contains CPU usage statistics
+    let cpu_stat_path = format!("{}/cpu.stat", task_cgroup_path);
+    eprintln!("[CGROUP] Reading CPU stats from: {}", cpu_stat_path);
+
+    match read_to_string(&cpu_stat_path) {
+        Ok(contents) => {
+            eprintln!("[DEBUG] cpu.stat contents: '{}'", contents.trim());
+
+            // Parse cpu.stat file format:
+            // usage_usec 1234567
+            // user_usec 987654
+            // system_usec 246913
+            for line in contents.lines() {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() == 2 {
+                    if let Ok(value) = parts[1].parse::<u64>() {
+                        match parts[0] {
+                            "usage_usec" => cpu_stats.usage_usec = Some(value),
+                            "user_usec" => cpu_stats.user_usec = Some(value),
+                            "system_usec" => cpu_stats.system_usec = Some(value),
+                            _ => {} // Ignore other fields
+                        }
+                    }
+                }
+            }
+
+            eprintln!(
+                "[CGROUP] Parsed CPU stats - usage: {:?}, user: {:?}, system: {:?}",
+                cpu_stats.usage_usec, cpu_stats.user_usec, cpu_stats.system_usec
+            );
+        }
+        Err(e) => {
+            eprintln!(
+                "[DEBUG] Failed to read cpu.stat file {}: {}",
+                cpu_stat_path, e
+            );
+        }
+    }
+
+    // Read cpu.max file to show the limits that were set (for debugging)
+    let cpu_max_path = format!("{}/cpu.max", task_cgroup_path);
+    eprintln!("[CGROUP] Reading CPU limits from: {}", cpu_max_path);
+    debug_read_file(&cpu_max_path)?;
+
+    // Read cgroup.procs to show which processes were in this cgroup (for debugging)
+    let cgroup_procs_path = format!("{}/cgroup.procs", task_cgroup_path);
+    eprintln!("[CGROUP] Reading processes from: {}", cgroup_procs_path);
+    debug_read_file(&cgroup_procs_path)?;
+
+    eprintln!("[CGROUP] Completed reading CPU statistics for task cgroup");
+    Ok(cpu_stats)
+}
+
+/// Reads and prints the contents of a file for debugging purposes.
+pub(crate) fn debug_read_file(path: &str) -> Result<()> {
+    eprintln!("[DEBUG] Reading contents of file: {}", path);
+
+    match read_to_string(path) {
+        Ok(contents) => {
+            eprintln!("[DEBUG] File contents: '{}'", contents.trim());
+        }
+        Err(e) => {
+            eprintln!("[DEBUG] Failed to read file {}: {}", path, e);
+        }
+    }
+
+    Ok(())
+}
+
+/// Lists all files and directories at the specified path for debugging purposes.
+pub(crate) fn debug_list_files(path: &str) -> Result<()> {
+    eprintln!("[DEBUG] Listing contents of directory: {}", path);
+
+    match std::fs::read_dir(path) {
+        Ok(entries) => {
+            for entry in entries {
+                match entry {
+                    Ok(entry) => {
+                        let file_name = entry.file_name().to_string_lossy().to_string();
+                        match entry.metadata() {
+                            Ok(meta) => {
+                                if meta.is_dir() {
+                                    eprintln!("[DEBUG]   DIR:  {}", file_name);
+                                } else if meta.is_file() {
+                                    eprintln!(
+                                        "[DEBUG]   FILE: {} ({} bytes)",
+                                        file_name,
+                                        meta.len()
+                                    );
+                                } else {
+                                    eprintln!("[DEBUG]   OTHER: {}", file_name);
+                                }
+                            }
+                            Err(e) => eprintln!(
+                                "[DEBUG]   ERROR reading metadata for {}: {}",
+                                file_name, e
+                            ),
+                        }
+                    }
+                    Err(e) => eprintln!("[DEBUG]   ERROR reading directory entry: {}", e),
+                }
+            }
+        }
+        Err(e) => eprintln!("[DEBUG] Failed to read directory {}: {}", path, e),
+    }
+
+    Ok(())
 }
