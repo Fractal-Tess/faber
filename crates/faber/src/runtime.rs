@@ -1,11 +1,14 @@
 use nix::sched::CloneFlags;
+use nix::sys::wait::WaitStatus;
 use nix::unistd::{ForkResult, Pid, fork};
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::os::fd::IntoRawFd;
 use std::path::PathBuf;
 use std::process::{Command, exit};
-use std::time::Instant;
+use std::sync::Arc;
+use std::thread::{sleep, spawn};
+use std::time::{Duration, Instant};
 
 use crate::TaskResult;
 use crate::builder::RuntimeBuilder;
@@ -51,28 +54,99 @@ impl Runtime {
 
                 // Read and deserialize results to completion first to avoid
                 // potential pipe backpressure deadlocks
-                let results: Vec<TaskResult> = match serde_json::de::from_reader(&results_reader) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        if e.is_eof() {
-                            return Err(Error::ProcessManagement {
-                                operation: "read results".to_string(),
-                                pid: child.as_raw(),
-                                details: e.to_string(),
-                            });
-                        } else {
-                            return Err(Error::ProcessManagement {
-                                operation: "read results".to_string(),
-                                pid: child.as_raw(),
-                                details: format!("Failed to read/deserialize results: {e}"),
-                            });
+                let mut results: Option<Vec<TaskResult>> = None;
+
+                // Read with timeout checking
+                loop {
+                    // Try to read from pipe with a short timeout
+                    let mut buffer = Vec::new();
+                    let mut temp_reader = match results_reader.try_clone() {
+                        Ok(reader) => reader,
+                        Err(e) => {
+                            eprintln!("[RUNTIME] Failed to clone pipe reader: {:?}", e);
+                            continue;
+                        }
+                    };
+
+                    // Use a short timeout for each read attempt
+                    let read_start = Instant::now();
+                    let read_timeout_duration = Duration::from_millis(100);
+
+                    loop {
+                        if read_start.elapsed() >= read_timeout_duration {
+                            break; // Time to check again
+                        }
+
+                        // Try to read a small chunk
+                        let mut chunk = [0u8; 1024];
+                        match temp_reader.read(&mut chunk) {
+                            Ok(0) => {
+                                // EOF reached, try to deserialize
+                                if !buffer.is_empty() {
+                                    match serde_json::from_slice(&buffer) {
+                                        Ok(r) => {
+                                            results = Some(r);
+                                            break;
+                                        }
+                                        Err(_) => {
+                                            // Incomplete JSON, continue reading
+                                            continue;
+                                        }
+                                    }
+                                }
+                                break;
+                            }
+                            Ok(n) => {
+                                buffer.extend_from_slice(&chunk[..n]);
+                                // Try to deserialize after each chunk
+                                match serde_json::from_slice(&buffer) {
+                                    Ok(r) => {
+                                        results = Some(r);
+                                        break;
+                                    }
+                                    Err(_) => {
+                                        // Incomplete JSON, continue reading
+                                        continue;
+                                    }
+                                }
+                            }
+                            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                                // Would block, continue
+                                continue;
+                            }
+                            Err(e) => {
+                                // Other error
+                                if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                                    return Err(Error::ProcessManagement {
+                                        operation: "read results".to_string(),
+                                        pid: child.as_raw(),
+                                        details: e.to_string(),
+                                    });
+                                } else {
+                                    return Err(Error::ProcessManagement {
+                                        operation: "read results".to_string(),
+                                        pid: child.as_raw(),
+                                        details: format!("Failed to read/deserialize results: {e}"),
+                                    });
+                                }
+                            }
                         }
                     }
-                };
+
+                    // If we got results, break out of the main loop
+                    if results.is_some() {
+                        break;
+                    }
+
+                    // Small sleep to prevent busy waiting
+                    sleep(Duration::from_millis(10));
+                }
+
+                let results = results.unwrap();
 
                 let _timeout_killed = crate::utils::wait_for_child_with_timeout(
                     child,
-                    self.runtime_limits.kill_timeout_seconds,
+                    Some(5), // Give 5 seconds for cleanup
                 )?;
 
                 environment::cleanup(&self.host_container_root)?;
@@ -207,148 +281,28 @@ impl Runtime {
             }
         };
 
-        // Wait for per-task child to finish with timeout
-        let timeout_killed = if let Some(timeout) = self.runtime_limits.kill_timeout_seconds {
-            eprintln!(
-                "[RUNTIME] Setting up timeout monitoring for {} seconds",
-                timeout
-            );
-            let timeout_duration = std::time::Duration::from_secs(timeout);
-            let start_time = std::time::Instant::now();
-
-            // Spawn a monitoring thread to kill the child after timeout
-            let pid_clone = pid;
-            let timeout_handle = std::thread::spawn(move || {
-                std::thread::sleep(timeout_duration);
-                eprintln!(
-                    "[RUNTIME] Timeout reached, killing process {}",
-                    pid_clone.as_raw()
-                );
-                let kill_result =
-                    nix::sys::signal::kill(pid_clone, nix::sys::signal::Signal::SIGKILL);
-                match kill_result {
-                    Ok(_) => eprintln!(
-                        "[RUNTIME] Successfully sent SIGKILL to process {}",
-                        pid_clone.as_raw()
-                    ),
-                    Err(e) => eprintln!(
-                        "[RUNTIME] Failed to send SIGKILL to process {}: {:?}",
-                        pid_clone.as_raw(),
-                        e
-                    ),
-                }
-            });
-
-            // Wait for the child to exit with a shorter timeout to check periodically
-            let mut timeout_occurred = false;
-            let check_interval = std::time::Duration::from_millis(100); // Check every 100ms
-
-            loop {
-                // Try to wait for the child with a short timeout
-                match nix::sys::wait::waitpid(pid, Some(nix::sys::wait::WaitPidFlag::WNOHANG)) {
-                    Ok(nix::sys::wait::WaitStatus::Exited(_, _)) => {
-                        eprintln!("[RUNTIME] Child process {} exited normally", pid.as_raw());
-                        break;
-                    }
-                    Ok(nix::sys::wait::WaitStatus::Signaled(_, signal, _)) => {
-                        eprintln!(
-                            "[RUNTIME] Child process {} was killed by signal {:?}",
-                            pid.as_raw(),
-                            signal
-                        );
-                        if signal == nix::sys::signal::Signal::SIGKILL {
-                            timeout_occurred = true;
-                        }
-                        break;
-                    }
-                    Ok(nix::sys::wait::WaitStatus::StillAlive) => {
-                        // Process is still running, check if we've exceeded timeout
-                        if start_time.elapsed() >= timeout_duration {
-                            eprintln!(
-                                "[RUNTIME] Timeout exceeded, waiting for kill to take effect"
-                            );
-                            timeout_occurred = true;
-                            // Give the kill signal a moment to take effect
-                            std::thread::sleep(std::time::Duration::from_millis(500));
-                            break;
-                        }
-                        // Wait a bit before checking again
-                        std::thread::sleep(check_interval);
-                    }
-                    Ok(nix::sys::wait::WaitStatus::Stopped(_, _)) => {
-                        // Process stopped, continue monitoring
-                        std::thread::sleep(check_interval);
-                    }
-                    Ok(nix::sys::wait::WaitStatus::PtraceEvent(_, _, _)) => {
-                        // Ptrace event, continue monitoring
-                        std::thread::sleep(check_interval);
-                    }
-                    Ok(nix::sys::wait::WaitStatus::PtraceSyscall(_)) => {
-                        // Ptrace syscall, continue monitoring
-                        std::thread::sleep(check_interval);
-                    }
-                    Ok(nix::sys::wait::WaitStatus::Continued(_)) => {
-                        // Process continued, continue monitoring
-                        std::thread::sleep(check_interval);
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "[RUNTIME] Error waiting for child process {}: {:?}",
-                            pid.as_raw(),
-                            e
-                        );
-                        break;
-                    }
-                }
-            }
-
-            // Cancel the timeout thread
-            drop(timeout_handle);
-
-            // Final wait to ensure the process is gone
-            if timeout_occurred {
-                // Wait a bit more for the process to actually exit
-                let _ = nix::sys::wait::waitpid(pid, None);
-            }
-
-            timeout_occurred
-        } else {
-            // No timeout configured, wait normally
-            eprintln!(
-                "[RUNTIME] No timeout configured, waiting for child process {} to exit",
-                pid.as_raw()
-            );
-            crate::utils::wait_for_child(pid)?;
-            false
-        };
-
-        // If the task was killed due to timeout, return an error
-        if timeout_killed {
-            return Err(Error::ProcessManagement {
-                operation: "task execution".to_string(),
-                pid: pid.as_raw(),
-                details: format!(
-                    "Task killed due to timeout ({} seconds)",
-                    self.runtime_limits.kill_timeout_seconds.unwrap_or(0)
-                ),
-            });
-        }
+        // Wait for per-task child to finish
+        eprintln!(
+            "[RUNTIME] Waiting for child process {} to exit",
+            pid.as_raw()
+        );
+        crate::utils::wait_for_child(pid)?;
 
         // Read task statistics from the task cgroup before cleanup
-        let task_stats = match cgroup::read_task_stats(&task_cgroup_path) {
+        let task_stats = match cgroup::read_task_stats(task_cgroup_path) {
             Ok(stats) => {
                 eprintln!("[RUNTIME] Successfully read task statistics from cgroup");
                 stats
             }
             Err(e) => {
-                eprintln!("[RUNTIME] Warning: Failed to read task stats: {}", e);
+                eprintln!("[RUNTIME] Warning: Failed to read task stats: {e}");
                 cgroup::TaskStats::default()
             }
         };
 
         // Clean up the task cgroup directory
-        if let Err(e) = cgroup::cleanup_task_cgroup(&task_cgroup_path) {
-            eprintln!("[RUNTIME] Warning: Failed to cleanup task cgroup: {}", e);
+        if let Err(e) = cgroup::cleanup_task_cgroup(task_cgroup_path) {
+            eprintln!("[RUNTIME] Warning: Failed to cleanup task cgroup: {e}");
         }
 
         // Populate metrics including CPU and memory statistics from cgroup
@@ -450,16 +404,14 @@ impl Runtime {
             .stderr(std::process::Stdio::piped());
 
         // Drop privileges to nobody user for security before spawning the command
-        // if let Err(e) = environment::drop_privileges_to_nobody() {
-        //     let result = self.create_error_result("failed to drop privileges", &e.to_string());
-        //     self.write_result_and_exit(task_writer, &result);
-        // }
+        if let Err(e) = environment::drop_privileges_to_nobody() {
+            let result = self.create_error_result("failed to drop privileges", &e.to_string());
+            self.write_result_and_exit(task_writer, &result);
+        }
 
         cmd.spawn().map_err(|e| {
             let result = self.create_error_result("spawn failed", &e.to_string());
             self.write_result_and_exit(task_writer, &result);
-            // This error is never returned since write_result_and_exit calls exit(0)
-            unreachable!("write_result_and_exit should have called exit(0)")
         })
     }
 
