@@ -8,27 +8,8 @@
 use rand::Rng;
 use std::fs::{self, create_dir_all, read_to_string, remove_dir_all, write};
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 
 use crate::prelude::*;
-
-/// Cgroup controller types that can be enabled.
-#[derive(Debug, Clone, Copy)]
-pub enum Controller {
-    Memory,
-    Pids,
-    Cpu,
-}
-
-impl Controller {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Controller::Memory => "memory",
-            Controller::Pids => "pids",
-            Controller::Cpu => "cpu",
-        }
-    }
-}
 
 /// CPU usage statistics from cgroup.
 #[derive(Debug, Clone, Default)]
@@ -37,269 +18,6 @@ pub struct CpuStats {
     pub user_usec: Option<u64>,
     pub system_usec: Option<u64>,
 }
-
-/// Memory statistics from cgroup.
-#[derive(Debug, Clone, Default)]
-pub struct MemoryStats {
-    pub current: u64,
-    pub peak: u64,
-}
-
-/// Cgroup manager for a specific cgroup path.
-#[derive(Debug)]
-pub struct CgroupManager {
-    path: PathBuf,
-}
-
-impl CgroupManager {
-    /// Create a new cgroup manager for the given path.
-    pub fn new(path: PathBuf) -> Self {
-        Self { path }
-    }
-
-    /// Get the cgroup path.
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    /// Enable controllers in the current cgroup.
-    /// This writes to `cgroup.subtree_control` to enable controllers for child cgroups.
-    pub fn enable_controllers(&self, controllers: &[Controller]) -> Result<()> {
-        let subtree_control_path = self.path.join("cgroup.subtree_control");
-
-        let mut content = String::new();
-        for controller in controllers {
-            content.push_str(&format!("+{} ", controller.as_str()));
-        }
-        let content = content.trim().to_string();
-
-        fs::write(&subtree_control_path, &content).map_err(|source| Error::Cgroup {
-            message: "Failed to enable controllers".to_string(),
-            details: format!(
-                "Failed to write '{}' to {}: {}",
-                content,
-                subtree_control_path.display(),
-                source
-            ),
-        })?;
-
-        Ok(())
-    }
-
-    /// Create a child cgroup under this cgroup.
-    pub fn create_child(&self, name: &str) -> Result<CgroupManager> {
-        let child_path = self.path.join(name);
-        fs::create_dir(&child_path).map_err(|source| Error::Cgroup {
-            message: "Failed to create child cgroup".to_string(),
-            details: format!(
-                "Failed to create directory {}: {}",
-                child_path.display(),
-                source
-            ),
-        })?;
-
-        Ok(CgroupManager::new(child_path))
-    }
-
-    /// Set memory limit in bytes.
-    pub fn set_memory_max(&self, bytes: u64) -> Result<()> {
-        let memory_max_path = self.path.join("memory.max");
-        fs::write(&memory_max_path, bytes.to_string()).map_err(|source| Error::Cgroup {
-            message: "Failed to set memory limit".to_string(),
-            details: format!(
-                "Failed to write {} to {}: {}",
-                bytes,
-                memory_max_path.display(),
-                source
-            ),
-        })?;
-
-        // Also set swap.max to 0 to prevent swapping
-        let swap_max_path = self.path.join("memory.swap.max");
-        fs::write(&swap_max_path, "0").map_err(|source| Error::Cgroup {
-            message: "Failed to set swap limit".to_string(),
-            details: format!(
-                "Failed to write 0 to {}: {}",
-                swap_max_path.display(),
-                source
-            ),
-        })?;
-
-        Ok(())
-    }
-
-    /// Set process count limit.
-    pub fn set_pids_max(&self, max: u64) -> Result<()> {
-        let pids_max_path = self.path.join("pids.max");
-        fs::write(&pids_max_path, max.to_string()).map_err(|source| Error::Cgroup {
-            message: "Failed to set pids limit".to_string(),
-            details: format!(
-                "Failed to write {} to {}: {}",
-                max,
-                pids_max_path.display(),
-                source
-            ),
-        })?;
-
-        Ok(())
-    }
-
-    /// Set CPU limit.
-    /// Format: "max" for unlimited, or "quota period" (e.g., "20000 100000" for 20% CPU).
-    pub fn set_cpu_max(&self, spec: &str) -> Result<()> {
-        let cpu_max_path = self.path.join("cpu.max");
-        fs::write(&cpu_max_path, spec).map_err(|source| Error::Cgroup {
-            message: "Failed to set cpu limit".to_string(),
-            details: format!(
-                "Failed to write '{}' to {}: {}",
-                spec,
-                cpu_max_path.display(),
-                source
-            ),
-        })?;
-
-        Ok(())
-    }
-
-    /// Add a process to this cgroup by writing its PID to cgroup.procs.
-    pub fn add_proc(&self, pid: u32) -> Result<()> {
-        let procs_path = self.path.join("cgroup.procs");
-        fs::write(&procs_path, pid.to_string()).map_err(|source| Error::Cgroup {
-            message: "Failed to add process to cgroup".to_string(),
-            details: format!(
-                "Failed to write PID {} to {}: {}",
-                pid,
-                procs_path.display(),
-                source
-            ),
-        })?;
-
-        Ok(())
-    }
-
-    /// Read CPU statistics from this cgroup.
-    pub fn read_cpu_stats(&self) -> Result<CpuStats> {
-        let cpu_stat_path = self.path.join("cpu.stat");
-        let content = fs::read_to_string(&cpu_stat_path).map_err(|source| Error::Cgroup {
-            message: "Failed to read cpu.stat".to_string(),
-            details: format!("Failed to read {}: {}", cpu_stat_path.display(), source),
-        })?;
-
-        let mut stats = CpuStats::default();
-
-        for line in content.lines() {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 2 {
-                if let Ok(value) = u64::from_str(parts[1]) {
-                    match parts[0] {
-                        "usage_usec" => stats.usage_usec = Some(value),
-                        "user_usec" => stats.user_usec = Some(value),
-                        "system_usec" => stats.system_usec = Some(value),
-                        _ => {}
-                    }
-                }
-            }
-        }
-
-        Ok(stats)
-    }
-
-    /// Read memory statistics from this cgroup.
-    pub fn read_memory_stats(&self) -> Result<MemoryStats> {
-        let mut stats = MemoryStats::default();
-
-        // Read current memory usage
-        let current_path = self.path.join("memory.current");
-        if let Ok(content) = fs::read_to_string(&current_path) {
-            if let Ok(value) = u64::from_str(content.trim()) {
-                stats.current = value;
-            }
-        }
-
-        // Read peak memory usage
-        let peak_path = self.path.join("memory.peak");
-        if let Ok(content) = fs::read_to_string(&peak_path) {
-            if let Ok(value) = u64::from_str(content.trim()) {
-                stats.peak = value;
-            }
-        }
-
-        Ok(stats)
-    }
-}
-
-/// Create a cgroup at the root level with the given name.
-pub fn create_root_cgroup(name: &str) -> Result<CgroupManager> {
-    let root_path = Path::new("/sys/fs/cgroup");
-    let cgroup_path = root_path.join(name);
-
-    fs::create_dir(&cgroup_path).map_err(|source| Error::Cgroup {
-        message: "Failed to create root cgroup".to_string(),
-        details: format!(
-            "Failed to create directory {}: {}",
-            cgroup_path.display(),
-            source
-        ),
-    })?;
-
-    Ok(CgroupManager::new(cgroup_path))
-}
-
-/// Parse memory size string (e.g., "256M", "1G") to bytes.
-pub fn parse_memory_size(size_str: &str) -> Result<u64> {
-    let size_str = size_str.trim();
-
-    if size_str == "max" {
-        return Ok(u64::MAX);
-    }
-
-    let (number_str, unit) = if size_str.ends_with('K') || size_str.ends_with('k') {
-        (&size_str[..size_str.len() - 1], 1024)
-    } else if size_str.ends_with('M') || size_str.ends_with('m') {
-        (&size_str[..size_str.len() - 1], 1024 * 1024)
-    } else if size_str.ends_with('G') || size_str.ends_with('g') {
-        (&size_str[..size_str.len() - 1], 1024 * 1024 * 1024)
-    } else {
-        (size_str, 1)
-    };
-
-    let number = u64::from_str(number_str).map_err(|_| Error::Cgroup {
-        message: "Failed to parse memory size".to_string(),
-        details: format!("Invalid number in size string: {}", number_str),
-    })?;
-
-    Ok(number * unit)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_memory_size() {
-        assert_eq!(parse_memory_size("1024").unwrap(), 1024);
-        assert_eq!(parse_memory_size("1K").unwrap(), 1024);
-        assert_eq!(parse_memory_size("1M").unwrap(), 1024 * 1024);
-        assert_eq!(parse_memory_size("1G").unwrap(), 1024 * 1024 * 1024);
-        assert_eq!(parse_memory_size("max").unwrap(), u64::MAX);
-        assert_eq!(parse_memory_size("256M").unwrap(), 256 * 1024 * 1024);
-    }
-
-    #[test]
-    fn test_controller_as_str() {
-        assert_eq!(Controller::Memory.as_str(), "memory");
-        assert_eq!(Controller::Pids.as_str(), "pids");
-        assert_eq!(Controller::Cpu.as_str(), "cpu");
-    }
-
-    #[test]
-    fn test_cgroup_manager_creation() {
-        let manager = CgroupManager::new(PathBuf::from("/tmp/test"));
-        assert_eq!(manager.path(), Path::new("/tmp/test"));
-    }
-}
-
-// ===== Functions moved from environment.rs =====
 
 /// Creates the main faber cgroup hierarchy.
 /// This should be called once per request in the parent process.
@@ -371,10 +89,7 @@ pub(crate) fn create_task_cgroup() -> Result<String> {
     })?;
     debug_read_file(&cpu_max_path)?;
 
-    eprintln!(
-        "[CGROUP] Successfully created task cgroup: {}",
-        task_cgroup_path
-    );
+    eprintln!("[CGROUP] Successfully created task cgroup: {task_cgroup_path}");
     Ok(task_cgroup_path)
 }
 
@@ -393,10 +108,7 @@ fn generate_random_task_id() -> String {
 
 /// Removes a task cgroup directory and its contents.
 pub(crate) fn cleanup_task_cgroup(task_cgroup_path: &str) -> Result<()> {
-    eprintln!(
-        "[CGROUP] Cleaning up task cgroup directory: {}",
-        task_cgroup_path
-    );
+    eprintln!("[CGROUP] Cleaning up task cgroup directory: {task_cgroup_path}");
 
     // Remove the task directory and all its contents
     remove_dir_all(task_cgroup_path).map_err(|source| Error::RemoveDir {
@@ -405,53 +117,25 @@ pub(crate) fn cleanup_task_cgroup(task_cgroup_path: &str) -> Result<()> {
         details: "Failed to remove task cgroup directory".to_string(),
     })?;
 
-    eprintln!(
-        "[CGROUP] Successfully cleaned up task cgroup directory: {}",
-        task_cgroup_path
-    );
-    Ok(())
-}
-
-/// Removes the main faber cgroup directory and all its contents.
-pub(crate) fn cleanup_faber_cgroup() -> Result<()> {
-    let faber_cgroup_path = "/sys/fs/cgroup/faber";
-    eprintln!(
-        "[CGROUP] Cleaning up main faber cgroup directory: {}",
-        faber_cgroup_path
-    );
-
-    // Remove the faber cgroup directory and all its contents
-    remove_dir_all(faber_cgroup_path).map_err(|source| Error::RemoveDir {
-        path: PathBuf::from(faber_cgroup_path),
-        source,
-        details: "Failed to remove main faber cgroup directory".to_string(),
-    })?;
-
-    eprintln!(
-        "[CGROUP] Successfully cleaned up main faber cgroup directory: {}",
-        faber_cgroup_path
-    );
+    eprintln!("[CGROUP] Successfully cleaned up task cgroup directory: {task_cgroup_path}");
     Ok(())
 }
 
 /// Adds a process to the task cgroup by writing its PID to cgroup.procs.
 pub(crate) fn add_process_to_task_cgroup(task_cgroup_path: &str, pid: u32) -> Result<()> {
-    let cgroup_procs_path = format!("{}/cgroup.procs", task_cgroup_path);
+    let cgroup_procs_path = format!("{task_cgroup_path}/cgroup.procs");
     let pid_str = pid.to_string();
 
-    eprintln!(
-        "[CGROUP] Adding process {} to task cgroup: {}",
-        pid, task_cgroup_path
-    );
+    eprintln!("[CGROUP] Adding process {pid} to task cgroup: {task_cgroup_path}");
 
     write(&cgroup_procs_path, &pid_str).map_err(|source| Error::WriteFile {
         path: PathBuf::from(&cgroup_procs_path),
         bytes: pid_str.len(),
         source,
-        details: format!("Failed to add process {} to task cgroup", pid),
+        details: format!("Failed to add process {pid} to task cgroup"),
     })?;
 
-    eprintln!("[CGROUP] Successfully added process {} to task cgroup", pid);
+    eprintln!("[CGROUP] Successfully added process {pid} to task cgroup");
     debug_read_file(&cgroup_procs_path)?;
 
     Ok(())
@@ -460,16 +144,13 @@ pub(crate) fn add_process_to_task_cgroup(task_cgroup_path: &str, pid: u32) -> Re
 /// Reads and parses CPU statistics from a task cgroup after task completion.
 /// Returns parsed CPU statistics that can be attached to TaskResult.
 pub(crate) fn read_task_cpu_stats(task_cgroup_path: &str) -> Result<CpuStats> {
-    eprintln!(
-        "[CGROUP] Reading CPU statistics for task cgroup: {}",
-        task_cgroup_path
-    );
+    eprintln!("[CGROUP] Reading CPU statistics for task cgroup: {task_cgroup_path}");
 
     let mut cpu_stats = CpuStats::default();
 
     // Read cpu.stat file which contains CPU usage statistics
-    let cpu_stat_path = format!("{}/cpu.stat", task_cgroup_path);
-    eprintln!("[CGROUP] Reading CPU stats from: {}", cpu_stat_path);
+    let cpu_stat_path = format!("{task_cgroup_path}/cpu.stat");
+    eprintln!("[CGROUP] Reading CPU stats from: {cpu_stat_path}");
 
     match read_to_string(&cpu_stat_path) {
         Ok(contents) => {
@@ -499,21 +180,18 @@ pub(crate) fn read_task_cpu_stats(task_cgroup_path: &str) -> Result<CpuStats> {
             );
         }
         Err(e) => {
-            eprintln!(
-                "[DEBUG] Failed to read cpu.stat file {}: {}",
-                cpu_stat_path, e
-            );
+            eprintln!("[DEBUG] Failed to read cpu.stat file {cpu_stat_path}: {e}");
         }
     }
 
     // Read cpu.max file to show the limits that were set (for debugging)
-    let cpu_max_path = format!("{}/cpu.max", task_cgroup_path);
-    eprintln!("[CGROUP] Reading CPU limits from: {}", cpu_max_path);
+    let cpu_max_path = format!("{task_cgroup_path}/cpu.max");
+    eprintln!("[CGROUP] Reading CPU limits from: {cpu_max_path}");
     debug_read_file(&cpu_max_path)?;
 
     // Read cgroup.procs to show which processes were in this cgroup (for debugging)
-    let cgroup_procs_path = format!("{}/cgroup.procs", task_cgroup_path);
-    eprintln!("[CGROUP] Reading processes from: {}", cgroup_procs_path);
+    let cgroup_procs_path = format!("{task_cgroup_path}/cgroup.procs");
+    eprintln!("[CGROUP] Reading processes from: {cgroup_procs_path}");
     debug_read_file(&cgroup_procs_path)?;
 
     eprintln!("[CGROUP] Completed reading CPU statistics for task cgroup");
@@ -522,14 +200,14 @@ pub(crate) fn read_task_cpu_stats(task_cgroup_path: &str) -> Result<CpuStats> {
 
 /// Reads and prints the contents of a file for debugging purposes.
 pub(crate) fn debug_read_file(path: &str) -> Result<()> {
-    eprintln!("[DEBUG] Reading contents of file: {}", path);
+    eprintln!("[DEBUG] Reading contents of file: {path}");
 
     match read_to_string(path) {
         Ok(contents) => {
             eprintln!("[DEBUG] File contents: '{}'", contents.trim());
         }
         Err(e) => {
-            eprintln!("[DEBUG] Failed to read file {}: {}", path, e);
+            eprintln!("[DEBUG] Failed to read file {path}: {e}");
         }
     }
 
@@ -538,7 +216,7 @@ pub(crate) fn debug_read_file(path: &str) -> Result<()> {
 
 /// Lists all files and directories at the specified path for debugging purposes.
 pub(crate) fn debug_list_files(path: &str) -> Result<()> {
-    eprintln!("[DEBUG] Listing contents of directory: {}", path);
+    eprintln!("[DEBUG] Listing contents of directory: {path}");
 
     match std::fs::read_dir(path) {
         Ok(entries) => {
@@ -549,28 +227,23 @@ pub(crate) fn debug_list_files(path: &str) -> Result<()> {
                         match entry.metadata() {
                             Ok(meta) => {
                                 if meta.is_dir() {
-                                    eprintln!("[DEBUG]   DIR:  {}", file_name);
+                                    eprintln!("[DEBUG]   DIR:  {file_name}");
                                 } else if meta.is_file() {
-                                    eprintln!(
-                                        "[DEBUG]   FILE: {} ({} bytes)",
-                                        file_name,
-                                        meta.len()
-                                    );
+                                    eprintln!("[DEBUG]   FILE: {file_name} ({} bytes)", meta.len());
                                 } else {
-                                    eprintln!("[DEBUG]   OTHER: {}", file_name);
+                                    eprintln!("[DEBUG]   OTHER: {file_name}");
                                 }
                             }
-                            Err(e) => eprintln!(
-                                "[DEBUG]   ERROR reading metadata for {}: {}",
-                                file_name, e
-                            ),
+                            Err(e) => {
+                                eprintln!("[DEBUG]   ERROR reading metadata for {file_name}: {e}")
+                            }
                         }
                     }
-                    Err(e) => eprintln!("[DEBUG]   ERROR reading directory entry: {}", e),
+                    Err(e) => eprintln!("[DEBUG]   ERROR reading directory entry: {e}"),
                 }
             }
         }
-        Err(e) => eprintln!("[DEBUG] Failed to read directory {}: {}", path, e),
+        Err(e) => eprintln!("[DEBUG] Failed to read directory {path}: {e}"),
     }
 
     Ok(())
