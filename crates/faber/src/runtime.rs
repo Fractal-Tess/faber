@@ -207,15 +207,15 @@ impl Runtime {
         // Wait for per-task child to finish
         wait_for_child(pid)?;
 
-        // Read CPU statistics from the task cgroup before cleanup
-        let cpu_stats = match cgroup::read_task_cpu_stats(&task_cgroup_path) {
+        // Read task statistics from the task cgroup before cleanup
+        let task_stats = match cgroup::read_task_stats(&task_cgroup_path) {
             Ok(stats) => {
-                eprintln!("[RUNTIME] Successfully read CPU statistics from cgroup");
+                eprintln!("[RUNTIME] Successfully read task statistics from cgroup");
                 stats
             }
             Err(e) => {
-                eprintln!("[RUNTIME] Warning: Failed to read task CPU stats: {}", e);
-                cgroup::CpuStats::default()
+                eprintln!("[RUNTIME] Warning: Failed to read task stats: {}", e);
+                cgroup::TaskStats::default()
             }
         };
 
@@ -224,11 +224,14 @@ impl Runtime {
             eprintln!("[RUNTIME] Warning: Failed to cleanup task cgroup: {}", e);
         }
 
-        // Populate metrics including CPU statistics from cgroup
+        // Populate metrics including CPU and memory statistics from cgroup
         task_result.execution_time_ms = Some(start_time.elapsed().as_millis() as u64);
-        task_result.cpu_usage_usec = cpu_stats.usage_usec;
-        task_result.cpu_user_usec = cpu_stats.user_usec;
-        task_result.cpu_system_usec = cpu_stats.system_usec;
+        task_result.cpu_usage_usec = task_stats.cpu.usage_usec;
+        task_result.cpu_user_usec = task_stats.cpu.user_usec;
+        task_result.cpu_system_usec = task_stats.cpu.system_usec;
+        task_result.memory_current_bytes = Some(task_stats.memory.current);
+        task_result.memory_peak_bytes = Some(task_stats.memory.peak);
+        task_result.memory_limit_bytes = Some(task_stats.memory.max);
 
         Ok(task_result)
     }
@@ -342,6 +345,8 @@ impl Runtime {
             cpu_user_usec: None,
             cpu_system_usec: None,
             memory_peak_bytes: None,
+            memory_current_bytes: None,
+            memory_limit_bytes: None,
         }
     }
 
@@ -356,6 +361,8 @@ impl Runtime {
             cpu_user_usec: None,
             cpu_system_usec: None,
             memory_peak_bytes: None,
+            memory_current_bytes: None,
+            memory_limit_bytes: None,
         }
     }
 

@@ -6,8 +6,8 @@
 //! runtime architecture.
 
 use rand::Rng;
-use std::fs::{self, create_dir_all, read_to_string, remove_dir_all, write};
-use std::path::{Path, PathBuf};
+use std::fs::{create_dir_all, read_to_string, remove_dir_all, write};
+use std::path::PathBuf;
 
 use crate::prelude::*;
 
@@ -19,18 +19,35 @@ pub struct CpuStats {
     pub system_usec: Option<u64>,
 }
 
+/// Memory usage statistics from cgroup.
+#[derive(Debug, Clone, Default)]
+pub struct MemoryStats {
+    pub current: u64,
+    pub peak: u64,
+    pub max: u64,
+}
+
+/// Combined task statistics including both CPU and memory usage.
+#[derive(Debug, Clone, Default)]
+pub struct TaskStats {
+    pub cpu: CpuStats,
+    pub memory: MemoryStats,
+}
+
 /// Creates the main faber cgroup hierarchy.
 /// This should be called once per request in the parent process.
 pub(crate) fn create_faber_cgroup_hierarchy() -> Result<()> {
     eprintln!("[CGROUP] Starting to create main faber cgroup hierarchy");
 
-    // Step 1: Write +cpu to /sys/fs/cgroup/cgroup.subtree_control
-    eprintln!("[CGROUP] Step 1: Writing +cpu to /sys/fs/cgroup/cgroup.subtree_control");
-    write("/sys/fs/cgroup/cgroup.subtree_control", "+cpu").map_err(|source| Error::WriteFile {
-        path: PathBuf::from("/sys/fs/cgroup/cgroup.subtree_control"),
-        bytes: "+cpu".len(),
-        source,
-        details: "Failed to write +cpu to cgroup.subtree_control".to_string(),
+    // Step 1: Write +cpu +memory to /sys/fs/cgroup/cgroup.subtree_control
+    eprintln!("[CGROUP] Step 1: Writing +cpu +memory to /sys/fs/cgroup/cgroup.subtree_control");
+    write("/sys/fs/cgroup/cgroup.subtree_control", "+cpu +memory").map_err(|source| {
+        Error::WriteFile {
+            path: PathBuf::from("/sys/fs/cgroup/cgroup.subtree_control"),
+            bytes: "+cpu +memory".len(),
+            source,
+            details: "Failed to write +cpu +memory to cgroup.subtree_control".to_string(),
+        }
     })?;
     debug_read_file("/sys/fs/cgroup/cgroup.subtree_control")?;
 
@@ -44,14 +61,16 @@ pub(crate) fn create_faber_cgroup_hierarchy() -> Result<()> {
     })?;
     debug_list_files("/sys/fs/cgroup/faber")?;
 
-    // Step 3: Write +cpu to /sys/fs/cgroup/faber/cgroup.subtree_control
-    eprintln!("[CGROUP] Step 3: Writing +cpu to /sys/fs/cgroup/faber/cgroup.subtree_control");
+    // Step 3: Write +cpu +memory to /sys/fs/cgroup/faber/cgroup.subtree_control
+    eprintln!(
+        "[CGROUP] Step 3: Writing +cpu +memory to /sys/fs/cgroup/faber/cgroup.subtree_control"
+    );
     let faber_subtree_control = format!("{faber_cgroup_path}/cgroup.subtree_control");
-    write(&faber_subtree_control, "+cpu").map_err(|source| Error::WriteFile {
+    write(&faber_subtree_control, "+cpu +memory").map_err(|source| Error::WriteFile {
         path: PathBuf::from(&faber_subtree_control),
-        bytes: "+cpu".len(),
+        bytes: "+cpu +memory".len(),
         source,
-        details: "Failed to write +cpu to faber cgroup.subtree_control".to_string(),
+        details: "Failed to write +cpu +memory to faber cgroup.subtree_control".to_string(),
     })?;
     debug_read_file(&faber_subtree_control)?;
 
@@ -88,6 +107,17 @@ pub(crate) fn create_task_cgroup() -> Result<String> {
         details: "Failed to write CPU limits to task cgroup".to_string(),
     })?;
     debug_read_file(&cpu_max_path)?;
+
+    // Step 6: Write 134217728 (128MB) to /sys/fs/cgroup/faber/task-{}/memory.max
+    eprintln!("[CGROUP] Step 6: Writing memory limit (128MB) to task cgroup");
+    let memory_max_path = format!("{task_cgroup_path}/memory.max");
+    write(&memory_max_path, "134217728").map_err(|source| Error::WriteFile {
+        path: PathBuf::from(&memory_max_path),
+        bytes: "134217728".len(),
+        source,
+        details: "Failed to write memory limit to task cgroup".to_string(),
+    })?;
+    debug_read_file(&memory_max_path)?;
 
     eprintln!("[CGROUP] Successfully created task cgroup: {task_cgroup_path}");
     Ok(task_cgroup_path)
@@ -141,12 +171,13 @@ pub(crate) fn add_process_to_task_cgroup(task_cgroup_path: &str, pid: u32) -> Re
     Ok(())
 }
 
-/// Reads and parses CPU statistics from a task cgroup after task completion.
-/// Returns parsed CPU statistics that can be attached to TaskResult.
-pub(crate) fn read_task_cpu_stats(task_cgroup_path: &str) -> Result<CpuStats> {
-    eprintln!("[CGROUP] Reading CPU statistics for task cgroup: {task_cgroup_path}");
+/// Reads and parses CPU and memory statistics from a task cgroup after task completion.
+/// Returns parsed task statistics that can be attached to TaskResult.
+pub(crate) fn read_task_stats(task_cgroup_path: &str) -> Result<TaskStats> {
+    eprintln!("[CGROUP] Reading task statistics for task cgroup: {task_cgroup_path}");
 
     let mut cpu_stats = CpuStats::default();
+    let mut memory_stats = MemoryStats::default();
 
     // Read cpu.stat file which contains CPU usage statistics
     let cpu_stat_path = format!("{task_cgroup_path}/cpu.stat");
@@ -184,6 +215,60 @@ pub(crate) fn read_task_cpu_stats(task_cgroup_path: &str) -> Result<CpuStats> {
         }
     }
 
+    // Read memory statistics
+    eprintln!("[CGROUP] Reading memory stats from task cgroup");
+
+    // Read current memory usage
+    let memory_current_path = format!("{task_cgroup_path}/memory.current");
+    match read_to_string(&memory_current_path) {
+        Ok(content) => {
+            if let Ok(value) = content.trim().parse::<u64>() {
+                memory_stats.current = value;
+                eprintln!(
+                    "[CGROUP] Current memory usage: {value} bytes ({:.2} MB)",
+                    value as f64 / (1024.0 * 1024.0)
+                );
+            }
+        }
+        Err(e) => {
+            eprintln!("[DEBUG] Failed to read memory.current file {memory_current_path}: {e}");
+        }
+    }
+
+    // Read peak memory usage
+    let memory_peak_path = format!("{task_cgroup_path}/memory.peak");
+    match read_to_string(&memory_peak_path) {
+        Ok(content) => {
+            if let Ok(value) = content.trim().parse::<u64>() {
+                memory_stats.peak = value;
+                eprintln!(
+                    "[CGROUP] Peak memory usage: {value} bytes ({:.2} MB)",
+                    value as f64 / (1024.0 * 1024.0)
+                );
+            }
+        }
+        Err(e) => {
+            eprintln!("[DEBUG] Failed to read memory.peak file {memory_peak_path}: {e}");
+        }
+    }
+
+    // Read memory limit (max)
+    let memory_max_path = format!("{task_cgroup_path}/memory.max");
+    match read_to_string(&memory_max_path) {
+        Ok(content) => {
+            if let Ok(value) = content.trim().parse::<u64>() {
+                memory_stats.max = value;
+                eprintln!(
+                    "[CGROUP] Memory limit: {value} bytes ({:.2} MB)",
+                    value as f64 / (1024.0 * 1024.0)
+                );
+            }
+        }
+        Err(e) => {
+            eprintln!("[DEBUG] Failed to read memory.max file {memory_max_path}: {e}");
+        }
+    }
+
     // Read cpu.max file to show the limits that were set (for debugging)
     let cpu_max_path = format!("{task_cgroup_path}/cpu.max");
     eprintln!("[CGROUP] Reading CPU limits from: {cpu_max_path}");
@@ -194,8 +279,19 @@ pub(crate) fn read_task_cpu_stats(task_cgroup_path: &str) -> Result<CpuStats> {
     eprintln!("[CGROUP] Reading processes from: {cgroup_procs_path}");
     debug_read_file(&cgroup_procs_path)?;
 
-    eprintln!("[CGROUP] Completed reading CPU statistics for task cgroup");
-    Ok(cpu_stats)
+    eprintln!("[CGROUP] Completed reading task statistics for task cgroup");
+    Ok(TaskStats {
+        cpu: cpu_stats,
+        memory: memory_stats,
+    })
+}
+
+/// Backward compatibility function for existing code.
+/// This function is deprecated and will be removed in a future version.
+/// Use `read_task_stats` instead.
+#[deprecated(since = "0.2.0", note = "Use read_task_stats instead")]
+pub(crate) fn read_task_cpu_stats(task_cgroup_path: &str) -> Result<CpuStats> {
+    read_task_stats(task_cgroup_path).map(|stats| stats.cpu)
 }
 
 /// Reads and prints the contents of a file for debugging purposes.

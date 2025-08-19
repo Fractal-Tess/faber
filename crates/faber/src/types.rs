@@ -40,8 +40,12 @@ pub struct TaskResult {
     pub cpu_user_usec: Option<u64>,
     /// System CPU time in microseconds.
     pub cpu_system_usec: Option<u64>,
+    /// Current memory usage in bytes (from cgroup).
+    pub memory_current_bytes: Option<u64>,
     /// Peak memory usage in bytes (from cgroup).
     pub memory_peak_bytes: Option<u64>,
+    /// Memory limit in bytes (from cgroup).
+    pub memory_limit_bytes: Option<u64>,
 }
 
 impl From<Output> for TaskResult {
@@ -56,7 +60,9 @@ impl From<Output> for TaskResult {
             cpu_usage_usec: None,
             cpu_user_usec: None,
             cpu_system_usec: None,
+            memory_current_bytes: None,
             memory_peak_bytes: None,
+            memory_limit_bytes: None,
         }
     }
 }
