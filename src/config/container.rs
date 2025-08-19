@@ -81,5 +81,4 @@ impl From<CgroupConfig> for faber::CgroupConfig {
 pub struct ContainerRuntimeConfig {
     pub kill_timeout_seconds: Option<u64>,
     pub cpu_time_limit_ms: Option<u64>,
-    pub task_timeout_seconds: Option<u64>,
 }

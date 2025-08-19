@@ -50,8 +50,6 @@ pub struct TaskResult {
     pub pids_current: Option<u64>,
     /// Maximum number of processes allowed in the task cgroup.
     pub pids_max: Option<u64>,
-    /// Whether the task was killed due to timeout.
-    pub timeout_killed: Option<bool>,
 }
 
 impl From<Output> for TaskResult {
@@ -71,7 +69,6 @@ impl From<Output> for TaskResult {
             memory_limit_bytes: None,
             pids_current: None,
             pids_max: None,
-            timeout_killed: None,
         }
     }
 }
@@ -127,6 +124,4 @@ pub struct RuntimeLimits {
     pub kill_timeout_seconds: Option<u64>,
     /// CPU time limit in milliseconds (CPU time TLE threshold).
     pub cpu_time_limit_ms: Option<u64>,
-    /// Maximum wall-clock time for individual tasks in seconds.
-    pub task_timeout_seconds: Option<u64>,
 }

@@ -12,7 +12,7 @@ use crate::builder::RuntimeBuilder;
 
 use crate::prelude::*;
 use crate::types::{CgroupConfig, FilesystemConfig, Mount, RuntimeLimits, Task};
-use crate::utils::{close_fd, mk_pipe, wait_for_child_with_timeout};
+use crate::utils::{close_fd, mk_pipe};
 use crate::{cgroup, environment};
 
 /// High-level entry point for preparing an isolated environment and running tasks.
@@ -70,7 +70,7 @@ impl Runtime {
                     }
                 };
 
-                let _timeout_killed = wait_for_child_with_timeout(child, self.runtime_limits.task_timeout_seconds)?;
+                let _timeout_killed = crate::utils::wait_for_child_with_timeout(child, self.runtime_limits.kill_timeout_seconds)?;
 
                 environment::cleanup(&self.host_container_root)?;
 
@@ -205,7 +205,54 @@ impl Runtime {
         };
 
         // Wait for per-task child to finish with timeout
-        let timeout_killed = crate::utils::wait_for_child_with_timeout(pid, self.runtime_limits.task_timeout_seconds)?;
+        let timeout_killed = if let Some(timeout) = self.runtime_limits.kill_timeout_seconds {
+            let timeout_duration = std::time::Duration::from_secs(timeout);
+            let start_time = std::time::Instant::now();
+            
+            // Spawn a monitoring thread to kill the child after timeout
+            let pid_clone = pid;
+            let timeout_handle = std::thread::spawn(move || {
+                std::thread::sleep(timeout_duration);
+                let _ = nix::sys::signal::kill(pid_clone, nix::sys::signal::Signal::SIGKILL);
+            });
+            
+            // Wait for the child to exit
+            let wait_result = crate::utils::wait_for_child(pid);
+            
+            // Cancel the timeout thread if child exited before timeout
+            drop(timeout_handle);
+            
+            match wait_result {
+                Ok(_) => false, // Child exited normally
+                Err(_) => {
+                    // Check if the child was killed due to timeout
+                    if start_time.elapsed() >= timeout_duration {
+                        true // Child was killed due to timeout
+                    } else {
+                        // Some other error occurred
+                        return Err(Error::ProcessManagement {
+                            operation: "wait for child".to_string(),
+                            pid: pid.as_raw(),
+                            details: "Failed to wait for child process".to_string(),
+                        });
+                    }
+                }
+            }
+        } else {
+            // No timeout configured, wait normally
+            crate::utils::wait_for_child(pid)?;
+            false
+        };
+
+        // If the task was killed due to timeout, return an error
+        if timeout_killed {
+            return Err(Error::ProcessManagement {
+                operation: "task execution".to_string(),
+                pid: pid.as_raw(),
+                details: format!("Task killed due to timeout ({} seconds)", 
+                    self.runtime_limits.kill_timeout_seconds.unwrap_or(0)),
+            });
+        }
 
         // Read task statistics from the task cgroup before cleanup
         let task_stats = match cgroup::read_task_stats(&task_cgroup_path) {
@@ -234,15 +281,6 @@ impl Runtime {
         task_result.memory_limit_bytes = Some(task_stats.memory.max);
         task_result.pids_current = Some(task_stats.pids.current);
         task_result.pids_max = Some(task_stats.pids.max);
-        task_result.timeout_killed = Some(timeout_killed);
-
-        // If the task was killed due to timeout, update the exit code and stderr
-        if timeout_killed {
-            task_result.exit_code = -1;
-            task_result.stderr = format!("Task killed due to timeout ({} seconds)", 
-                self.runtime_limits.task_timeout_seconds.unwrap_or(0));
-            eprintln!("[RUNTIME] Task {} was killed due to timeout", pid.as_raw());
-        }
 
         Ok(task_result)
     }
@@ -360,7 +398,6 @@ impl Runtime {
             memory_limit_bytes: None,
             pids_current: None,
             pids_max: None,
-            timeout_killed: None,
         }
     }
 
@@ -379,7 +416,6 @@ impl Runtime {
             memory_limit_bytes: None,
             pids_current: None,
             pids_max: None,
-            timeout_killed: None,
         }
     }
 
