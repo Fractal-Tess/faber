@@ -110,6 +110,14 @@ impl RuntimeBuilder {
         self
     }
 
+    /// Configure task timeout in seconds.
+    pub fn with_task_timeout_seconds(mut self, task_timeout_seconds: Option<u64>) -> Self {
+        let mut limits = self.runtime_limits.unwrap_or_default();
+        limits.task_timeout_seconds = task_timeout_seconds;
+        self.runtime_limits = Some(limits);
+        self
+    }
+
     /// Finalize the configuration and create a [`Runtime`].
     pub fn build(self) -> Result<Runtime> {
         // Validate required fields
