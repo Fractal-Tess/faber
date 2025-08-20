@@ -1,14 +1,14 @@
 use crate::prelude::*;
 use nix::{
+    sys::signal::{Signal, kill},
     sys::wait::waitpid,
-    sys::signal::{kill, Signal},
     unistd::{Pid, close},
 };
 use std::{
     io::{PipeReader, PipeWriter, pipe},
     os::fd::RawFd,
-    time::{Duration, Instant},
     thread,
+    time::{Duration, Instant},
 };
 
 /// Create a POSIX pipe, returning reader and writer ends.
@@ -29,6 +29,7 @@ pub fn close_fd(fd: RawFd) -> Result<()> {
         pid: -1,
         details: format!("Failed to close fd {fd}: {e}"),
     })?;
+
     Ok(())
 }
 
@@ -49,20 +50,20 @@ pub fn wait_for_child_with_timeout(pid: Pid, timeout_seconds: Option<u64>) -> Re
     if let Some(timeout) = timeout_seconds {
         let timeout_duration = Duration::from_secs(timeout);
         let start_time = Instant::now();
-        
+
         // Spawn a monitoring thread
         let pid_clone = pid;
         let timeout_handle = thread::spawn(move || {
             thread::sleep(timeout_duration);
             let _ = kill(pid_clone, Signal::SIGKILL);
         });
-        
+
         // Wait for the child to exit
         let wait_result = waitpid(pid, None);
-        
+
         // Cancel the timeout thread if child exited before timeout
         drop(timeout_handle);
-        
+
         match wait_result {
             Ok(_) => Ok(false), // Child exited normally
             Err(e) => {

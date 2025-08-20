@@ -30,7 +30,7 @@ fn parse_memory_string(memory_str: &str) -> Result<u64> {
     let (number_str, unit) = memory_str.split_at(memory_str.len() - 1);
     let number: u64 = number_str.parse().map_err(|_| Error::Validation {
         field: "memory_max".to_string(),
-        details: format!("Invalid memory format: {}", memory_str),
+        details: format!("Invalid memory format: {memory_str}"),
     })?;
 
     let multiplier = match unit.to_uppercase().as_str() {
@@ -41,7 +41,7 @@ fn parse_memory_string(memory_str: &str) -> Result<u64> {
         _ => {
             return Err(Error::Validation {
                 field: "memory_max".to_string(),
-                details: format!("Unknown memory unit: {}", unit),
+                details: format!("Unknown memory unit: {unit}"),
             });
         }
     };
@@ -83,12 +83,7 @@ pub struct TaskStats {
 /// Creates the main faber cgroup hierarchy.
 /// This should be called once per request in the parent process.
 pub(crate) fn create_faber_cgroup_hierarchy() -> Result<()> {
-    eprintln!("[CGROUP] Starting to create main faber cgroup hierarchy");
-
     // Step 1: Write +cpu +memory +pids to /sys/fs/cgroup/cgroup.subtree_control
-    eprintln!(
-        "[CGROUP] Step 1: Writing +cpu +memory +pids to /sys/fs/cgroup/cgroup.subtree_control"
-    );
     write(
         "/sys/fs/cgroup/cgroup.subtree_control",
         "+cpu +memory +pids",
@@ -101,7 +96,6 @@ pub(crate) fn create_faber_cgroup_hierarchy() -> Result<()> {
     })?;
 
     // Step 2: Create the folder /sys/fs/cgroup/faber
-    eprintln!("[CGROUP] Step 2: Creating /sys/fs/cgroup/faber directory");
     let faber_cgroup_path = "/sys/fs/cgroup/faber";
     create_dir_all(faber_cgroup_path).map_err(|source| Error::CreateDir {
         path: PathBuf::from(faber_cgroup_path),
@@ -110,9 +104,6 @@ pub(crate) fn create_faber_cgroup_hierarchy() -> Result<()> {
     })?;
 
     // Step 3: Write +cpu +memory +pids to /sys/fs/cgroup/faber/cgroup.subtree_control
-    eprintln!(
-        "[CGROUP] Step 3: Writing +cpu +memory +pids to /sys/fs/cgroup/faber/cgroup.subtree_control"
-    );
     let faber_subtree_control = format!("{faber_cgroup_path}/cgroup.subtree_control");
     write(&faber_subtree_control, "+cpu +memory +pids").map_err(|source| Error::WriteFile {
         path: PathBuf::from(&faber_subtree_control),
@@ -121,7 +112,6 @@ pub(crate) fn create_faber_cgroup_hierarchy() -> Result<()> {
         details: "Failed to write +cpu +memory +pids to faber cgroup.subtree_control".to_string(),
     })?;
 
-    eprintln!("[CGROUP] Successfully completed main faber cgroup setup");
     Ok(())
 }
 
@@ -129,12 +119,9 @@ pub(crate) fn create_faber_cgroup_hierarchy() -> Result<()> {
 /// This should be called once per task in the parent process.
 /// Returns the path to the created task directory for cleanup.
 pub(crate) fn create_task_cgroup(config: &CgroupConfig) -> Result<String> {
-    eprintln!("[CGROUP] Creating task-specific cgroup");
-
     let faber_cgroup_path = "/sys/fs/cgroup/faber";
 
     // Step 4: Create the folder task-{random_16_characters}
-    eprintln!("[CGROUP] Step 4: Creating task directory with random name");
     let task_id = generate_random_task_id();
     let task_cgroup_path = format!("{faber_cgroup_path}/task-{task_id}");
     create_dir_all(&task_cgroup_path).map_err(|source| Error::CreateDir {
@@ -144,43 +131,30 @@ pub(crate) fn create_task_cgroup(config: &CgroupConfig) -> Result<String> {
     })?;
 
     // Step 5: Write CPU limits to /sys/fs/cgroup/faber/task-{}/cpu.max
-    eprintln!("[CGROUP] Step 5: Writing CPU limits to task cgroup");
     let cpu_max_path = format!("{task_cgroup_path}/cpu.max");
     let cpu_max_value = config.cpu_max.as_deref().unwrap_or("50000 100000");
     write(&cpu_max_path, cpu_max_value).map_err(|source| Error::WriteFile {
         path: PathBuf::from(&cpu_max_path),
         bytes: cpu_max_value.len(),
         source,
-        details: format!(
-            "Failed to write CPU limits '{}' to task cgroup",
-            cpu_max_value
-        ),
+        details: format!("Failed to write CPU limits '{cpu_max_value}' to task cgroup"),
     })?;
 
     // Step 6: Write memory limit to /sys/fs/cgroup/faber/task-{}/memory.max
-    eprintln!("[CGROUP] Step 6: Writing memory limit to task cgroup");
     let memory_max_path = format!("{task_cgroup_path}/memory.max");
     let memory_max_value = config.memory_max.as_deref().unwrap_or("134217728"); // 128MB default
 
     // Convert human-readable memory string to bytes
     let memory_max_bytes = parse_memory_string(memory_max_value)?;
-    eprintln!(
-        "[CGROUP] Writing memory limit to task cgroup: {} bytes ({})",
-        memory_max_bytes, memory_max_value
-    );
 
-    write(&memory_max_path, &memory_max_bytes.to_string()).map_err(|source| Error::WriteFile {
+    write(&memory_max_path, memory_max_bytes.to_string()).map_err(|source| Error::WriteFile {
         path: PathBuf::from(&memory_max_path),
         bytes: memory_max_bytes.to_string().len(),
         source,
-        details: format!(
-            "Failed to write memory limit '{}' bytes to task cgroup",
-            memory_max_bytes
-        ),
+        details: format!("Failed to write memory limit '{memory_max_bytes}' bytes to task cgroup"),
     })?;
 
     // Step 7: Write PIDs limit to /sys/fs/cgroup/faber/task-{}/pids.max
-    eprintln!("[CGROUP] Step 7: Writing PIDs limit to task cgroup");
     let pids_max_path = format!("{task_cgroup_path}/pids.max");
     let pids_max_value = config
         .pids_max
@@ -190,13 +164,9 @@ pub(crate) fn create_task_cgroup(config: &CgroupConfig) -> Result<String> {
         path: PathBuf::from(&pids_max_path),
         bytes: pids_max_value.len(),
         source,
-        details: format!(
-            "Failed to write PIDs limit '{}' to task cgroup",
-            pids_max_value
-        ),
+        details: format!("Failed to write PIDs limit '{pids_max_value}' to task cgroup"),
     })?;
 
-    eprintln!("[CGROUP] Successfully created task cgroup: {task_cgroup_path}");
     Ok(task_cgroup_path)
 }
 
@@ -215,8 +185,6 @@ fn generate_random_task_id() -> String {
 
 /// Removes a task cgroup directory and its contents.
 pub(crate) fn cleanup_task_cgroup(task_cgroup_path: &str) -> Result<()> {
-    eprintln!("[CGROUP] Cleaning up task cgroup directory: {task_cgroup_path}");
-
     // Remove the task directory and all its contents
     remove_dir(task_cgroup_path).map_err(|source| Error::RemoveDir {
         path: PathBuf::from(task_cgroup_path),
@@ -224,7 +192,6 @@ pub(crate) fn cleanup_task_cgroup(task_cgroup_path: &str) -> Result<()> {
         details: "Failed to remove task cgroup directory".to_string(),
     })?;
 
-    eprintln!("[CGROUP] Successfully cleaned up task cgroup directory: {task_cgroup_path}");
     Ok(())
 }
 
@@ -233,8 +200,6 @@ pub(crate) fn add_process_to_task_cgroup(task_cgroup_path: &str, pid: u32) -> Re
     let cgroup_procs_path = format!("{task_cgroup_path}/cgroup.procs");
     let pid_str = pid.to_string();
 
-    eprintln!("[CGROUP] Adding process {pid} to task cgroup: {task_cgroup_path}");
-
     write(&cgroup_procs_path, &pid_str).map_err(|source| Error::WriteFile {
         path: PathBuf::from(&cgroup_procs_path),
         bytes: pid_str.len(),
@@ -242,28 +207,21 @@ pub(crate) fn add_process_to_task_cgroup(task_cgroup_path: &str, pid: u32) -> Re
         details: format!("Failed to add process {pid} to task cgroup"),
     })?;
 
-    eprintln!("[CGROUP] Successfully added process {pid} to task cgroup");
-
     Ok(())
 }
 
 /// Reads and parses CPU, memory, and PIDs statistics from a task cgroup after task completion.
 /// Returns parsed task statistics that can be attached to TaskResult.
 pub(crate) fn read_task_stats(task_cgroup_path: &str) -> Result<TaskStats> {
-    eprintln!("[CGROUP] Reading task statistics for task cgroup: {task_cgroup_path}");
-
     let mut cpu_stats = CpuStats::default();
     let mut memory_stats = MemoryStats::default();
     let mut pids_stats = PidsStats::default();
 
     // Read cpu.stat file which contains CPU usage statistics
     let cpu_stat_path = format!("{task_cgroup_path}/cpu.stat");
-    eprintln!("[CGROUP] Reading CPU stats from: {cpu_stat_path}");
 
     match read_to_string(&cpu_stat_path) {
         Ok(contents) => {
-            eprintln!("[DEBUG] cpu.stat contents: '{}'", contents.trim());
-
             // Parse cpu.stat file format:
             // usage_usec 1234567
             // user_usec 987654
@@ -281,19 +239,11 @@ pub(crate) fn read_task_stats(task_cgroup_path: &str) -> Result<TaskStats> {
                     }
                 }
             }
-
-            eprintln!(
-                "[CGROUP] Parsed CPU stats - usage: {:?}, user: {:?}, system: {:?}",
-                cpu_stats.usage_usec, cpu_stats.user_usec, cpu_stats.system_usec
-            );
         }
-        Err(e) => {
-            eprintln!("[DEBUG] Failed to read cpu.stat file {cpu_stat_path}: {e}");
-        }
+        Err(e) => {}
     }
 
     // Read memory statistics
-    eprintln!("[CGROUP] Reading memory stats from task cgroup");
 
     // Read current memory usage
     let memory_current_path = format!("{task_cgroup_path}/memory.current");
@@ -301,15 +251,9 @@ pub(crate) fn read_task_stats(task_cgroup_path: &str) -> Result<TaskStats> {
         Ok(content) => {
             if let Ok(value) = content.trim().parse::<u64>() {
                 memory_stats.current = value;
-                eprintln!(
-                    "[CGROUP] Current memory usage: {value} bytes ({:.2} MB)",
-                    value as f64 / (1024.0 * 1024.0)
-                );
             }
         }
-        Err(e) => {
-            eprintln!("[DEBUG] Failed to read memory.current file {memory_current_path}: {e}");
-        }
+        Err(e) => {}
     }
 
     // Read peak memory usage
@@ -318,15 +262,9 @@ pub(crate) fn read_task_stats(task_cgroup_path: &str) -> Result<TaskStats> {
         Ok(content) => {
             if let Ok(value) = content.trim().parse::<u64>() {
                 memory_stats.peak = value;
-                eprintln!(
-                    "[CGROUP] Peak memory usage: {value} bytes ({:.2} MB)",
-                    value as f64 / (1024.0 * 1024.0)
-                );
             }
         }
-        Err(e) => {
-            eprintln!("[DEBUG] Failed to read memory.peak file {memory_peak_path}: {e}");
-        }
+        Err(e) => {}
     }
 
     // Read memory limit (max)
@@ -335,19 +273,12 @@ pub(crate) fn read_task_stats(task_cgroup_path: &str) -> Result<TaskStats> {
         Ok(content) => {
             if let Ok(value) = content.trim().parse::<u64>() {
                 memory_stats.max = value;
-                eprintln!(
-                    "[CGROUP] Memory limit: {value} bytes ({:.2} MB)",
-                    value as f64 / (1024.0 * 1024.0)
-                );
             }
         }
-        Err(e) => {
-            eprintln!("[DEBUG] Failed to read memory.max file {memory_max_path}: {e}");
-        }
+        Err(e) => {}
     }
 
     // Read PIDs statistics
-    eprintln!("[CGROUP] Reading PIDs stats from task cgroup");
 
     // Read current PIDs count
     let pids_current_path = format!("{task_cgroup_path}/pids.current");
@@ -355,12 +286,9 @@ pub(crate) fn read_task_stats(task_cgroup_path: &str) -> Result<TaskStats> {
         Ok(content) => {
             if let Ok(value) = content.trim().parse::<u64>() {
                 pids_stats.current = value;
-                eprintln!("[CGROUP] Current PIDs count: {value}");
             }
         }
-        Err(e) => {
-            eprintln!("[DEBUG] Failed to read pids.current file {pids_current_path}: {e}");
-        }
+        Err(e) => {}
     }
 
     // Read PIDs limit (max)
@@ -369,23 +297,17 @@ pub(crate) fn read_task_stats(task_cgroup_path: &str) -> Result<TaskStats> {
         Ok(content) => {
             if let Ok(value) = content.trim().parse::<u64>() {
                 pids_stats.max = value;
-                eprintln!("[CGROUP] PIDs limit: {value}");
             }
         }
-        Err(e) => {
-            eprintln!("[DEBUG] Failed to read pids.max file {pids_max_path}: {e}");
-        }
+        Err(e) => {}
     }
 
     // Read cpu.max file to show the limits that were set (for debugging)
     let cpu_max_path = format!("{task_cgroup_path}/cpu.max");
-    eprintln!("[CGROUP] Reading CPU limits from: {cpu_max_path}");
 
     // Read cgroup.procs to show which processes were in this cgroup (for debugging)
     let cgroup_procs_path = format!("{task_cgroup_path}/cgroup.procs");
-    eprintln!("[CGROUP] Reading processes from: {cgroup_procs_path}");
 
-    eprintln!("[CGROUP] Completed reading task statistics for task cgroup");
     Ok(TaskStats {
         cpu: cpu_stats,
         memory: memory_stats,

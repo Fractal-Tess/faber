@@ -337,16 +337,21 @@ pub(crate) fn create_work_dir(work_dir: &Path, workdir_size: &str) -> Result<()>
     })?;
 
     let mount_options = format!("size={workdir_size},mode=755");
+    let work_dir_str = work_dir.to_str().ok_or_else(|| Error::Configuration {
+        component: "work dir path".to_string(),
+        details: "Work dir path contains invalid UTF-8 characters".to_string(),
+    })?;
+
     mount(
         Some("tmpfs"),
-        work_dir.to_str().unwrap(),
+        work_dir_str,
         Some("tmpfs"),
         MsFlags::empty(),
         Some(mount_options.as_str()),
     )
     .map_err(|e| Error::Mount {
         src: "tmpfs".to_string(),
-        target: work_dir.to_str().unwrap().to_string(),
+        target: work_dir_str.to_string(),
         fstype: Some("tmpfs".to_string()),
         flags: MsFlags::empty(),
         err: e,
@@ -354,7 +359,7 @@ pub(crate) fn create_work_dir(work_dir: &Path, workdir_size: &str) -> Result<()>
     })?;
 
     set_current_dir(work_dir).map_err(|source| Error::Chdir {
-        path: work_dir.to_str().unwrap().to_string(),
+        path: work_dir_str.to_string(),
         source,
         details: "Failed to change directory to workdir".to_string(),
     })?;

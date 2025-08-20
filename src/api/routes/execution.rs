@@ -6,8 +6,6 @@ use serde::Serialize;
 use std::sync::Arc;
 use tracing::debug;
 
-use tokio::sync::{OnceCell, Semaphore};
-
 /// Error payload returned by the API on failures.
 #[derive(Debug, Clone, Serialize)]
 pub struct ErrorPayload {
@@ -18,8 +16,6 @@ pub struct ErrorPayload {
 /// Successful response containing a list of task results.
 #[derive(Serialize)]
 pub struct ExecutionResponse(pub Vec<TaskResult>);
-
-static CONTAINER_SEM: OnceCell<Arc<Semaphore>> = OnceCell::const_new();
 
 /// Execute one or more tasks inside an isolated container-like environment.
 ///
@@ -32,7 +28,6 @@ pub async fn execution(
     Extension(request_id): Extension<RequestId>,
     Json(tasks): Json<Vec<Task>>,
 ) -> Result<Json<ExecutionResponse>, (StatusCode, Json<ErrorPayload>)> {
-    debug!(%request_id, task_count = tasks.len(), "execution: request start");
     if tasks.is_empty() {
         debug!("Request {request_id} is empty");
         return Err((
@@ -44,30 +39,7 @@ pub async fn execution(
         ));
     }
 
-    debug!(
-        task_count = tasks.len(),
-        "Building runtime and acquiring semaphore"
-    );
-
-    // Initialize (or fetch) global semaphore to throttle container runs
-    let sem = CONTAINER_SEM
-        .get_or_init(|| async { Arc::new(Semaphore::new(config.api.max_concurrency.max(1))) })
-        .await
-        .clone();
-
-    let _permit = sem.acquire().await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorPayload {
-                request_id: request_id.clone(),
-                message: format!("semaphore closed: {e}"),
-            }),
-        )
-    })?;
-    debug!("execution: semaphore acquired");
-
     // Build runtime
-    debug!("execution: building runtime");
     let runtime = faber::Runtime::builder()
         .with_mounts(config.container.filesystem.mounts.clone())
         .with_container_root(format!(
@@ -80,8 +52,6 @@ pub async fn execution(
             config.container.filesystem.workdir_size.clone(),
         )
         .with_cgroup_config(config.container.cgroup.clone().into())
-        .with_kill_timeout_seconds(config.container.runtime.kill_timeout_seconds)
-        .with_cpu_time_limit_ms(config.container.runtime.cpu_time_limit_ms)
         .with_id(request_id.clone())
         .build()
         .map_err(|e| {
@@ -93,7 +63,6 @@ pub async fn execution(
                 }),
             )
         })?;
-    debug!("execution: runtime built, spawning blocking run");
 
     let run_future = tokio::task::spawn_blocking(move || -> Result<Vec<TaskResult>, String> {
         // Catch panic to avoid poisoning the runtime

@@ -1,6 +1,6 @@
 use crate::prelude::*;
 use crate::runtime::Runtime;
-use crate::types::{CgroupConfig, FilesystemConfig, Mount, RuntimeLimits};
+use crate::types::{CgroupConfig, FilesystemConfig, Mount};
 use nix::mount::MsFlags;
 use rand::Rng;
 use std::path::PathBuf;
@@ -18,10 +18,7 @@ pub struct RuntimeBuilder {
     work_dir: Option<String>,
     filesystem_config: Option<FilesystemConfig>,
     cgroup: Option<CgroupConfig>,
-
     id: Option<String>,
-
-    runtime_limits: Option<RuntimeLimits>,
 }
 
 impl RuntimeBuilder {
@@ -95,22 +92,6 @@ impl RuntimeBuilder {
         self
     }
 
-    /// Configure runtime limits.
-    pub fn with_kill_timeout_seconds(mut self, kill_timeout_seconds: Option<u64>) -> Self {
-        let mut limits = self.runtime_limits.unwrap_or_default();
-        limits.kill_timeout_seconds = kill_timeout_seconds;
-        self.runtime_limits = Some(limits);
-        self
-    }
-
-    /// Configure CPU time limit in milliseconds.
-    pub fn with_cpu_time_limit_ms(mut self, cpu_time_limit_ms: Option<u64>) -> Self {
-        let mut limits = self.runtime_limits.unwrap_or_default();
-        limits.cpu_time_limit_ms = cpu_time_limit_ms;
-        self.runtime_limits = Some(limits);
-        self
-    }
-
     /// Finalize the configuration and create a [`Runtime`].
     pub fn build(self) -> Result<Runtime> {
         // Validate required fields
@@ -151,14 +132,13 @@ impl RuntimeBuilder {
                 .map(char::from)
                 .collect()
         });
-        let container_root = self
+        let host_container_root = self
             .container_root
             .unwrap_or_else(|| PathBuf::from(format!("/tmp/faber/containers/{id}")));
         let hostname = self.hostname.unwrap_or_else(|| "faber".into());
         let mounts = self.mounts.unwrap_or(default_mounts);
         let work_dir = self.work_dir.unwrap_or_else(|| "/faber".into());
         let filesystem_config = self.filesystem_config.unwrap_or_default();
-        let runtime_limits = self.runtime_limits.unwrap_or_default();
         let cgroup_config = self.cgroup.unwrap_or_default();
 
         // Validate work_dir
@@ -170,12 +150,11 @@ impl RuntimeBuilder {
         }
 
         Ok(Runtime {
-            host_container_root: container_root,
+            host_container_root,
             hostname,
             mounts,
             work_dir: work_dir.into(),
             filesystem_config,
-            runtime_limits,
             cgroup_config,
         })
     }

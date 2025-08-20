@@ -14,7 +14,7 @@ use crate::TaskResult;
 use crate::builder::RuntimeBuilder;
 
 use crate::prelude::*;
-use crate::types::{CgroupConfig, FilesystemConfig, Mount, RuntimeLimits, Task};
+use crate::types::{CgroupConfig, FilesystemConfig, Mount, Task};
 use crate::utils::{close_fd, mk_pipe};
 use crate::{cgroup, environment};
 
@@ -26,7 +26,6 @@ pub struct Runtime {
     pub(crate) mounts: Vec<Mount>,
     pub(crate) work_dir: PathBuf,
     pub(crate) filesystem_config: FilesystemConfig,
-    pub(crate) runtime_limits: RuntimeLimits,
     pub(crate) cgroup_config: CgroupConfig,
 }
 
@@ -41,7 +40,6 @@ impl Runtime {
         self.validate_tasks(&tasks)?;
 
         // Create the main faber cgroup hierarchy once per request
-        eprintln!("[RUNTIME] Creating main faber cgroup hierarchy for request");
         cgroup::create_faber_cgroup_hierarchy()?;
 
         // Create pipe for task results
@@ -63,7 +61,6 @@ impl Runtime {
                     let mut temp_reader = match results_reader.try_clone() {
                         Ok(reader) => reader,
                         Err(e) => {
-                            eprintln!("[RUNTIME] Failed to clone pipe reader: {:?}", e);
                             continue;
                         }
                     };
@@ -120,7 +117,7 @@ impl Runtime {
                                     return Err(Error::ProcessManagement {
                                         operation: "read results".to_string(),
                                         pid: child.as_raw(),
-                                        details: e.to_string(),
+                                        details: format!("Failed to read/deserialize results: {e}"),
                                     });
                                 } else {
                                     return Err(Error::ProcessManagement {
@@ -168,7 +165,6 @@ impl Runtime {
                         exit(0);
                     }
                     Err(e) => {
-                        eprintln!("Error in run_in_manager: {e}");
                         exit(1);
                     }
                 }
@@ -235,13 +231,10 @@ impl Runtime {
         let start_time = Instant::now();
 
         // Create task-specific cgroup for this task
-        eprintln!("[RUNTIME] Creating task-specific cgroup for task execution");
-
         let task_cgroup_path = cgroup::create_task_cgroup(&self.cgroup_config)?;
 
         match unsafe { fork() } {
             Ok(ForkResult::Parent { child, .. }) => {
-                eprintln!("[RUNTIME] Parent process: child PID = {}", child.as_raw());
                 close_fd(task_writer.into_raw_fd())?;
 
                 let task_result =
@@ -249,7 +242,6 @@ impl Runtime {
                 Ok(task_result)
             }
             Ok(ForkResult::Child) => {
-                eprintln!("[RUNTIME] Child process starting");
                 close_fd(task_reader.into_raw_fd())?;
                 self.handle_child_process(task, task_writer, &task_cgroup_path)
             }
@@ -282,27 +274,17 @@ impl Runtime {
         };
 
         // Wait for per-task child to finish
-        eprintln!(
-            "[RUNTIME] Waiting for child process {} to exit",
-            pid.as_raw()
-        );
         crate::utils::wait_for_child(pid)?;
 
         // Read task statistics from the task cgroup before cleanup
         let task_stats = match cgroup::read_task_stats(task_cgroup_path) {
-            Ok(stats) => {
-                eprintln!("[RUNTIME] Successfully read task statistics from cgroup");
-                stats
-            }
-            Err(e) => {
-                eprintln!("[RUNTIME] Warning: Failed to read task stats: {e}");
-                cgroup::TaskStats::default()
-            }
+            Ok(stats) => stats,
+            Err(e) => cgroup::TaskStats::default(),
         };
 
         // Clean up the task cgroup directory
         if let Err(e) = cgroup::cleanup_task_cgroup(task_cgroup_path) {
-            eprintln!("[RUNTIME] Warning: Failed to cleanup task cgroup: {e}");
+            // Failed to cleanup task cgroup
         }
 
         // Populate metrics including CPU and memory statistics from cgroup
