@@ -12,8 +12,7 @@
             inherit system;
             overlays = [ inputs.rust-overlay.overlays.default ];
           }));
-    in
-    {
+    in {
       devShells = eachSystem (pkgs: {
         default = pkgs.mkShell {
           nativeBuildInputs = with pkgs;
