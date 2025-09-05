@@ -1,5 +1,6 @@
 .direnv
 target
+.old
 
 
 # Added by cargo

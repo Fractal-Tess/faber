@@ -1,0 +1,11 @@
+[package]
+name = "faber-api"
+version = "0.1.0"
+edition = "2021"
+description = "REST API server for Faber"
+
+[dependencies]
+faber-runtime = { path = "../faber-runtime" }
+tokio = { version = "1.0" }
+axum = { version = "0.8.4", features = ["json"] }
+serde = { version = "1.0", features = ["derive"] }

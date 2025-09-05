@@ -1,6 +1,12 @@
+[workspace]
+members = ["crates/faber-runtime", "crates/faber-api"]
+resolver = "2"
+
 [package]
 name = "faber"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
+faber-api = { path = "crates/faber-api" }
+tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
