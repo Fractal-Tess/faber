@@ -7,16 +7,19 @@ A Rust-based task execution API server with support for single and parallel comm
 ### Running the Development Environment
 
 1. Start the development container:
+
 ```bash
 sudo docker compose -f docker/dev/docker-compose.yaml up --build -d
 ```
 
-2. Execute into the container:
+1. Execute into the container:
+
 ```bash
 sudo docker exec -it faber-dev bash
 ```
 
-3. Run the application with auto-reload:
+1. Run the application with auto-reload:
+
 ```bash
 cargo watch -x run
 ```
@@ -29,6 +32,7 @@ Use an API client like Postman, Insomnia, Thunder Client, or curl to interact wi
 - **Execute Tasks**: `POST http://localhost:3000/api/v1/execute`
 
 Example task execution request:
+
 ```json
 [
   {
