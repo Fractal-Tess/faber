@@ -1,0 +1,20 @@
+services:
+  faber:
+    container_name: faber-dev
+    build:
+      context: ../../
+      dockerfile: docker/dev/Dockerfile
+    volumes:
+      - ../../.cargo:/faber/.cargo:ro
+      - ../../src:/faber/src:ro
+      - ../../crates:/faber/crates:ro
+      - ../../Cargo.toml:/faber/Cargo.toml:ro
+      - cargo-target:/faber/target
+    privileged: true
+    ports:
+      - '3000:3000'
+    environment:
+      - CARGO_HOME=/usr/local/cargo
+
+volumes:
+  cargo-target:
