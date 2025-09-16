@@ -47,9 +47,16 @@ impl Container {
     }
 
     pub fn cleanup(&self) -> Result<()> {
-        remove_dir(&self.container_root_dir).map_err(|e| FaberError::RemoveContainerRootDir {
-            e,
-            details: "Failed to remove container root directory".to_string(),
+        // First, try to unmount the container root directory
+        // This will fail if there are still processes using it, but that's expected
+        let _ = umount2(&self.container_root_dir, MntFlags::MNT_DETACH);
+
+        // Then remove the directory
+        remove_dir_all(&self.container_root_dir).map_err(|e| {
+            FaberError::RemoveContainerRootDir {
+                e,
+                details: "Failed to remove container root directory".to_string(),
+            }
         })?;
         Ok(())
     }
