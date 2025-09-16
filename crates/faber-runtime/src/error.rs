@@ -1,3 +1,5 @@
+use core::error;
+
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -49,4 +51,22 @@ pub enum FaberError {
 
     #[error("Failed to create dev device: {detaills}")]
     MkDevDevice { detaills: String },
+
+    #[error("Failed to execute task:\n Error: {e}\nDetails: {details}")]
+    ExecuteTask { e: std::io::Error, details: String },
+
+    #[error("Failed to get stdout from task:\n Error: {e}\nDetails: {details}")]
+    GetStdout {
+        e: std::string::FromUtf8Error,
+        details: String,
+    },
+
+    #[error("Failed to get stderr from task:\n Error: {e}\nDetails: {details}")]
+    GetStderr {
+        e: std::string::FromUtf8Error,
+        details: String,
+    },
+
+    #[error("Failed to get exit code from task:\n Error: {e}\nDetails: {details}")]
+    GetExitCode { e: std::io::Error, details: String },
 }

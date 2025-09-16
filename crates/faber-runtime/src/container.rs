@@ -13,17 +13,26 @@ use crate::utils::generate_random_string;
 pub struct Container {
     id: String,
     container_root_dir: PathBuf,
+    workdir: PathBuf,
+    tmpdir_size: String,
     ro_bind_mounts: Vec<&'static str>,
+    w_bind_mounts: Vec<&'static str>,
 }
 impl Default for Container {
     fn default() -> Self {
         let id = generate_random_string(12);
         let container_root_dir = PathBuf::from(format!("/tmp/faber/{}", id));
         let ro_bind_mounts = vec!["/bin", "/lib", "/lib64", "/usr"];
+        let w_bind_mounts = vec!["/tmp"];
+        let workdir = PathBuf::from("/faber");
+        let tmpdir_size = "128M".to_string();
         Self {
             id,
             container_root_dir,
+            workdir,
+            tmpdir_size,
             ro_bind_mounts,
+            w_bind_mounts,
         }
     }
 }
@@ -34,8 +43,8 @@ impl Container {
 
         let unshare_flags = CloneFlags::CLONE_NEWUTS // hostname
             | CloneFlags::CLONE_NEWNET // network
-            | CloneFlags::CLONE_NEWNS // mount
-            | CloneFlags::CLONE_NEWPID; // PID
+            | CloneFlags::CLONE_NEWNS; // mount
+        // Removed CLONE_NEWPID to allow thread spawning
 
         unshare(unshare_flags).map_err(|e| FaberError::Unshare { e })?;
 
@@ -44,6 +53,8 @@ impl Container {
         self.bind_mounts()?;
         self.pivot_root()?;
         self.create_dev_devices()?;
+        self.create_workdir()?;
+        self.create_tmpdir()?;
 
         Ok(())
     }
@@ -230,6 +241,42 @@ impl Container {
             FaberError::MkDevDevice {
                 detaills: "Failed to create urandom device".to_string(),
             }
+        })?;
+
+        Ok(())
+    }
+
+    fn create_workdir(&self) -> Result<()> {
+        create_dir_all(&self.workdir).map_err(|e| FaberError::CreateDir {
+            e,
+            details: "Failed to create workdir".to_string(),
+        })?;
+
+        Ok(())
+    }
+
+    fn create_tmpdir(&self) -> Result<()> {
+        let target = PathBuf::from("/tmp");
+        create_dir_all(&target).map_err(|e| FaberError::CreateDir {
+            e,
+            details: "Failed to create tmp directory".to_string(),
+        })?;
+
+        let mount_options = format!("size={},mode=1777", self.tmpdir_size);
+        let target_str = target.to_str().ok_or_else(|| FaberError::Generic {
+            message: "Failed to convert tmp directory to string".to_string(),
+        })?;
+
+        mount(
+            Some("tmpfs"),
+            target_str,
+            Some("tmpfs"),
+            MsFlags::empty(),
+            Some(mount_options.as_str()),
+        )
+        .map_err(|e| FaberError::Mount {
+            e,
+            details: format!("Failed to mount tmp filesystem to {}", target_str),
         })?;
 
         Ok(())

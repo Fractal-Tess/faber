@@ -9,6 +9,8 @@ pub mod task;
 pub mod utils;
 
 pub use error::FaberError;
-pub use result::{ExecutionStepResult, TaskGroupResult, TaskResult, TaskResultStats};
+pub use result::{
+    ExecutionStepResult, RuntimeResult, TaskGroupResult, TaskResult, TaskResultStats,
+};
 pub use runtime::Runtime;
 pub use task::{ExecutionStep, Task, TaskGroup};

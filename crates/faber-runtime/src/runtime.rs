@@ -1,7 +1,7 @@
 use std::{
     io::{PipeWriter, Write},
     os::fd::IntoRawFd,
-    process::exit,
+    process::{Command, exit},
 };
 
 use nix::{
@@ -10,7 +10,7 @@ use nix::{
 };
 
 use crate::{
-    ExecutionStep, ExecutionStepResult, TaskGroup, TaskResult, TaskResultStats,
+    ExecutionStep, ExecutionStepResult, Task, TaskGroup, TaskResult, TaskResultStats,
     container::Container,
     prelude::*,
     result::{RuntimeResult, TaskGroupResult},
@@ -72,17 +72,104 @@ impl Runtime {
             };
         }
 
-        let task_group_result: TaskGroupResult =
-            vec![ExecutionStepResult::Single(TaskResult::Completed {
-                stdout: "Hello, world!".to_string(),
-                stderr: "".to_string(),
-                exit_code: 0,
-                stats: TaskResultStats::default(),
-            })];
+        let mut results = Vec::with_capacity(self.task_group.len());
 
-        // Cleanup container (ignore errors for now)
+        for step in &self.task_group {
+            let result = match step {
+                ExecutionStep::Single(task) => Self::execute_single(task.clone()),
+                ExecutionStep::Parallel(tasks) => Self::execute_parallel(tasks.clone()),
+            };
+            results.push(result);
+        }
+
         let _ = self.container.cleanup();
+        RuntimeResult::Success(results)
+    }
 
-        RuntimeResult::Success(task_group_result)
+    fn execute_single(task: Task) -> ExecutionStepResult {
+        match Self::execute_task(task) {
+            Ok(task_result) => ExecutionStepResult::Single(task_result),
+            Err(e) => ExecutionStepResult::Single(TaskResult::Failed {
+                error: format!("Task execution failed: {}", e),
+                stats: TaskResultStats::default(),
+            }),
+        }
+    }
+
+    fn execute_parallel(tasks: Vec<Task>) -> ExecutionStepResult {
+        let mut handles = Vec::with_capacity(tasks.len());
+
+        for task in tasks {
+            let handle = std::thread::spawn(move || match Self::execute_task(task) {
+                Ok(task_result) => task_result,
+                Err(e) => TaskResult::Failed {
+                    error: format!("Task execution failed: {}", e),
+                    stats: TaskResultStats::default(),
+                },
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all threads to complete and collect results
+        let task_results = Self::collect_parallel_results(handles);
+        ExecutionStepResult::Parallel(task_results)
+    }
+
+    fn collect_parallel_results(
+        handles: Vec<std::thread::JoinHandle<TaskResult>>,
+    ) -> Vec<TaskResult> {
+        let mut task_results = Vec::with_capacity(handles.len());
+
+        for handle in handles {
+            let result = match handle.join() {
+                Ok(task_result) => task_result,
+                Err(_) => TaskResult::Failed {
+                    error: "Thread panicked during task execution".to_string(),
+                    stats: TaskResultStats::default(),
+                },
+            };
+            task_results.push(result);
+        }
+
+        task_results
+    }
+
+    fn execute_task(task: Task) -> Result<TaskResult> {
+        let mut cmd = Command::new(task.cmd);
+        let output = cmd.output().map_err(|e| FaberError::ExecuteTask {
+            e,
+            details: "Failed to execute task".to_string(),
+        })?;
+        let stdout = String::from_utf8(output.stdout).map_err(|e| FaberError::GetStdout {
+            e,
+            details: "Failed to convert stdout to string".to_string(),
+        })?;
+        let stderr = String::from_utf8(output.stderr).map_err(|e| FaberError::GetStderr {
+            e,
+            details: "Failed to convert stderr to string".to_string(),
+        })?;
+
+        let has_path = cmd.get_envs().any(|(key, _)| key == "PATH");
+        if !has_path {
+            cmd.env(
+                "PATH",
+                "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            );
+        }
+
+        let exit_code = output
+            .status
+            .code()
+            .ok_or_else(|| FaberError::GetExitCode {
+                e: std::io::Error::other("Failed to get exit code"),
+                details: "Failed to get exit code".to_string(),
+            })?;
+
+        Ok(TaskResult::Completed {
+            stdout,
+            stderr,
+            exit_code,
+            stats: TaskResultStats::default(),
+        })
     }
 }

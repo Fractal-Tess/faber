@@ -1,28 +1,26 @@
 use axum::{http::StatusCode, response::Json};
-use faber_runtime::{Runtime, TaskGroup};
-use serde::{Deserialize, Serialize};
-
-#[derive(Serialize, Deserialize)]
-pub struct ExecuteResponse {
-    message: String,
-    status: String,
-}
+use faber_runtime::{Runtime, RuntimeResult, TaskGroup, TaskGroupResult};
 
 pub async fn execute(
     Json(task_group): Json<TaskGroup>,
-) -> Result<Json<ExecuteResponse>, StatusCode> {
+) -> Result<Json<TaskGroupResult>, StatusCode> {
     let runtime = Runtime::new(task_group);
 
-    let response = tokio::task::spawn_blocking(move || {
-        let result = runtime.execute();
+    let result = tokio::task::spawn_blocking(move || runtime.execute())
+        .await
+        .unwrap();
 
-        ExecuteResponse {
-            message: format!("Executed task group with result: {:?}", result),
-            status: "completed".to_string(),
+    match result {
+        Ok(runtime_result) => match runtime_result {
+            RuntimeResult::Success(task_group_result) => Ok(Json(task_group_result)),
+            RuntimeResult::ContainerSetupFailed { error } => {
+                eprintln!("Container setup failed: {}", error);
+                Err(StatusCode::INTERNAL_SERVER_ERROR)
+            }
+        },
+        Err(e) => {
+            eprintln!("Runtime execution failed: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
-    })
-    .await
-    .unwrap();
-
-    Ok(Json(response))
+    }
 }
