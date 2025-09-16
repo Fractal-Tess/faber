@@ -12,12 +12,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let router = build_router();
 
     let router = axum::Router::new().nest("/api/v1", router);
-    let serve_config = ServeConfig::new(
+
+    let serve_config = ServeConfig {
         port,
-        host.clone(),
+        host,
         router,
-        Some(format!("🦊 Faber API server starting on {}:{}", host, port)),
-    );
+        max_concurrency: Some(10),
+    };
 
     serve(serve_config).await?;
 
