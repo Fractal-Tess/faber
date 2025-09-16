@@ -3,6 +3,12 @@ use serde::{Deserialize, Serialize};
 pub type TaskGroupResult = Vec<ExecutionStepResult>;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub enum RuntimeResult {
+    Success(TaskGroupResult),
+    ContainerSetupFailed { error: String },
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum ExecutionStepResult {
     Single(TaskResult),
     Parallel(Vec<TaskResult>),

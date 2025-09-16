@@ -40,7 +40,7 @@ impl Container {
 
         self.rebind_root()?;
         self.rebind_new_root()?;
-        // self.bind_mounts()?;
+        self.bind_mounts()?;
         // self.pivot_root()?;
 
         Ok(())
@@ -100,15 +100,11 @@ impl Container {
                 .container_root_dir
                 .join(source.strip_prefix("/").unwrap_or(source));
 
-            // Create target directory
-            if let Some(parent) = target.parent() {
-                create_dir_all(parent).map_err(|e| FaberError::CreateDir {
-                    e,
-                    details: "Failed to create target directory".to_string(),
-                })?;
-            }
-
-            println!("Mounting {} -> {:?}", source, target);
+            // Create target directory and its parent
+            create_dir_all(&target).map_err(|e| FaberError::CreateDir {
+                e,
+                details: "Failed to create target directory".to_string(),
+            })?;
 
             // Use MS_BIND without MS_RDONLY initially, then remount as read-only
             mount(
