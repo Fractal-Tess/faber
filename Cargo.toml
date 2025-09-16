@@ -5,7 +5,7 @@ resolver = "2"
 [package]
 name = "faber"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 faber-api = { path = "crates/faber-api" }
