@@ -46,4 +46,7 @@ pub enum FaberError {
         e: serde_json::Error,
         details: String,
     },
+
+    #[error("Failed to create dev device: {detaills}")]
+    MkDevDevice { detaills: String },
 }

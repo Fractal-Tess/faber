@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use nix::mount::{MntFlags, MsFlags, mount, umount2};
 use nix::sched::CloneFlags;
 use nix::sched::unshare;
+use nix::sys::stat::{Mode, SFlag, makedev, mknod};
 
 use crate::prelude::*;
 use crate::utils::generate_random_string;
@@ -42,6 +43,7 @@ impl Container {
         self.rebind_new_root()?;
         self.bind_mounts()?;
         self.pivot_root()?;
+        self.create_dev_devices()?;
 
         Ok(())
     }
@@ -181,10 +183,53 @@ impl Container {
             details: "Failed to unmount old root".to_string(),
         })?;
 
-        // println!("Removing /oldroot directory");
         remove_dir("/oldroot").map_err(|e| FaberError::RemoveDir {
             e,
             details: "Failed to remove old root directory".to_string(),
+        })?;
+
+        Ok(())
+    }
+
+    fn create_dev_devices(&self) -> Result<()> {
+        let flags = SFlag::S_IFCHR;
+        let mode = Mode::S_IRUSR
+            | Mode::S_IWUSR
+            | Mode::S_IRGRP
+            | Mode::S_IWGRP
+            | Mode::S_IROTH
+            | Mode::S_IWOTH;
+
+        create_dir_all("/dev").map_err(|e| FaberError::CreateDir {
+            e,
+            details: ("Failed to create dev directory".to_string()),
+        })?;
+
+        let device_id = makedev(1, 3);
+        mknod("/dev/null", flags, mode, device_id).map_err(|source| FaberError::MkDevDevice {
+            detaills: "Failed to create null device".to_string(),
+        })?;
+
+        let device_id = makedev(1, 5);
+        mknod("/dev/zero", flags, mode, device_id).map_err(|source| FaberError::MkDevDevice {
+            detaills: "Failed to create zero device".to_string(),
+        })?;
+
+        let device_id = makedev(1, 7);
+        mknod("/dev/full", flags, mode, device_id).map_err(|source| FaberError::MkDevDevice {
+            detaills: "Failed to create full device".to_string(),
+        })?;
+
+        let device_id = makedev(1, 8);
+        mknod("/dev/random", flags, mode, device_id).map_err(|source| FaberError::MkDevDevice {
+            detaills: "Failed to create random device".to_string(),
+        })?;
+
+        let device_id = makedev(1, 9);
+        mknod("/dev/urandom", flags, mode, device_id).map_err(|source| {
+            FaberError::MkDevDevice {
+                detaills: "Failed to create urandom device".to_string(),
+            }
         })?;
 
         Ok(())
