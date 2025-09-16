@@ -45,9 +45,29 @@ impl Runtime {
             Ok(ForkResult::Parent { child }) => {
                 close_fd(writer.into_raw_fd())?;
 
-                waitpid(child, None).unwrap();
+                let wait_result = waitpid(child, None);
+                match wait_result {
+                    Ok(status) => {
+                        println!("Child process exited with status: {:?}", status);
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to wait for child process: {}", e);
+                    }
+                }
 
-                let results: TaskGroupResult = serde_json::from_reader(reader).unwrap();
+                let results: TaskGroupResult = match serde_json::from_reader(reader) {
+                    Ok(results) => {
+                        println!("✅ Successfully parsed results from child process");
+                        results
+                    }
+                    Err(e) => {
+                        eprintln!("❌ Failed to parse results from child process: {}", e);
+                        return Err(FaberError::ParseResult {
+                            e,
+                            details: "Failed to parse results from child process".to_string(),
+                        });
+                    }
+                };
 
                 Ok(results)
             }
@@ -57,20 +77,46 @@ impl Runtime {
     }
 
     fn execution_child(&self, mut writer: PipeWriter) -> Result<()> {
-        self.container.setup()?;
+        // Wrap container setup in error handling
+        match self.container.setup() {
+            Ok(_) => {
+                println!("✅ Container setup successful");
 
-        let mut task_group_result: TaskGroupResult =
-            vec![ExecutionStepResult::Single(TaskResult::Completed {
-                stdout: "Hello, world!".to_string(),
-                stderr: "".to_string(),
-                exit_code: 0,
-                stats: TaskResultStats::default(),
-            })];
+                let task_group_result: TaskGroupResult =
+                    vec![ExecutionStepResult::Single(TaskResult::Completed {
+                        stdout: "Hello, world!".to_string(),
+                        stderr: "".to_string(),
+                        exit_code: 0,
+                        stats: TaskResultStats::default(),
+                    })];
 
-        serde_json::to_writer(writer, &task_group_result).unwrap();
+                serde_json::to_writer(&mut writer, &task_group_result).map_err(|e| {
+                    FaberError::ParseResult {
+                        e,
+                        details: "Failed to serialize task group result".to_string(),
+                    }
+                })?;
 
-        self.container.cleanup()?;
+                println!("✅ Task execution completed successfully");
+                self.container.cleanup()?;
+                Ok(())
+            }
+            Err(e) => {
+                eprintln!("❌ Container setup failed: {}", e);
 
-        Ok(())
+                // Send error result back to parent
+                let error_result: TaskGroupResult =
+                    vec![ExecutionStepResult::Single(TaskResult::Failed {
+                        error: format!("Container setup failed: {}", e),
+                        stats: TaskResultStats::default(),
+                    })];
+
+                serde_json::to_writer(&mut writer, &error_result).unwrap_or_else(|_| {
+                    eprintln!("Failed to serialize error result");
+                });
+
+                Err(e)
+            }
+        }
     }
 }

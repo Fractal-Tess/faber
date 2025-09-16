@@ -17,18 +17,33 @@ pub enum FaberError {
     #[error("Failed to unshare:\n Error: {e}")]
     Unshare { e: nix::Error },
 
-    #[error("Failed to mount:\n Error: {e}")]
+    #[error("Failed to mount:\n Error: {e} \nDetails: {details}")]
     Mount { e: nix::Error, details: String },
 
-    #[error("Failed to unmount:\n Error: {e}")]
-    Unmount { e: nix::Error, details: String },
+    #[error("Failed to unmount:\n Error: {e}\nDetails: {details}")]
+    Umount { e: nix::Error, details: String },
 
-    #[error("Failed to create container root directory:\n Error: {e}")]
-    CreateContainerRootDir { e: std::io::Error },
+    #[error("Failed to pivot root:\n Error: {e}\nDetails: {details}")]
+    PivotRoot { e: nix::Error, details: String },
 
-    #[error("Failed to create directory:\n Error: {e}")]
-    CreateDir { e: std::io::Error },
+    #[error("Failed to set current directory:\n Error: {e}\nDetails: {details}")]
+    Chdir { e: std::io::Error, details: String },
+
+    #[error("Failed to create container root directory:\n Error: {e}\nDetails: {details}")]
+    CreateContainerRootDir { e: std::io::Error, details: String },
+
+    #[error("Failed to create directory:\n Error: {e}\nDetails: {details}")]
+    CreateDir { e: std::io::Error, details: String },
 
     #[error("Failed to remove container root directory:\n Error: {e}")]
-    RemoveContainerRootDir { e: std::io::Error },
+    RemoveContainerRootDir { e: std::io::Error, details: String },
+
+    #[error("Failed to remove directory:\n Error: {e}")]
+    RemoveDir { e: std::io::Error, details: String },
+
+    #[error("Failed to parse result from child process:\n Error: {e}")]
+    ParseResult {
+        e: serde_json::Error,
+        details: String,
+    },
 }

@@ -16,6 +16,10 @@ pub enum TaskResult {
         exit_code: i32,
         stats: TaskResultStats,
     },
+    Failed {
+        error: String,
+        stats: TaskResultStats,
+    },
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

@@ -1,7 +1,8 @@
+use std::env::set_current_dir;
 use std::fs::{create_dir_all, remove_dir, remove_dir_all};
 use std::path::{Path, PathBuf};
 
-use nix::mount::{MsFlags, mount, umount};
+use nix::mount::{MntFlags, MsFlags, mount, umount2};
 use nix::sched::CloneFlags;
 use nix::sched::unshare;
 
@@ -37,26 +38,34 @@ impl Container {
 
         unshare(unshare_flags).map_err(|e| FaberError::Unshare { e })?;
 
-        self.remount_root()?;
-        self.bind_mounts()?;
+        self.rebind_root()?;
+        self.rebind_new_root()?;
+        // self.bind_mounts()?;
+        // self.pivot_root()?;
 
         Ok(())
     }
 
     pub fn cleanup(&self) -> Result<()> {
-        remove_dir(&self.container_root_dir)
-            .map_err(|e| FaberError::RemoveContainerRootDir { e })?;
+        remove_dir(&self.container_root_dir).map_err(|e| FaberError::RemoveContainerRootDir {
+            e,
+            details: "Failed to remove container root directory".to_string(),
+        })?;
         Ok(())
     }
 
     fn create_container_root_dir(&self) -> Result<()> {
-        create_dir_all(&self.container_root_dir)
-            .map_err(|e| FaberError::CreateContainerRootDir { e })?;
+        create_dir_all(&self.container_root_dir).map_err(|e| {
+            FaberError::CreateContainerRootDir {
+                e,
+                details: "Failed to create container root directory".to_string(),
+            }
+        })?;
+
         Ok(())
     }
 
-    fn remount_root(&self) -> Result<()> {
-        // Rebind `/` to make it private
+    fn rebind_root(&self) -> Result<()> {
         mount(
             None::<&str>,
             "/",
@@ -74,32 +83,116 @@ impl Container {
 
     fn bind_mounts(&self) -> Result<()> {
         for source in &self.ro_bind_mounts {
-            create_dir_all(PathBuf::from(source)).map_err(|e| FaberError::CreateDir { e })?;
+            // Check if source exists before mounting
+            if !std::path::Path::new(source).exists() {
+                println!("⚠️  Skipping mount for non-existent path: {}", source);
+                continue;
+            }
 
-            let flags = MsFlags::MS_BIND | MsFlags::MS_RDONLY;
-            let target = self.container_root_dir.join(source);
+            let target = self
+                .container_root_dir
+                .join(source.strip_prefix("/").unwrap_or(source));
+
+            // Create target directory
+            if let Some(parent) = target.parent() {
+                create_dir_all(parent).map_err(|e| FaberError::CreateDir {
+                    e,
+                    details: "Failed to create target directory".to_string(),
+                })?;
+            }
+
+            println!("Mounting {} -> {:?}", source, target);
+
+            // Use MS_BIND without MS_RDONLY initially, then remount as read-only
             mount(
                 Some(*source),
                 target.as_os_str(),
                 None::<&str>,
-                flags,
+                MsFlags::MS_BIND | MsFlags::MS_RDONLY,
                 None::<&str>,
             )
             .map_err(|e| FaberError::Mount {
                 e,
-                details: "Failed to bind mount".to_string(),
+                details: format!("Failed to bind mount {} to {:?}", source, target),
             })?;
         }
         Ok(())
     }
 
-    // fn unmount_bind_mounts(&self) -> Result<()> {
-    //     for m in &self.ro_bind_mounts {
-    //         umount(*m).map_err(|e| FaberError::Unmount {
-    //             e,
-    //             details: "Failed to unmount bind mount".to_string(),
-    //         })?;
-    //     }
-    //     Ok(())
-    // }
+    fn rebind_new_root(&self) -> Result<()> {
+        let target =
+            self.container_root_dir
+                .to_str()
+                .ok_or(FaberError::CreateContainerRootDir {
+                    e: std::io::Error::other(
+                        "Failed to convert container root directory to string",
+                    ),
+                    details: "Failed to convert container root directory to string".to_string(),
+                })?;
+
+        // First, bind mount the new root to itself
+        mount(
+            Some(target),
+            target,
+            None::<&str>,
+            MsFlags::MS_BIND | MsFlags::MS_REC,
+            None::<&str>,
+        )
+        .map_err(|e| FaberError::Mount {
+            e,
+            details: "Failed to bind mount new root".to_string(),
+        })?;
+
+        Ok(())
+    }
+
+    fn pivot_root(&self) -> Result<()> {
+        let new_root = self.container_root_dir.to_path_buf();
+        let old_root = self.container_root_dir.join("oldroot");
+
+        create_dir_all(&old_root).map_err(|source| FaberError::CreateDir {
+            e: source,
+            details: "Failed to create old root directory".to_string(),
+        })?;
+
+        // Check if new_root is a mount point and accessible
+        println!("Checking new_root: {:?}", new_root);
+        println!("new_root exists: {}", new_root.exists());
+        println!("new_root is_dir: {}", new_root.is_dir());
+
+        let new_root_str = new_root.to_str().ok_or_else(|| FaberError::PivotRoot {
+            e: nix::Error::from(nix::errno::Errno::EINVAL),
+            details: "Failed to convert new root directory to string".to_string(),
+        })?;
+
+        let old_root_str = old_root.to_str().ok_or_else(|| FaberError::PivotRoot {
+            e: nix::Error::from(nix::errno::Errno::EINVAL),
+            details: "Failed to convert old root directory to string".to_string(),
+        })?;
+
+        println!("Pivoting root from {} to {}", old_root_str, new_root_str);
+
+        nix::unistd::pivot_root(new_root_str, old_root_str).map_err(|e| FaberError::PivotRoot {
+            e,
+            details: "Failed to pivot root".to_string(),
+        })?;
+
+        println!("Changing current directory to / after pivot_root");
+        set_current_dir("/").map_err(|e| FaberError::Chdir {
+            e,
+            details: "Failed to change current directory".to_string(),
+        })?;
+
+        println!("Unmounting old root at /oldroot");
+        umount2("/oldroot", MntFlags::MNT_DETACH).map_err(|e| FaberError::Umount {
+            e,
+            details: "Failed to unmount old root".to_string(),
+        })?;
+
+        // println!("Removing /oldroot directory");
+        // remove_dir("/oldroot").map_err(|e| FaberError::RemoveDir { e })?;
+
+        println!("pivot_root completed successfully");
+        Ok(())
+    }
 }
