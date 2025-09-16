@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 pub mod container;
 pub mod error;
 pub mod prelude;
