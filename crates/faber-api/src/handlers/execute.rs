@@ -1,5 +1,5 @@
 use axum::{http::StatusCode, response::Json};
-use faber_runtime::TaskGroup;
+use faber_runtime::{Runtime, TaskGroup};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -11,15 +11,18 @@ pub struct ExecuteResponse {
 pub async fn execute(
     Json(task_group): Json<TaskGroup>,
 ) -> Result<Json<ExecuteResponse>, StatusCode> {
-    println!("Received TaskGroup with  total tasks",);
+    let runtime = Runtime::new(task_group);
 
-    let response = ExecuteResponse {
-        message: format!(
-            "Received TaskGroup with {} execution steps",
-            task_group.len()
-        ),
-        status: "accepted".to_string(),
-    };
+    let response = tokio::task::spawn_blocking(move || {
+        let result = runtime.execute();
+
+        ExecuteResponse {
+            message: format!("Executed task group with result: {:?}", result),
+            status: "completed".to_string(),
+        }
+    })
+    .await
+    .unwrap();
 
     Ok(Json(response))
 }
