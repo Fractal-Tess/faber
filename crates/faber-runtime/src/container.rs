@@ -41,7 +41,7 @@ impl Container {
         self.rebind_root()?;
         self.rebind_new_root()?;
         self.bind_mounts()?;
-        // self.pivot_root()?;
+        self.pivot_root()?;
 
         Ok(())
     }
@@ -158,44 +158,35 @@ impl Container {
             details: "Failed to create old root directory".to_string(),
         })?;
 
-        // Check if new_root is a mount point and accessible
-        println!("Checking new_root: {:?}", new_root);
-        println!("new_root exists: {}", new_root.exists());
-        println!("new_root is_dir: {}", new_root.is_dir());
-
-        let new_root_str = new_root.to_str().ok_or_else(|| FaberError::PivotRoot {
-            e: nix::Error::from(nix::errno::Errno::EINVAL),
-            details: "Failed to convert new root directory to string".to_string(),
+        let new_root_str = new_root.to_str().ok_or_else(|| FaberError::Generic {
+            message: "Failed to convert new root directory to string".to_string(),
         })?;
 
-        let old_root_str = old_root.to_str().ok_or_else(|| FaberError::PivotRoot {
-            e: nix::Error::from(nix::errno::Errno::EINVAL),
-            details: "Failed to convert old root directory to string".to_string(),
+        let old_root_str = old_root.to_str().ok_or_else(|| FaberError::Generic {
+            message: "Failed to convert old root directory to string".to_string(),
         })?;
-
-        println!("Pivoting root from {} to {}", old_root_str, new_root_str);
 
         nix::unistd::pivot_root(new_root_str, old_root_str).map_err(|e| FaberError::PivotRoot {
             e,
             details: "Failed to pivot root".to_string(),
         })?;
 
-        println!("Changing current directory to / after pivot_root");
         set_current_dir("/").map_err(|e| FaberError::Chdir {
             e,
             details: "Failed to change current directory".to_string(),
         })?;
 
-        println!("Unmounting old root at /oldroot");
         umount2("/oldroot", MntFlags::MNT_DETACH).map_err(|e| FaberError::Umount {
             e,
             details: "Failed to unmount old root".to_string(),
         })?;
 
         // println!("Removing /oldroot directory");
-        // remove_dir("/oldroot").map_err(|e| FaberError::RemoveDir { e })?;
+        remove_dir("/oldroot").map_err(|e| FaberError::RemoveDir {
+            e,
+            details: "Failed to remove old root directory".to_string(),
+        })?;
 
-        println!("pivot_root completed successfully");
         Ok(())
     }
 }
