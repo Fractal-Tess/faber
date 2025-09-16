@@ -5,6 +5,7 @@ edition = "2024"
 description = "Runtime execution engine for Faber"
 
 [dependencies]
+rand = "0.9.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "1.0"
