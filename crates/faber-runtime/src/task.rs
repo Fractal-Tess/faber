@@ -60,6 +60,5 @@ pub struct Task {
     pub env: Option<HashMap<String, String>>,
     pub stdin: Option<String>,
     pub files: Option<HashMap<String, String>>,
-    pub timeout: Option<Duration>,
     pub working_dir: Option<String>,
 }

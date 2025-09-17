@@ -1,16 +1,16 @@
-use crate::cache::ExecutionCache;
+use crate::{cache::ExecutionCache, state::AppState};
 use axum::{extract::State, http::StatusCode, response::Json};
 use faber_runtime::{Runtime, RuntimeResult, TaskGroup, TaskGroupResult};
 
 pub async fn execute(
-    State(cache): State<ExecutionCache>,
+    State(app_state): State<AppState>,
     Json(task_group): Json<TaskGroup>,
 ) -> Result<Json<TaskGroupResult>, StatusCode> {
     // Generate hash for the task group
     let hash = ExecutionCache::generate_hash(&task_group);
 
     // Check cache first
-    if let Some(cached_result) = cache.get(&hash) {
+    if let Some(cached_result) = app_state.cache.get(&hash) {
         return Ok(Json(cached_result));
     }
 
@@ -24,7 +24,7 @@ pub async fn execute(
         Ok(runtime_result) => match runtime_result {
             RuntimeResult::Success(task_group_result) => {
                 // Cache the successful result
-                cache.insert(hash, task_group_result.clone());
+                app_state.cache.insert(hash, task_group_result.clone());
                 Ok(Json(task_group_result))
             }
             RuntimeResult::ContainerSetupFailed { error } => {

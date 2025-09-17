@@ -25,22 +25,30 @@ pub struct Runtime {
     task_group: TaskGroup,
     container: Container,
     cgroup_config: CgroupConfig,
+    timeout: std::time::Duration,
 }
 
 impl Runtime {
     pub fn new(task_group: TaskGroup) -> Self {
         let container = Container::default();
         let cgroup_config = CgroupConfig::default();
+        let timeout = std::time::Duration::from_secs(1);
 
         Self {
             task_group,
             container,
             cgroup_config,
+            timeout,
         }
     }
 
     pub fn with_cgroup_config(mut self, cgroup_config: CgroupConfig) -> Self {
         self.cgroup_config = cgroup_config;
+        self
+    }
+
+    pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.timeout = timeout;
         self
     }
 
@@ -117,8 +125,9 @@ impl Runtime {
 
         for task in tasks {
             let cgroup_config = self.cgroup_config.clone();
+            let timeout = self.timeout;
             let handle = std::thread::spawn(move || {
-                match Self::execute_task_with_cgroup(task, &cgroup_config) {
+                match Self::execute_task_with_cgroup(task, &cgroup_config, timeout) {
                     Ok(task_result) => task_result,
                     Err(e) => TaskResult::Failed {
                         error: format!("Task execution failed: {}", e),
@@ -154,10 +163,14 @@ impl Runtime {
     }
 
     fn execute_task(&self, task: Task) -> Result<TaskResult> {
-        Self::execute_task_with_cgroup(task, &self.cgroup_config)
+        Self::execute_task_with_cgroup(task, &self.cgroup_config, self.timeout)
     }
 
-    fn execute_task_with_cgroup(task: Task, cgroup_config: &CgroupConfig) -> Result<TaskResult> {
+    fn execute_task_with_cgroup(
+        task: Task,
+        cgroup_config: &CgroupConfig,
+        timeout: std::time::Duration,
+    ) -> Result<TaskResult> {
         use std::time::Instant;
 
         let start_time = Instant::now();
@@ -216,7 +229,8 @@ impl Runtime {
                 })?;
         }
 
-        let exit_status = child.wait().unwrap();
+        // Apply timeout from TaskGroup
+        let exit_status = Self::wait_with_timeout(&mut child, timeout)?;
 
         let mut stdout = child.stdout.unwrap();
         let mut stderr = child.stderr.unwrap();
@@ -308,5 +322,54 @@ impl Runtime {
         // - BPF operations: bpf
         // - Keyring: keyctl, add_key, request_key
         Ok(())
+    }
+
+    fn wait_with_timeout(
+        child: &mut std::process::Child,
+        timeout: std::time::Duration,
+    ) -> Result<std::process::ExitStatus> {
+        use std::thread;
+        use std::time::Instant;
+
+        let child_id = child.id();
+        let start_time = Instant::now();
+
+        // Poll for process completion with timeout
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    // Process completed
+                    return Ok(status);
+                }
+                Ok(None) => {
+                    // Process still running, check timeout
+                    if start_time.elapsed() > timeout {
+                        // Timeout exceeded, kill the process
+                        eprintln!(
+                            "Task exceeded timeout of {:?}, killing process {}",
+                            timeout, child_id
+                        );
+                        let _ = child.kill();
+                        let _ = child.wait(); // Clean up zombie process
+
+                        return Err(FaberError::TaskTimeout {
+                            timeout_duration: timeout,
+                            details: format!(
+                                "Task exceeded timeout of {:?} seconds",
+                                timeout.as_secs()
+                            ),
+                        });
+                    }
+                    // Sleep briefly before checking again
+                    thread::sleep(std::time::Duration::from_millis(100));
+                }
+                Err(e) => {
+                    return Err(FaberError::ExecuteTask {
+                        e,
+                        details: "Failed to check process status".to_string(),
+                    });
+                }
+            }
+        }
     }
 }

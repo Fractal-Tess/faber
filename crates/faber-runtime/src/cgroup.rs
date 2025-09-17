@@ -60,57 +60,6 @@ pub struct TaskStats {
     pub pids: PidsStats,
 }
 
-fn list_files_in_directory(directory: &str) -> () {
-    use std::fs;
-
-    // List all files and directories under /sys/fs/cgroup, sorted by name
-    let mut entries: Vec<_> = fs::read_dir(directory)
-        .map_err(|e| FaberError::Generic {
-            message: format!("Failed to list {}: {}", directory, e),
-        })
-        .expect(&format!("Failed to list {}", directory))
-        .collect();
-
-    // Sort entries by file name
-    entries.sort_by(|a, b| {
-        let a_name = a
-            .as_ref()
-            .ok()
-            .and_then(|e| e.file_name().into_string().ok())
-            .unwrap_or_default();
-        let b_name = b
-            .as_ref()
-            .ok()
-            .and_then(|e| e.file_name().into_string().ok())
-            .unwrap_or_default();
-        a_name.cmp(&b_name)
-    });
-
-    println!("Files and directories under {}:", directory);
-    for entry in entries {
-        match entry {
-            Ok(dir_entry) => {
-                if let Some(name) = dir_entry.file_name().to_str() {
-                    println!("{}", name);
-                }
-            }
-            Err(e) => {
-                println!("Error reading entry: {}", e);
-            }
-        }
-    }
-}
-
-fn read_file(path: impl AsRef<Path>) {
-    let contents = read_to_string(&path)
-        .map_err(|e| FaberError::Generic {
-            message: format!("Failed to read {}: {}", path.as_ref().display(), e),
-        })
-        .expect(&format!("Failed to read {}", path.as_ref().display()));
-
-    println!("Read file: {}", contents);
-}
-
 pub fn create_faber_cgroup_hierarchy() -> Result<()> {
     let controllers = "+cpu +memory +pids";
     let cgroup_path = PathBuf::from("/sys/fs/cgroup");

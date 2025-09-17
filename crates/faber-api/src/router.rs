@@ -1,12 +1,12 @@
 use axum::{Router, routing::get, routing::post};
 
-use crate::{cache::ExecutionCache, handlers};
+use crate::{handlers, state::AppState};
 
 pub fn build_router() -> Router {
-    let cache = ExecutionCache::new();
+    let state = AppState::new();
 
     Router::new()
         .route("/health", get(handlers::health))
         .route("/execute", post(handlers::execute))
-        .with_state(cache)
+        .with_state(state)
 }
