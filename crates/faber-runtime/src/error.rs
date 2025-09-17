@@ -70,6 +70,21 @@ pub enum FaberError {
         details: String,
     },
 
+    #[error("Failed to get stdin from task:\n Details: {details}")]
+    GetStdin { details: String },
+
+    #[error("Failed to write stdin to task:\n Error: {e}\nDetails: {details}")]
+    WriteStdin { e: std::io::Error, details: String },
+
     #[error("Failed to get exit code from task:\n Error: {e}\nDetails: {details}")]
     GetExitCode { e: std::io::Error, details: String },
+
+    #[error("Failed to set user ID:\n Error: {e}")]
+    SetUserId { e: nix::Error },
+
+    #[error("Failed to set group ID:\n Error: {e}")]
+    SetGroupId { e: nix::Error },
+
+    #[error("Failed to set hostname:\n Error: {e}\nDetails: {details}")]
+    SetHostname { e: nix::Error, details: String },
 }

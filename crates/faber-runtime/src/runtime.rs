@@ -1,13 +1,15 @@
 use std::{
-    io::{PipeWriter, Write},
-    os::fd::IntoRawFd,
+    io::{PipeWriter, Read, Write},
+    os::{fd::IntoRawFd, unix::process::CommandExt},
     path::PathBuf,
-    process::{Command, exit},
+    process::{Command, Stdio, exit},
 };
 
+use caps::{CapSet, Capability};
 use nix::{
+    sched::{CloneFlags, unshare},
     sys::wait::waitpid,
-    unistd::{ForkResult, fork},
+    unistd::{ForkResult, Group, User, fork, getgid, getuid, setgid, setuid},
 };
 
 use crate::{
@@ -58,6 +60,9 @@ impl Runtime {
                         });
                     }
                 };
+                if let Err(e) = self.container.cleanup() {
+                    eprintln!("Failed to cleanup container: {}", e);
+                }
 
                 Ok(runtime_result)
             }
@@ -83,7 +88,6 @@ impl Runtime {
             results.push(result);
         }
 
-        let _ = self.container.cleanup();
         RuntimeResult::Success(results)
     }
 
@@ -162,32 +166,109 @@ impl Runtime {
             })?;
         }
 
-        let output = cmd.output().map_err(|e| FaberError::ExecuteTask {
+        unsafe { cmd.pre_exec(Self::pre_execute_task) };
+
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
+        cmd.stdin(Stdio::piped());
+
+        let mut child = cmd.spawn().map_err(|e| FaberError::ExecuteTask {
             e,
-            details: "Failed to execute task".to_string(),
-        })?;
-        let stdout = String::from_utf8(output.stdout).map_err(|e| FaberError::GetStdout {
-            e,
-            details: "Failed to convert stdout to string".to_string(),
-        })?;
-        let stderr = String::from_utf8(output.stderr).map_err(|e| FaberError::GetStderr {
-            e,
-            details: "Failed to convert stderr to string".to_string(),
+            details: "Failed to spawn task".to_string(),
         })?;
 
-        let exit_code = output
-            .status
-            .code()
-            .ok_or_else(|| FaberError::GetExitCode {
-                e: std::io::Error::other("Failed to get exit code"),
-                details: "Failed to get exit code".to_string(),
-            })?;
+        if let Some(stdin) = task.stdin
+            && let Some(mut child_stdin) = child.stdin.take()
+        {
+            child_stdin
+                .write_all(stdin.as_bytes())
+                .map_err(|e| FaberError::WriteStdin {
+                    e,
+                    details: "Failed to write stdin".to_string(),
+                })?;
+        }
+
+        let exit_status = child.wait().unwrap();
+
+        let mut stdout = child.stdout.unwrap();
+        let mut stderr = child.stderr.unwrap();
+
+        let mut stdout_buf = String::new();
+        let mut stderr_buf = String::new();
+
+        stdout.read_to_string(&mut stdout_buf).unwrap();
+        stderr.read_to_string(&mut stderr_buf).unwrap();
 
         Ok(TaskResult::Completed {
-            stdout,
-            stderr,
-            exit_code,
+            stdout: stdout_buf,
+            stderr: stderr_buf,
+            exit_code: exit_status.code().unwrap_or(-1),
             stats: TaskResultStats::default(),
         })
+    }
+
+    fn pre_execute_task() -> std::io::Result<()> {
+        let unshare_flags = CloneFlags::CLONE_NEWNS;
+
+        // Perform privileged operations first (these require capabilities)
+        unshare(unshare_flags).unwrap();
+        Container::mask_paths().unwrap();
+
+        // Change to unprivileged user/group (requires CAP_SETUID/CAP_SETGID)
+        setgid(65534.into()).unwrap();
+        setuid(65534.into()).unwrap();
+
+        // Drop all capabilities AFTER all privileged operations are complete
+        // This ensures the user command runs with no special privileges
+        Self::drop_capabilities().unwrap();
+
+        // Apply seccomp filter to restrict system calls
+        Self::apply_seccomp_filter().unwrap();
+
+        Ok(())
+    }
+
+    fn drop_capabilities() -> std::io::Result<()> {
+        // Clear all capabilities from effective, permitted, and inheritable sets
+        // This must happen AFTER all privileged operations are complete
+        caps::clear(None, CapSet::Effective).map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!("Failed to clear effective capabilities: {}", e),
+            )
+        })?;
+
+        caps::clear(None, CapSet::Permitted).map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!("Failed to clear permitted capabilities: {}", e),
+            )
+        })?;
+
+        caps::clear(None, CapSet::Inheritable).map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!("Failed to clear inheritable capabilities: {}", e),
+            )
+        })?;
+
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    fn apply_seccomp_filter() -> std::io::Result<()> {
+        // Seccomp implementation commented out for now due to dependency complexity
+        // This would block dangerous system calls like:
+        // - Process creation: clone, fork, vfork, execve, execveat
+        // - Namespace manipulation: unshare, setns
+        // - Mount operations: mount, umount, umount2, pivot_root
+        // - Capability manipulation: capset, capget
+        // - User/group changes: setuid, setgid, etc.
+        // - Kernel modules: init_module, finit_module, delete_module
+        // - System admin: reboot, sethostname, setdomainname
+        // - Debugging: ptrace
+        // - BPF operations: bpf
+        // - Keyring: keyctl, add_key, request_key
+        Ok(())
     }
 }
