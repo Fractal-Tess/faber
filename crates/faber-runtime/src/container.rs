@@ -53,6 +53,9 @@ impl Container {
         self.bind_mounts()?;
         self.pivot_root()?;
         self.create_dev_devices()?;
+        self.create_proc()?;
+        self.create_sys()?;
+        self.create_cgroup()?;
         self.create_workdir()?;
         self.create_tmpdir()?;
 
@@ -250,6 +253,77 @@ impl Container {
         create_dir_all(&self.workdir).map_err(|e| FaberError::CreateDir {
             e,
             details: "Failed to create workdir".to_string(),
+        })?;
+
+        Ok(())
+    }
+
+    fn create_proc(&self) -> Result<()> {
+        let proc_path = "/proc";
+        let proc_fstype = "proc";
+        let proc_flags = MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC;
+
+        create_dir_all(proc_path).map_err(|e| FaberError::CreateDir {
+            e,
+            details: "Failed to create proc directory".to_string(),
+        })?;
+
+        mount(
+            None::<&str>,
+            proc_path,
+            Some(proc_fstype),
+            proc_flags,
+            None::<&str>,
+        )
+        .map_err(|e| FaberError::Mount {
+            e,
+            details: "Failed to mount proc filesystem".to_string(),
+        })?;
+
+        Ok(())
+    }
+
+    fn create_sys(&self) -> Result<()> {
+        let sys_target = "/sys";
+        let sys_fstype = "sysfs";
+        let sys_flags = MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC;
+
+        create_dir_all(sys_target).map_err(|e| FaberError::CreateDir {
+            e,
+            details: "Failed to create sys directory".to_string(),
+        })?;
+
+        mount(
+            None::<&str>,
+            sys_target,
+            Some(sys_fstype),
+            sys_flags,
+            None::<&str>,
+        )
+        .map_err(|e| FaberError::Mount {
+            e,
+            details: "Failed to mount sys filesystem".to_string(),
+        })?;
+
+        Ok(())
+    }
+
+    fn create_cgroup(&self) -> Result<()> {
+        let cgroup_path = "/sys/fs/cgroup";
+        let cgroup_fstype = "cgroup2";
+        let cgroup_flags =
+            MsFlags::MS_RELATIME | MsFlags::MS_NOSUID | MsFlags::MS_NODEV | MsFlags::MS_NOEXEC;
+
+        mount(
+            None::<&str>,
+            cgroup_path,
+            Some(cgroup_fstype),
+            cgroup_flags,
+            None::<&str>,
+        )
+        .map_err(|e| FaberError::Mount {
+            e,
+            details: "Failed to mount cgroup2 filesystem".to_string(),
         })?;
 
         Ok(())
