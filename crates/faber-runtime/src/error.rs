@@ -52,6 +52,9 @@ pub enum FaberError {
         details: String,
     },
 
+    #[error("Failed to enable cgroup controllers:\n Error: {e}\nDetails: {details}")]
+    CgroupControllers { e: std::io::Error, details: String },
+
     #[error("Failed to create dev device: {detaills}")]
     MkDevDevice { detaills: String },
 
@@ -87,4 +90,7 @@ pub enum FaberError {
 
     #[error("Failed to set hostname:\n Error: {e}\nDetails: {details}")]
     SetHostname { e: nix::Error, details: String },
+
+    #[error("Failed to enable cgroup controllers:\n Error: {e}\nDetails: {details}")]
+    CgroupControllerEnable { e: std::io::Error, details: String },
 }

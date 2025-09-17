@@ -13,29 +13,40 @@ use nix::{
 };
 
 use crate::{
-    ExecutionStep, ExecutionStepResult, Task, TaskGroup, TaskResult, TaskResultStats,
+    ExecutionStep, ExecutionStepResult, Task, TaskGroup, TaskResult, TaskResultStats, cgroup,
     container::Container,
     prelude::*,
     result::{RuntimeResult, TaskGroupResult},
+    task::CgroupConfig,
     utils::{close_fd, mk_pipe},
 };
 
 pub struct Runtime {
     task_group: TaskGroup,
     container: Container,
+    cgroup_config: CgroupConfig,
 }
 
 impl Runtime {
     pub fn new(task_group: TaskGroup) -> Self {
         let container = Container::default();
+        let cgroup_config = CgroupConfig::default();
 
         Self {
             task_group,
             container,
+            cgroup_config,
         }
     }
 
+    pub fn with_cgroup_config(mut self, cgroup_config: CgroupConfig) -> Self {
+        self.cgroup_config = cgroup_config;
+        self
+    }
+
     pub fn execute(&self) -> Result<RuntimeResult> {
+        cgroup::create_faber_cgroup_hierarchy()?;
+
         let (reader, mut writer) = mk_pipe()?;
 
         match unsafe { fork() } {
@@ -82,8 +93,8 @@ impl Runtime {
 
         for step in &self.task_group {
             let result = match step {
-                ExecutionStep::Single(task) => Self::execute_single(task.clone()),
-                ExecutionStep::Parallel(tasks) => Self::execute_parallel(tasks.clone()),
+                ExecutionStep::Single(task) => self.execute_single(task.clone()),
+                ExecutionStep::Parallel(tasks) => self.execute_parallel(tasks.clone()),
             };
             results.push(result);
         }
@@ -91,8 +102,8 @@ impl Runtime {
         RuntimeResult::Success(results)
     }
 
-    fn execute_single(task: Task) -> ExecutionStepResult {
-        match Self::execute_task(task) {
+    fn execute_single(&self, task: Task) -> ExecutionStepResult {
+        match self.execute_task(task) {
             Ok(task_result) => ExecutionStepResult::Single(task_result),
             Err(e) => ExecutionStepResult::Single(TaskResult::Failed {
                 error: format!("Task execution failed: {}", e),
@@ -101,16 +112,19 @@ impl Runtime {
         }
     }
 
-    fn execute_parallel(tasks: Vec<Task>) -> ExecutionStepResult {
+    fn execute_parallel(&self, tasks: Vec<Task>) -> ExecutionStepResult {
         let mut handles = Vec::with_capacity(tasks.len());
 
         for task in tasks {
-            let handle = std::thread::spawn(move || match Self::execute_task(task) {
-                Ok(task_result) => task_result,
-                Err(e) => TaskResult::Failed {
-                    error: format!("Task execution failed: {}", e),
-                    stats: TaskResultStats::default(),
-                },
+            let cgroup_config = self.cgroup_config.clone();
+            let handle = std::thread::spawn(move || {
+                match Self::execute_task_with_cgroup(task, &cgroup_config) {
+                    Ok(task_result) => task_result,
+                    Err(e) => TaskResult::Failed {
+                        error: format!("Task execution failed: {}", e),
+                        stats: TaskResultStats::default(),
+                    },
+                }
             });
             handles.push(handle);
         }
@@ -139,7 +153,17 @@ impl Runtime {
         task_results
     }
 
-    fn execute_task(task: Task) -> Result<TaskResult> {
+    fn execute_task(&self, task: Task) -> Result<TaskResult> {
+        Self::execute_task_with_cgroup(task, &self.cgroup_config)
+    }
+
+    fn execute_task_with_cgroup(task: Task, cgroup_config: &CgroupConfig) -> Result<TaskResult> {
+        use std::time::Instant;
+
+        let start_time = Instant::now();
+
+        // Create task-specific cgroup for this task
+        let task_cgroup_path = cgroup::create_task_cgroup(cgroup_config)?;
         let mut cmd = Command::new(task.cmd);
 
         for (key, value) in task.env.unwrap_or_default() {
@@ -177,6 +201,10 @@ impl Runtime {
             details: "Failed to spawn task".to_string(),
         })?;
 
+        // Add the child process to the task cgroup
+        let child_pid = child.id();
+        // cgroup::add_process_to_task_cgroup(&task_cgroup_path, child_pid)?;
+
         if let Some(stdin) = task.stdin
             && let Some(mut child_stdin) = child.stdin.take()
         {
@@ -199,11 +227,21 @@ impl Runtime {
         stdout.read_to_string(&mut stdout_buf).unwrap();
         stderr.read_to_string(&mut stderr_buf).unwrap();
 
+        let task_stats =
+            cgroup::read_task_stats(&task_cgroup_path.display().to_string()).unwrap_or_default();
+
+        let _ = cgroup::cleanup_task_cgroup(&task_cgroup_path.display().to_string());
+        let stats = TaskResultStats {
+            execution_time_ms: start_time.elapsed().as_millis() as u64,
+            memory_peak_bytes: task_stats.memory.peak,
+            cpu_usage_percent: task_stats.cpu.usage_usec,
+        };
+
         Ok(TaskResult::Completed {
             stdout: stdout_buf,
             stderr: stderr_buf,
             exit_code: exit_status.code().unwrap_or(-1),
-            stats: TaskResultStats::default(),
+            stats,
         })
     }
 

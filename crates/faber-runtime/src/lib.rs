@@ -1,5 +1,6 @@
 #![allow(unused)]
 
+pub mod cgroup;
 pub mod container;
 pub mod error;
 pub mod prelude;
@@ -13,4 +14,4 @@ pub use result::{
     ExecutionStepResult, RuntimeResult, TaskGroupResult, TaskResult, TaskResultStats,
 };
 pub use runtime::Runtime;
-pub use task::{ExecutionStep, Task, TaskGroup};
+pub use task::{CgroupConfig, ExecutionStep, Task, TaskGroup};
