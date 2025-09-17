@@ -27,9 +27,9 @@ impl<'de> serde::Deserialize<'de> for ExecutionStep {
         D: serde::Deserializer<'de>,
     {
         use serde::de::Error;
-        
+
         let value = serde_json::Value::deserialize(deserializer)?;
-        
+
         match value {
             serde_json::Value::Object(_) => {
                 let task = Task::deserialize(value).map_err(Error::custom)?;
@@ -39,7 +39,9 @@ impl<'de> serde::Deserialize<'de> for ExecutionStep {
                 let tasks = Vec::<Task>::deserialize(value).map_err(Error::custom)?;
                 Ok(ExecutionStep::Parallel(tasks))
             }
-            _ => Err(Error::custom("ExecutionStep must be either an object (Single) or an array (Parallel)")),
+            _ => Err(Error::custom(
+                "ExecutionStep must be either an object (Single) or an array (Parallel)",
+            )),
         }
     }
 }
@@ -48,7 +50,7 @@ impl<'de> serde::Deserialize<'de> for ExecutionStep {
 pub struct Task {
     pub cmd: String,
     pub args: Option<Vec<String>>,
-    pub env_vars: Option<HashMap<String, String>>,
+    pub env: Option<HashMap<String, String>>,
     pub stdin: Option<String>,
     pub files: Option<HashMap<String, String>>,
     pub timeout: Option<Duration>,
