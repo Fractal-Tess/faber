@@ -7,6 +7,9 @@ pub enum FaberError {
     #[error("General error: {message}")]
     Generic { message: String },
 
+    #[error("Failed to write file:\n Error: {e}\nDetails: {details}")]
+    WriteFile { e: std::io::Error, details: String },
+
     #[error("Failed to create pipe:\n Details: {details} \nError: {e}")]
     MkPipe { e: std::io::Error, details: String },
 

@@ -56,8 +56,8 @@ impl Container {
         self.create_proc()?;
         self.create_sys()?;
         self.create_cgroup()?;
-        self.create_workdir()?;
         self.create_tmpdir()?;
+        self.create_workdir()?;
 
         Ok(())
     }
@@ -253,6 +253,11 @@ impl Container {
         create_dir_all(&self.workdir).map_err(|e| FaberError::CreateDir {
             e,
             details: "Failed to create workdir".to_string(),
+        })?;
+
+        set_current_dir(&self.workdir).map_err(|e| FaberError::Chdir {
+            e,
+            details: "Failed to change current directory to workdir".to_string(),
         })?;
 
         Ok(())
