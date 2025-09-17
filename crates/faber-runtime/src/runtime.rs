@@ -136,6 +136,23 @@ impl Runtime {
 
     fn execute_task(task: Task) -> Result<TaskResult> {
         let mut cmd = Command::new(task.cmd);
+
+        for (key, value) in task.env.unwrap_or_default() {
+            cmd.env(key, value);
+        }
+
+        let has_path = cmd.get_envs().any(|(key, _)| key == "PATH");
+        if !has_path {
+            cmd.env(
+                "PATH",
+                "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            );
+        }
+
+        if let Some(args) = task.args {
+            cmd.args(args);
+        }
+
         let output = cmd.output().map_err(|e| FaberError::ExecuteTask {
             e,
             details: "Failed to execute task".to_string(),
@@ -148,14 +165,6 @@ impl Runtime {
             e,
             details: "Failed to convert stderr to string".to_string(),
         })?;
-
-        let has_path = cmd.get_envs().any(|(key, _)| key == "PATH");
-        if !has_path {
-            cmd.env(
-                "PATH",
-                "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-            );
-        }
 
         let exit_code = output
             .status
