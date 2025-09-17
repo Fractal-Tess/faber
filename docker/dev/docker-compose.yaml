@@ -11,6 +11,7 @@ services:
       - ../../Cargo.toml:/faber/Cargo.toml:ro
       - cargo-target:/faber/target
     privileged: true
+    cgroup: host
     ports:
       - '3000:3000'
     environment:
