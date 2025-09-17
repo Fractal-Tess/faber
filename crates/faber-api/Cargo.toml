@@ -11,3 +11,5 @@ axum = { version = "0.8", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tower = { version = "0.5.2", features = ["limit"] }
+sha2 = "0.10"
+dashmap = "6.0"

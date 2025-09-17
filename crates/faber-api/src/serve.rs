@@ -2,7 +2,6 @@ use axum::Router;
 use tokio::net::TcpListener;
 use tower::ServiceBuilder;
 use tower::limit::GlobalConcurrencyLimitLayer;
-
 pub struct ServeConfig {
     pub port: u16,
     pub host: String,
