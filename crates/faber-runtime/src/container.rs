@@ -6,6 +6,7 @@ use nix::mount::{MntFlags, MsFlags, mount, umount2};
 use nix::sched::CloneFlags;
 use nix::sched::unshare;
 use nix::sys::stat::{Mode, SFlag, makedev, mknod};
+use nix::unistd::sethostname;
 
 use crate::prelude::*;
 use crate::utils::generate_random_string;
@@ -15,6 +16,7 @@ pub struct Container {
     container_root_dir: PathBuf,
     workdir: PathBuf,
     tmpdir_size: String,
+    workdir_size: String,
     ro_bind_mounts: Vec<&'static str>,
     w_bind_mounts: Vec<&'static str>,
 }
@@ -26,11 +28,13 @@ impl Default for Container {
         let w_bind_mounts = vec!["/tmp"];
         let workdir = PathBuf::from("/faber");
         let tmpdir_size = "128M".to_string();
+        let workdir_size = "128M".to_string();
         Self {
             id,
             container_root_dir,
             workdir,
             tmpdir_size,
+            workdir_size,
             ro_bind_mounts,
             w_bind_mounts,
         }
@@ -43,8 +47,8 @@ impl Container {
 
         let unshare_flags = CloneFlags::CLONE_NEWUTS // hostname
             | CloneFlags::CLONE_NEWNET // network
+            | CloneFlags::CLONE_NEWIPC // ipc
             | CloneFlags::CLONE_NEWNS; // mount
-        // Removed CLONE_NEWPID to allow thread spawning
 
         unshare(unshare_flags).map_err(|e| FaberError::Unshare { e })?;
 
@@ -57,23 +61,58 @@ impl Container {
         self.create_sys()?;
         self.create_cgroup()?;
         self.create_tmpdir()?;
+        self.change_hostname()?;
         self.create_workdir()?;
 
         Ok(())
     }
 
     pub fn cleanup(&self) -> Result<()> {
-        // First, try to unmount the container root directory
-        // This will fail if there are still processes using it, but that's expected
         let _ = umount2(&self.container_root_dir, MntFlags::MNT_DETACH);
 
-        // Then remove the directory
         remove_dir_all(&self.container_root_dir).map_err(|e| {
             FaberError::RemoveContainerRootDir {
                 e,
                 details: "Failed to remove container root directory".to_string(),
             }
         })?;
+        Ok(())
+    }
+
+    pub fn mask_paths() -> Result<()> {
+        umount2("/sys", MntFlags::MNT_DETACH).map_err(|e| FaberError::Umount {
+            e,
+            details: "Failed to unmount sys".to_string(),
+        })?;
+        umount2("/proc", MntFlags::MNT_DETACH).map_err(|e| FaberError::Umount {
+            e,
+            details: "Failed to unmount proc".to_string(),
+        })?;
+
+        mount(
+            Some("tmpfs"),
+            "/sys",
+            Some("tmpfs"),
+            MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC,
+            Some("size=0"),
+        )
+        .map_err(|e| FaberError::Mount {
+            e,
+            details: "Failed to mount tmpfs to sys".to_string(),
+        })?;
+
+        mount(
+            Some("tmpfs"),
+            "/proc",
+            Some("tmpfs"),
+            MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC,
+            Some("size=0"),
+        )
+        .map_err(|e| FaberError::Mount {
+            e,
+            details: "Failed to mount tmpfs to proc".to_string(),
+        })?;
+
         Ok(())
     }
 
@@ -255,6 +294,24 @@ impl Container {
             details: "Failed to create workdir".to_string(),
         })?;
 
+        // Mount tmpfs with specified size and mode 0777 (readable, writable, executable by everyone)
+        let mount_options = format!("size={},mode=0777", self.workdir_size);
+        let workdir_str = self.workdir.to_str().ok_or_else(|| FaberError::Generic {
+            message: "Failed to convert workdir to string".to_string(),
+        })?;
+
+        mount(
+            Some("tmpfs"),
+            workdir_str,
+            Some("tmpfs"),
+            MsFlags::empty(),
+            Some(mount_options.as_str()),
+        )
+        .map_err(|e| FaberError::Mount {
+            e,
+            details: format!("Failed to mount tmpfs workdir to {}", workdir_str),
+        })?;
+
         set_current_dir(&self.workdir).map_err(|e| FaberError::Chdir {
             e,
             details: "Failed to change current directory to workdir".to_string(),
@@ -356,6 +413,15 @@ impl Container {
         .map_err(|e| FaberError::Mount {
             e,
             details: format!("Failed to mount tmp filesystem to {}", target_str),
+        })?;
+
+        Ok(())
+    }
+
+    fn change_hostname(&self) -> Result<()> {
+        sethostname("faber").map_err(|e| FaberError::SetHostname {
+            e,
+            details: "Failed to change hostname".to_string(),
         })?;
 
         Ok(())
