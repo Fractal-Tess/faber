@@ -203,7 +203,7 @@ impl Runtime {
 
         // Add the child process to the task cgroup
         let child_pid = child.id();
-        // cgroup::add_process_to_task_cgroup(&task_cgroup_path, child_pid)?;
+        cgroup::add_process_to_task_cgroup(&task_cgroup_path, child_pid)?;
 
         if let Some(stdin) = task.stdin
             && let Some(mut child_stdin) = child.stdin.take()
@@ -227,10 +227,10 @@ impl Runtime {
         stdout.read_to_string(&mut stdout_buf).unwrap();
         stderr.read_to_string(&mut stderr_buf).unwrap();
 
-        let task_stats =
-            cgroup::read_task_stats(&task_cgroup_path.display().to_string()).unwrap_or_default();
+        let task_stats = cgroup::read_task_stats(&task_cgroup_path).unwrap_or_default();
 
-        let _ = cgroup::cleanup_task_cgroup(&task_cgroup_path.display().to_string());
+        let _ = cgroup::cleanup_task_cgroup(&task_cgroup_path);
+
         let stats = TaskResultStats {
             execution_time_ms: start_time.elapsed().as_millis() as u64,
             memory_peak_bytes: task_stats.memory.peak,

@@ -45,14 +45,11 @@ pub struct CpuStats {
 
 #[derive(Debug, Clone, Default)]
 pub struct MemoryStats {
-    pub current: u64,
     pub peak: u64,
-    pub max: u64,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct PidsStats {
-    pub current: u64,
     pub max: u64,
 }
 
@@ -199,7 +196,7 @@ pub fn create_task_cgroup(config: &CgroupConfig) -> Result<PathBuf> {
     Ok(task_cgroup_path)
 }
 
-pub fn cleanup_task_cgroup(task_cgroup_path: &str) -> Result<()> {
+pub fn cleanup_task_cgroup(task_cgroup_path: &PathBuf) -> Result<()> {
     remove_dir(task_cgroup_path).map_err(|e| FaberError::RemoveDir {
         e,
         details: "Failed to remove task cgroup directory".to_string(),
@@ -207,8 +204,8 @@ pub fn cleanup_task_cgroup(task_cgroup_path: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn add_process_to_task_cgroup(task_cgroup_path: &str, pid: u32) -> Result<()> {
-    let cgroup_procs_path = format!("{task_cgroup_path}/cgroup.procs");
+pub fn add_process_to_task_cgroup(task_cgroup_path: &Path, pid: u32) -> Result<()> {
+    let cgroup_procs_path = task_cgroup_path.join("cgroup.procs");
     let pid_str = pid.to_string();
 
     write(&cgroup_procs_path, &pid_str).map_err(|e| FaberError::WriteFile {
@@ -219,12 +216,12 @@ pub fn add_process_to_task_cgroup(task_cgroup_path: &str, pid: u32) -> Result<()
     Ok(())
 }
 
-pub fn read_task_stats(task_cgroup_path: &str) -> Result<TaskStats> {
+pub fn read_task_stats(task_cgroup_path: &Path) -> Result<TaskStats> {
     let mut cpu_stats = CpuStats::default();
     let mut memory_stats = MemoryStats::default();
     let mut pids_stats = PidsStats::default();
 
-    let cpu_stat_path = format!("{task_cgroup_path}/cpu.stat");
+    let cpu_stat_path = task_cgroup_path.join("cpu.stat");
 
     if let Ok(contents) = read_to_string(&cpu_stat_path) {
         for line in contents.lines() {
@@ -242,35 +239,21 @@ pub fn read_task_stats(task_cgroup_path: &str) -> Result<TaskStats> {
         }
     }
 
-    let memory_current_path = format!("{task_cgroup_path}/memory.current");
+    let memory_current_path = task_cgroup_path.join("memory.current");
     if let Ok(content) = read_to_string(&memory_current_path)
         && let Ok(value) = content.trim().parse::<u64>()
     {
-        memory_stats.current = value;
+        memory_stats.peak = value;
     }
 
-    let memory_peak_path = format!("{task_cgroup_path}/memory.peak");
+    let memory_peak_path = task_cgroup_path.join("memory.peak");
     if let Ok(content) = read_to_string(&memory_peak_path)
         && let Ok(value) = content.trim().parse::<u64>()
     {
         memory_stats.peak = value;
     }
 
-    let memory_max_path = format!("{task_cgroup_path}/memory.max");
-    if let Ok(content) = read_to_string(&memory_max_path)
-        && let Ok(value) = content.trim().parse::<u64>()
-    {
-        memory_stats.max = value;
-    }
-
-    let pids_current_path = format!("{task_cgroup_path}/pids.current");
-    if let Ok(content) = read_to_string(&pids_current_path)
-        && let Ok(value) = content.trim().parse::<u64>()
-    {
-        pids_stats.current = value;
-    }
-
-    let pids_max_path = format!("{task_cgroup_path}/pids.max");
+    let pids_max_path = task_cgroup_path.join("pids.max");
     if let Ok(content) = read_to_string(&pids_max_path)
         && let Ok(value) = content.trim().parse::<u64>()
     {
