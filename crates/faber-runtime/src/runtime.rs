@@ -13,7 +13,8 @@ use nix::{
 };
 
 use crate::{
-    ExecutionStep, ExecutionStepResult, Task, TaskGroup, TaskResult, TaskResultStats, cgroup,
+    ExecutionStep, ExecutionStepResult, Task, TaskGroup, TaskResult, TaskResultStats,
+    cgroup_struct::Cgroup,
     container::Container,
     prelude::*,
     result::{RuntimeResult, TaskGroupResult},
@@ -24,26 +25,26 @@ use crate::{
 pub struct Runtime {
     task_group: TaskGroup,
     container: Container,
-    cgroup_config: CgroupConfig,
+    cgroup: Cgroup,
     timeout: std::time::Duration,
 }
 
 impl Runtime {
     pub fn new(task_group: TaskGroup) -> Self {
         let container = Container::default();
-        let cgroup_config = CgroupConfig::default();
+        let cgroup = Cgroup::default();
         let timeout = std::time::Duration::from_secs(1);
 
         Self {
             task_group,
             container,
-            cgroup_config,
+            cgroup,
             timeout,
         }
     }
 
     pub fn with_cgroup_config(mut self, cgroup_config: CgroupConfig) -> Self {
-        self.cgroup_config = cgroup_config;
+        self.cgroup = Cgroup::new(cgroup_config);
         self
     }
 
@@ -53,7 +54,7 @@ impl Runtime {
     }
 
     pub fn execute(&self) -> Result<RuntimeResult> {
-        cgroup::create_faber_cgroup_hierarchy()?;
+        self.cgroup.create_faber_cgroup_hierarchy()?;
 
         let (reader, mut writer) = mk_pipe()?;
 
@@ -111,7 +112,7 @@ impl Runtime {
     }
 
     fn execute_single(&self, task: Task) -> ExecutionStepResult {
-        match self.execute_task(task) {
+        match Self::execute_single_task(task, &self.cgroup, self.timeout) {
             Ok(task_result) => ExecutionStepResult::Single(task_result),
             Err(e) => ExecutionStepResult::Single(TaskResult::Failed {
                 error: format!("Task execution failed: {}", e),
@@ -124,10 +125,10 @@ impl Runtime {
         let mut handles = Vec::with_capacity(tasks.len());
 
         for task in tasks {
-            let cgroup_config = self.cgroup_config.clone();
+            let cgroup = self.cgroup.clone();
             let timeout = self.timeout;
             let handle = std::thread::spawn(move || {
-                match Self::execute_task_with_cgroup(task, &cgroup_config, timeout) {
+                match Self::execute_single_task(task, &cgroup, timeout) {
                     Ok(task_result) => task_result,
                     Err(e) => TaskResult::Failed {
                         error: format!("Task execution failed: {}", e),
@@ -162,13 +163,31 @@ impl Runtime {
         task_results
     }
 
-    fn execute_task(&self, task: Task) -> Result<TaskResult> {
-        Self::execute_task_with_cgroup(task, &self.cgroup_config, self.timeout)
+    fn pre_execute_task() -> std::io::Result<()> {
+        let unshare_flags = CloneFlags::CLONE_NEWNS;
+
+        // Perform privileged operations first (these require capabilities)
+        unshare(unshare_flags).unwrap();
+        Container::mask_paths().unwrap();
+
+        // Change to unprivileged user/group (requires CAP_SETUID/CAP_SETGID)
+        setgid(65534.into()).unwrap();
+        setuid(65534.into()).unwrap();
+
+        // Drop all capabilities AFTER all privileged operations are complete
+        // This ensures the user command runs with no special privileges
+        Self::drop_capabilities().unwrap();
+
+        // Apply seccomp filter to restrict system calls
+        Self::apply_seccomp_filter().unwrap();
+
+        Ok(())
     }
 
-    fn execute_task_with_cgroup(
+    /// Execute a single task with the given cgroup and timeout
+    fn execute_single_task(
         task: Task,
-        cgroup_config: &CgroupConfig,
+        cgroup: &Cgroup,
         timeout: std::time::Duration,
     ) -> Result<TaskResult> {
         use std::time::Instant;
@@ -176,7 +195,7 @@ impl Runtime {
         let start_time = Instant::now();
 
         // Create task-specific cgroup for this task
-        let task_cgroup_path = cgroup::create_task_cgroup(cgroup_config)?;
+        let task_cgroup_path = cgroup.create_task_cgroup()?;
         let mut cmd = Command::new(task.cmd);
 
         for (key, value) in task.env.unwrap_or_default() {
@@ -203,7 +222,7 @@ impl Runtime {
             })?;
         }
 
-        unsafe { cmd.pre_exec(Self::pre_execute_task) };
+        unsafe { cmd.pre_exec(Runtime::pre_execute_task) };
 
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
@@ -216,7 +235,7 @@ impl Runtime {
 
         // Add the child process to the task cgroup
         let child_pid = child.id();
-        cgroup::add_process_to_task_cgroup(&task_cgroup_path, child_pid)?;
+        cgroup.add_process_to_task_cgroup(&task_cgroup_path, child_pid)?;
 
         if let Some(stdin) = task.stdin
             && let Some(mut child_stdin) = child.stdin.take()
@@ -229,8 +248,8 @@ impl Runtime {
                 })?;
         }
 
-        // Apply timeout from TaskGroup
-        let exit_status = Self::wait_with_timeout(&mut child, timeout)?;
+        // Apply timeout
+        let exit_status = Runtime::wait_with_timeout(&mut child, timeout)?;
 
         let mut stdout = child.stdout.unwrap();
         let mut stderr = child.stderr.unwrap();
@@ -241,9 +260,11 @@ impl Runtime {
         stdout.read_to_string(&mut stdout_buf).unwrap();
         stderr.read_to_string(&mut stderr_buf).unwrap();
 
-        let task_stats = cgroup::read_task_stats(&task_cgroup_path).unwrap_or_default();
+        let task_stats = cgroup
+            .read_task_stats(&task_cgroup_path)
+            .unwrap_or_default();
 
-        let _ = cgroup::cleanup_task_cgroup(&task_cgroup_path);
+        let _ = cgroup.cleanup_task_cgroup(&task_cgroup_path);
 
         let stats = TaskResultStats {
             execution_time_ms: start_time.elapsed().as_millis() as u64,
@@ -257,27 +278,6 @@ impl Runtime {
             exit_code: exit_status.code().unwrap_or(-1),
             stats,
         })
-    }
-
-    fn pre_execute_task() -> std::io::Result<()> {
-        let unshare_flags = CloneFlags::CLONE_NEWNS;
-
-        // Perform privileged operations first (these require capabilities)
-        unshare(unshare_flags).unwrap();
-        Container::mask_paths().unwrap();
-
-        // Change to unprivileged user/group (requires CAP_SETUID/CAP_SETGID)
-        setgid(65534.into()).unwrap();
-        setuid(65534.into()).unwrap();
-
-        // Drop all capabilities AFTER all privileged operations are complete
-        // This ensures the user command runs with no special privileges
-        Self::drop_capabilities().unwrap();
-
-        // Apply seccomp filter to restrict system calls
-        Self::apply_seccomp_filter().unwrap();
-
-        Ok(())
     }
 
     fn drop_capabilities() -> std::io::Result<()> {
@@ -307,7 +307,6 @@ impl Runtime {
         Ok(())
     }
 
-    #[allow(dead_code)]
     fn apply_seccomp_filter() -> std::io::Result<()> {
         // Seccomp implementation commented out for now due to dependency complexity
         // This would block dangerous system calls like:

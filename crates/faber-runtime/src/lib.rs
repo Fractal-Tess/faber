@@ -1,6 +1,7 @@
 #![allow(unused)]
 
 pub mod cgroup;
+pub mod cgroup_struct;
 pub mod container;
 pub mod error;
 pub mod prelude;
@@ -9,6 +10,7 @@ pub mod runtime;
 pub mod task;
 pub mod utils;
 
+pub use cgroup_struct::Cgroup;
 pub use error::FaberError;
 pub use result::{
     ExecutionStepResult, RuntimeResult, TaskGroupResult, TaskResult, TaskResultStats,
