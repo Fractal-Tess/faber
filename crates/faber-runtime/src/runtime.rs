@@ -1,6 +1,7 @@
 use std::{
     io::{PipeWriter, Write},
     os::fd::IntoRawFd,
+    path::PathBuf,
     process::{Command, exit},
 };
 
@@ -151,6 +152,14 @@ impl Runtime {
 
         if let Some(args) = task.args {
             cmd.args(args);
+        }
+
+        for (file_path, file_content) in task.files.unwrap_or_default() {
+            let file_path = PathBuf::from(file_path);
+            std::fs::write(file_path, file_content).map_err(|e| FaberError::WriteFile {
+                e,
+                details: "Failed to write file".to_string(),
+            })?;
         }
 
         let output = cmd.output().map_err(|e| FaberError::ExecuteTask {
