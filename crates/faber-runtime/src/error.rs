@@ -54,7 +54,10 @@ pub enum FaberError {
     CgroupControllers { e: std::io::Error, details: String },
 
     #[error("Failed to create dev device: {detaills}")]
-    MkDevDevice { detaills: String },
+    MkDevDevice {
+        detaills: String,
+        e: nix::errno::Errno,
+    },
 
     #[error("Failed to execute task:\n Error: {e}\nDetails: {details}")]
     ExecuteTask { e: std::io::Error, details: String },
