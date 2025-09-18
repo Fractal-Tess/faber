@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use crate::utils::generate_random_string;
 
 pub struct ContainerConfig {
+    #[allow(dead_code)]
     pub(crate) id: String,
     pub(crate) container_root_dir: PathBuf,
     pub(crate) workdir: PathBuf,
