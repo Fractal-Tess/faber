@@ -1,12 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, time::Duration};
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct CgroupConfig {
-    pub pids_max: Option<u64>,
-    pub memory_max: Option<String>,
-    pub cpu_max: Option<String>,
-}
+use std::collections::HashMap;
 
 pub type TaskGroup = Vec<ExecutionStep>;
 
@@ -61,4 +54,11 @@ pub struct Task {
     pub stdin: Option<String>,
     pub files: Option<HashMap<String, String>>,
     pub working_dir: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TaskStats {
+    pub cpu_usage_usec: u64,
+    pub memory_peak_bytes: u64,
+    pub pids_max: u64,
 }

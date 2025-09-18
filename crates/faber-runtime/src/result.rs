@@ -162,8 +162,10 @@ impl<'de> serde::Deserialize<'de> for TaskResult {
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
+
 pub struct TaskResultStats {
     pub memory_peak_bytes: u64,
     pub cpu_usage_percent: u64,
+    pub pids_peak: u64,
     pub execution_time_ms: u64,
 }

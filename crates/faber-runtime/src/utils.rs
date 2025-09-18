@@ -31,9 +31,6 @@ pub fn mk_pipe() -> Result<(PipeReader, PipeWriter)> {
 }
 
 /// Close a raw file descriptor.
-///
-/// Currently a no-op placeholder; kept to centralize FD lifecycle and allow
-/// future platform-specific handling.
 pub fn close_fd(fd: RawFd) -> Result<()> {
     close(fd).map_err(|e| FaberError::CloseFd { e })?;
 
