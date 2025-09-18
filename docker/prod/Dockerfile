@@ -1,22 +1,28 @@
 # --- Builder stage ---
-FROM rust:1.89.0-alpine AS builder
+FROM rust:1.89.0-slim AS builder
 
 WORKDIR /faber
 
-# Install build dependencies for Alpine
-RUN apk add --no-cache musl-dev
+# Install build dependencies for Debian
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY . .
 
 RUN cargo build --release 
 
-FROM alpine:3.19
+FROM debian:bookworm-slim
 
 # Install necessary runtime dependencies
-RUN apk add --no-cache libgcc
+RUN apt-get update && apt-get install -y \
+    libssl3 \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy the binary and make it executable
-COPY --from=builder /faber/target/release/faber /usr/local/bin/faber
-RUN chmod +x /usr/local/bin/faber
+COPY --from=builder /faber/target/release/faber /opt/faber
+RUN chmod +x /opt/faber
 
-ENTRYPOINT ["/usr/local/bin/faber"]
+ENTRYPOINT ["/opt/faber"]

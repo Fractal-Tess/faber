@@ -54,7 +54,7 @@ RUN apt update && apt install -y \
     libc-dev
 
 WORKDIR /opt
-COPY --from=faber /usr/local/bin/faber /opt
+COPY --from=faber /opt/faber /opt
 
 EXPOSE 3000/tcp
 ENTRYPOINT ["./faber"]
