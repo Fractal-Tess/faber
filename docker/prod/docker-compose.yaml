@@ -1,0 +1,31 @@
+services:
+  faber:
+    container_name: faber-prod
+    build:
+      context: ../../
+      dockerfile: docker/prod/Dockerfile
+    ports:
+      - '3000:3000'
+    environment:
+      - PORT=3000
+      - HOST=0.0.0.0
+      - MAX_CONCURRENCY=50
+    privileged: true
+    cgroup: host
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'wget',
+          '--no-verbose',
+          '--tries=1',
+          '--spider',
+          'http://localhost:3000/api/v1/health',
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    security_opt:
+      - no-new-privileges:true
