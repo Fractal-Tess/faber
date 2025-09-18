@@ -1,0 +1,9 @@
+.direnv
+.git
+docker
+target
+.envrc
+.gitignore
+flake.lock
+flake.nix
+README.md
