@@ -1,5 +1,7 @@
 # Faber
 
+<img src="faber.png" alt="Faber Logo" width="200">
+
 [![Build and Push Docker Image](https://github.com/Fractal-Tess/faber/actions/workflows/docker-build-push.yml/badge.svg?branch=main)](https://github.com/Fractal-Tess/faber/actions/workflows/docker-build-push.yml)
 
 A secure, sandboxed task task execution runtime that runs commands in isolated containers with resource limits and monitoring.
