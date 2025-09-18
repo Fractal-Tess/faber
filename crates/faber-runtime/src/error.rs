@@ -14,6 +14,9 @@ pub enum FaberError {
     #[error("Failed to close file descriptor:\n Error: {e}")]
     CloseFd { e: nix::Error },
 
+    #[error("Failed to wait for child process:\n Error: {e}")]
+    WaitPid { e: nix::Error },
+
     #[error("Failed to fork:\n Error: {e}")]
     Fork { e: nix::Error },
 

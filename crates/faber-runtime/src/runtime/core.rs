@@ -45,18 +45,14 @@ impl Runtime {
             }
             Ok(ForkResult::Parent { child }) => {
                 close_fd(writer.into_raw_fd())?;
-                let _ = waitpid(child, None);
+                waitpid(child, None).map_err(|e| FaberError::WaitPid { e })?;
 
-                let runtime_result: RuntimeResult = match serde_json::from_reader(reader) {
-                    Ok(result) => result,
-                    Err(e) => {
-                        println!("Failed to parse results from child process: {}", e);
-                        return Err(FaberError::ParseResult {
-                            e,
-                            details: "Failed to parse results from child process".to_string(),
-                        });
-                    }
-                };
+                let runtime_result: RuntimeResult =
+                    serde_json::from_reader(reader).map_err(|e| FaberError::ParseResult {
+                        e,
+                        details: "Failed to parse results from child process".to_string(),
+                    })?;
+
                 if let Err(e) = self.container.cleanup() {
                     eprintln!("Failed to cleanup container: {}", e);
                 }
