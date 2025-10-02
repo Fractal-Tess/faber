@@ -12,11 +12,13 @@
             inherit system;
             overlays = [ inputs.rust-overlay.overlays.default ];
           }));
-    in {
+    in
+    {
       devShells = eachSystem (pkgs: {
         default = pkgs.mkShell {
           nativeBuildInputs = with pkgs;
             [
+              bun
               # Complete Rust toolchain with cargo, rustc, etc.
               (rust-bin.stable.latest.default.override {
                 extensions =

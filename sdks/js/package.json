@@ -1,0 +1,46 @@
+{
+  "name": "@faber/runtime-sdk",
+  "version": "0.1.0",
+  "description": "JavaScript/TypeScript SDK for Faber secure task execution runtime",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "clean": "rm -rf dist",
+    "type-check": "tsc --noEmit",
+    "test": "vitest",
+    "test:ui": "vitest --ui",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "keywords": [
+    "faber",
+    "runtime",
+    "sandbox",
+    "container",
+    "execution",
+    "security"
+  ],
+  "author": "Faber Team",
+  "license": "MIT",
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@types/node": "^20.0.0",
+    "@vitest/ui": "^3.2.4",
+    "jsdom": "^27.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^3.2.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Fractal-Tess/faber.git",
+    "directory": "sdks/js"
+  },
+  "homepage": "https://github.com/Fractal-Tess/faber#readme"
+}

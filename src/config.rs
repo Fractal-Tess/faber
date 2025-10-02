@@ -5,6 +5,7 @@ pub struct Config {
     pub port: u16,
     pub host: String,
     pub max_concurrency: usize,
+    pub api_key: String,
 }
 
 impl Config {
@@ -13,6 +14,7 @@ impl Config {
             port: Self::load_port()?,
             host: Self::load_host(),
             max_concurrency: Self::load_max_concurrency()?,
+            api_key: Self::load_api_key()?,
         })
     }
 
@@ -32,6 +34,13 @@ impl Config {
         let concurrency_str = env::var("MAX_CONCURRENCY").unwrap_or_else(|_| "10".to_string());
         concurrency_str.parse::<usize>().map_err(|e| e.into())
     }
+
+    /// Load the API_KEY environment variable, required for server to start
+    fn load_api_key() -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        env::var("API_KEY").map_err(|_| {
+            "API_KEY environment variable is required but not set".into()
+        })
+    }
 }
 
 impl Default for Config {
@@ -40,6 +49,7 @@ impl Default for Config {
             port: 3000,
             host: "0.0.0.0".to_string(),
             max_concurrency: 10,
+            api_key: "default-api-key".to_string(), // This should never be used in production
         }
     }
 }

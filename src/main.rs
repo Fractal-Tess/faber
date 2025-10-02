@@ -9,7 +9,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Load configuration from environment variables
     let config = Config::from_env()?;
 
-    let router = build_router();
+    let router = build_router(config.api_key.clone());
     let router = axum::Router::new().nest("/api/v1", router);
 
     let serve_config = ServeConfig {

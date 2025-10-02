@@ -1,5 +1,6 @@
 mod cache;
 mod handlers;
+mod middleware;
 mod router;
 mod serve;
 mod state;
