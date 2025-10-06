@@ -43,46 +43,44 @@ export type ExecutionStepResult = TaskResult | TaskResult[];
 export type TaskGroup = ExecutionStep[];
 export type TaskGroupResult = ExecutionStepResult[];
 
-export type FaberClientConfig = {
-  baseUrl: string;
-  timeout?: number;
-  headers?: Record<string, string>;
-  apiKey?: string;
-};
-
-export type ExecuteOptions = {
-  timeout?: number;
-  headers?: Record<string, string>;
-};
-
 export type HealthResponse = {
   status: string;
   timestamp?: string;
 };
 
-/**
- * Type guards
- */
-export function isCompletedTaskResult(result: TaskResult): result is CompletedTaskResult {
-  return 'stdout' in result && 'stderr' in result && 'exit_code' in result;
-}
+// Task testing types
+export type TestContext = {
+  stdout: string;
+  stderr: string;
+  exit_code: number;
+  stats: TaskResultStats;
+  task: Task;
+};
 
-export function isFailedTaskResult(result: TaskResult): result is FailedTaskResult {
-  return 'error' in result;
-}
+export type TestResult = {
+  passed: boolean;
+  message: string;
+  details?: Record<string, any>;
+};
 
-export function isSingleExecutionStep(step: ExecutionStep): step is Task {
-  return !Array.isArray(step);
-}
+export type TaskWithTest = Task & {
+  test?: (context: TestContext) => TestResult;
+};
 
-export function isParallelExecutionStep(step: ExecutionStep): step is Task[] {
-  return Array.isArray(step);
-}
+export type TaskGroupWithTests = (Task | TaskWithTest)[];
 
-export function isSingleExecutionStepResult(result: ExecutionStepResult): result is TaskResult {
-  return !Array.isArray(result);
-}
+// Combined result for a single step (execution + test)
+export type TaskStepResult = {
+  executionResult: ExecutionStepResult;
+  testResult?: TestResult | TestResult[];
+  passed: boolean;
+};
 
-export function isParallelExecutionStepResult(result: ExecutionStepResult): result is TaskResult[] {
-  return Array.isArray(result);
-}
+export type StructuredTaskStepResults = TaskStepResult[];
+
+export type TaskGroupResultWithTests = {
+  results: TaskGroupResult;
+  stepResults: StructuredTaskStepResults;
+  allTestsPassed: boolean;
+  failedSteps: TaskStepResult[];
+};

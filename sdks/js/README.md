@@ -16,7 +16,8 @@ import { FaberClient, TaskBuilder } from '@faber/runtime-sdk';
 // Create a client with API key authentication
 const client = new FaberClient({
   baseUrl: 'http://localhost:3000',
-  apiKey: process.env.FABER_API_KEY // Or your API key string
+  apiKey: process.env.FABER_API_KEY, // Or your API key string
+  fetch: customFetch, // Optional: provide your own fetch implementation (for timeouts, custom headers, etc.)
 });
 
 // Use the TaskBuilder for complex workflows
@@ -25,8 +26,8 @@ const plan = new TaskBuilder()
     cmd: 'gcc',
     args: ['greeter.c', '-o', 'greeter'],
     env: {
-      'CC': 'gcc',
-      'CFLAGS': '-O2'
+      CC: 'gcc',
+      CFLAGS: '-O2',
     },
     files: {
       'greeter.c': `
@@ -51,19 +52,19 @@ const plan = new TaskBuilder()
           }
           return 0;
         }
-      `
-    }
+      `,
+    },
   })
   .parallel([
     {
       cmd: './greeter',
-      stdin: 'Alice\\nTechCorp\\n'
+      stdin: 'Alice\nTechCorp\n',
     },
     {
       cmd: './greeter',
-      stdin: 'Bob\\nStartupInc\\n'
-    }
+      stdin: 'Bob\nStartupInc\n',
+    },
   ]);
 
-const executionResult = await client.execute(plan);
+const executionResult = await client.executeGroup(plan);
 ```

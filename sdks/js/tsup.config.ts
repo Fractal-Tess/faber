@@ -6,7 +6,7 @@ export default defineConfig({
   dts: true,
   clean: true,
   sourcemap: true,
-  minify: false,
+  minify: true,
   bundle: true,
   splitting: false,
   target: ['es2020', 'node18'],

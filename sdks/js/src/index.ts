@@ -7,9 +7,9 @@
 // Core exports
 export { FaberClient } from './client';
 export { TaskBuilder } from './task-builder';
+
 export type {
   FaberClientConfig,
-  ExecuteOptions,
   Task,
   TaskGroup,
   TaskResult,
@@ -21,8 +21,13 @@ export type {
   ExecutionStepResult,
   TaskGroupResult,
   HealthResponse,
+  // Task testing types
+  TestContext,
+  TestResult,
+  TaskWithTest,
+  TaskGroupWithTests,
+  TaskGroupResultWithTests,
 } from './types';
-export type { FaberClientConstructor } from './client';
 
 // Error exports
 export {
@@ -50,24 +55,7 @@ export {
   ensureAllTasksSucceeded,
 } from './utils';
 
-// Type guards
-export {
-  isCompletedTaskResult,
-  isFailedTaskResult,
-  isSingleExecutionStep,
-  isParallelExecutionStep,
-  isSingleExecutionStepResult,
-  isParallelExecutionStepResult,
-} from './types';
-
-// Version
-export const SDK_VERSION = '0.1.0';
-
 // Default configuration
 export const DEFAULT_CONFIG = {
   baseUrl: 'http://localhost:3000',
-  timeout: 30000,
-  headers: {
-    'Content-Type': 'application/json',
-  },
 } as const;

@@ -9,49 +9,89 @@ Faber is a secure, sandboxed task execution runtime written in Rust that runs co
 - `faber-runtime`: Core execution engine with containerization, cgroups, and namespace isolation
 - `faber-api`: REST API server providing HTTP interface to the runtime
 - `faber`: Main binary that ties everything together
+- `sdks/js`: TypeScript/JavaScript SDK for client integration
 
 ## Development Commands
 
 ### Building
+
 ```bash
 cargo build --release
 ```
 
 ### Development build
+
 ```bash
 cargo build
 ```
 
 ### Running tests
+
 ```bash
+# Rust tests
 cargo test
+
+# JavaScript SDK tests
+cd sdks/js && npm test
+
+# Integration tests for JS SDK
+cd sdks/js && npm run test:integration
 ```
 
 ### Linting
+
 ```bash
+# Rust linting
 cargo clippy
+
+# JavaScript SDK linting and type checking
+cd sdks/js && npm run type-check
 ```
 
 ### Formatting
+
 ```bash
 cargo fmt
 ```
 
 ### Development Environment
+
 The project uses Nix for development environment setup:
+
 ```bash
 nix develop
 ```
 
-This provides a complete Rust toolchain including rust-analyzer, clippy, and rustfmt.
+This provides a complete Rust toolchain including rust-analyzer, clippy, rustfmt, and bun for JavaScript SDK development.
+
+### JavaScript SDK Development
+
+```bash
+cd sdks/js
+
+# Install dependencies
+bun install
+
+# Build the SDK
+npm run build
+
+# Development build with watch mode
+npm run dev
+
+# Clean build artifacts
+npm run clean
+```
 
 ### Docker Development
+
 Build development Docker image:
+
 ```bash
 docker build -f docker/dev/Dockerfile -t faber-dev .
 ```
 
 Build production Docker image:
+
 ```bash
 docker build -f docker/prod/Dockerfile -t faber-prod .
 ```
@@ -61,16 +101,19 @@ docker build -f docker/prod/Dockerfile -t faber-prod .
 ### Core Components
 
 **Runtime Layer** (`faber-runtime` crate):
+
 - `Runtime`: Main orchestrator that executes task groups
 - `TaskGroup`: Collection of tasks that can run in parallel or sequence
 - `Container`: Provides isolated execution environment using Linux namespaces
 - `Cgroup`: Resource management and monitoring (CPU, memory, PIDs)
 
 **API Layer** (`faber-api` crate):
+
 - `Router`: Axum-based HTTP routing with `/api/v1` prefix
 - `ExecuteHandler`: Handles task execution requests with file management
-- `Cache`: Request fingerprinting and response caching
+- `Cache`: Request fingerprinting and response caching using DashMap
 - `State`: Shared application state management
+- `Middleware`: API key authentication and request processing
 
 ### Key Architectural Patterns
 
@@ -89,6 +132,7 @@ docker build -f docker/prod/Dockerfile -t faber-prod .
 ### Container Security
 
 The runtime creates containers with:
+
 - Separate mount namespace with minimal `/proc` and `/sys`
 - Unprivileged user (UID/GID 1000:1000)
 - Limited capabilities (drops most privileged capabilities)
@@ -97,22 +141,27 @@ The runtime creates containers with:
 
 ### API Design
 
-- Single `/execute` endpoint accepting JSON array of tasks
+- Single `/execute` endpoint accepting JSON array of `ExecutionStep` tasks
+- Tasks can be `Single` commands or `Parallel` task groups
 - Each task specifies: `cmd`, `args` (optional), and `files` (optional)
 - Response includes stdout, stderr, exit code, and resource usage statistics
-- Request fingerprinting prevents duplicate executions
+- Request fingerprinting using SHA2 prevents duplicate executions
 - File content is embedded in request/response for portability
+- API key authentication required for all requests
 
 ## Configuration
 
 Environment variables:
+
 - `HOST`: Server host (default: 0.0.0.0)
 - `PORT`: Server port (default: 3000)
 - `MAX_CONCURRENCY`: Maximum concurrent executions (default: 10)
+- `API_KEY`: API key for authentication (required)
 
 ## Dependencies
 
 Key external dependencies:
+
 - `tokio`: Async runtime
 - `axum`: HTTP framework
 - `nix`: Linux system calls and low-level utilities
@@ -127,3 +176,12 @@ Key external dependencies:
 - Running containers requires privileges (typically `--privileged` flag in Docker)
 - The binary targets `x86_64-unknown-linux-musl` for static linking
 - Release builds use aggressive optimization (LTO, codegen-units = 1)
+- JavaScript SDK uses TypeScript with Vitest for testing and tsup for building
+- API authentication is mandatory - set `API_KEY` environment variable
+
+## Testing Strategy
+
+- Rust unit tests: `cargo test`
+- JavaScript SDK unit tests: `cd sdks/js && npm test`
+- Integration tests require running Faber server and test against live API
+- Integration test configuration: `sdks/js/test/integration-only.config.ts`

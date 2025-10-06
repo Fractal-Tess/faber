@@ -1,15 +1,12 @@
 import { defineConfig } from 'vitest/config';
-import { resolve } from 'path';
 
 export default defineConfig({
   test: {
+    include: ['test/**/*.integration.test.ts'],
+    exclude: ['**/node_modules/**', '**/dist/**'],
+    testTimeout: 30000,
+    hookTimeout: 30000,
     globals: true,
-    environment: 'jsdom',
-    setupFiles: ['./test/setup.ts'],
-  },
-  resolve: {
-    alias: {
-      '@': resolve(__dirname, './src'),
-    },
+    environment: 'node',
   },
 });

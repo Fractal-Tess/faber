@@ -7,7 +7,6 @@ use nix::unistd::close;
 
 use crate::prelude::*;
 
-/// Generate a random string of a given size
 pub fn generate_random_string(size: u8) -> String {
     use rand::Rng;
     const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -20,9 +19,6 @@ pub fn generate_random_string(size: u8) -> String {
         .collect()
 }
 
-/// Create a POSIX pipe, returning reader and writer ends.
-///
-/// Errors include OS-level failures to allocate the pipe.
 pub fn mk_pipe() -> Result<(PipeReader, PipeWriter)> {
     pipe().map_err(|e| FaberError::MkPipe {
         e,
@@ -30,7 +26,6 @@ pub fn mk_pipe() -> Result<(PipeReader, PipeWriter)> {
     })
 }
 
-/// Close a raw file descriptor.
 pub fn close_fd(fd: RawFd) -> Result<()> {
     close(fd).map_err(|e| FaberError::CloseFd { e })?;
 

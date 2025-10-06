@@ -1,4 +1,4 @@
-import { Task, TaskGroup, ExecutionStep } from './types';
+import { Task, TaskGroup, ExecutionStep, TaskWithTest, TestContext, TestResult } from './types';
 import { ValidationError } from './errors';
 
 /**
@@ -30,6 +30,30 @@ export class TaskBuilder {
   }
 
   /**
+   * Add a single task with a test to the execution plan
+   * @param task - The task to execute
+   * @param test - The test function to validate the task result
+   * @returns This TaskBuilder instance for method chaining
+   */
+  singleWithTest(task: Task, test: (context: TestContext) => TestResult): TaskBuilder {
+    if (!task.cmd || typeof task.cmd !== 'string') {
+      throw new ValidationError('Task must have a valid cmd property');
+    }
+
+    if (!test || typeof test !== 'function') {
+      throw new ValidationError('Test must be a function');
+    }
+
+    const taskWithTest: TaskWithTest = {
+      ...task,
+      test,
+    };
+
+    this.steps.push(taskWithTest);
+    return this;
+  }
+
+  /**
    * Add multiple tasks to execute in parallel
    * @param tasks - Array of tasks to execute in parallel
    * @returns This TaskBuilder instance for method chaining
@@ -47,6 +71,31 @@ export class TaskBuilder {
     }
 
     this.steps.push(tasks);
+    return this;
+  }
+
+  /**
+   * Add multiple tasks with tests to execute in parallel
+   * @param tasksWithTests - Array of tasks with tests to execute in parallel
+   * @returns This TaskBuilder instance for method chaining
+   */
+  parallelWithTests(tasksWithTests: TaskWithTest[]): TaskBuilder {
+    if (!Array.isArray(tasksWithTests) || tasksWithTests.length === 0) {
+      throw new ValidationError('Parallel tasks with tests must be a non-empty array');
+    }
+
+    // Validate each task and test
+    for (let i = 0; i < tasksWithTests.length; i++) {
+      const taskWithTest = tasksWithTests[i];
+      if (!taskWithTest.cmd || typeof taskWithTest.cmd !== 'string') {
+        throw new ValidationError(`Task ${i} in parallel step must have a valid cmd property`);
+      }
+      if (taskWithTest.test && typeof taskWithTest.test !== 'function') {
+        throw new ValidationError(`Test for task ${i} must be a function`);
+      }
+    }
+
+    this.steps.push(tasksWithTests);
     return this;
   }
 

@@ -64,7 +64,6 @@ impl Runtime {
     }
 
     fn execution_child(&self) -> RuntimeResult {
-        // Handle container setup separately from task execution
         if let Err(e) = self.container.setup() {
             return RuntimeResult::ContainerSetupFailed {
                 error: format!("Container setup failed: {}", e),
@@ -112,7 +111,6 @@ impl Runtime {
             handles.push(handle);
         }
 
-        // Wait for all threads to complete and collect results
         let task_results = Self::collect_parallel_results(handles);
         ExecutionStepResult::Parallel(task_results)
     }
@@ -139,25 +137,20 @@ impl Runtime {
     fn pre_execute_task() -> std::io::Result<()> {
         let unshare_flags = CloneFlags::CLONE_NEWNS;
 
-        // Perform privileged operations first (these require capabilities)
         unshare(unshare_flags).unwrap();
         Container::mask_paths().unwrap();
 
-        // Change to unprivileged user/group (requires CAP_SETUID/CAP_SETGID)
         setgid(65534.into()).unwrap();
         setuid(65534.into()).unwrap();
 
-        // Drop all capabilities AFTER all privileged operations are complete
-        // This ensures the user command runs with no special privileges
+        Self::drop_capabilities().unwrap();
         Self::drop_capabilities().unwrap();
 
-        // Apply seccomp filter to restrict system calls
         Self::apply_seccomp_filter().unwrap();
 
         Ok(())
     }
 
-    /// Execute a single task with the given cgroup and timeout
     fn execute_single_task(
         task: Task,
         cgroup: &Cgroup,
@@ -205,7 +198,6 @@ impl Runtime {
             details: "Failed to spawn task".to_string(),
         })?;
 
-        // Add the child process to the task cgroup
         let child_pid = child.id();
         task_cgroup.add_process(child_pid)?;
 
@@ -220,7 +212,6 @@ impl Runtime {
                 })?;
         }
 
-        // Apply timeout
         let exit_status = Runtime::wait_with_timeout(&mut child, timeout)?;
 
         let mut stdout = child.stdout.unwrap();
@@ -252,8 +243,6 @@ impl Runtime {
     }
 
     fn drop_capabilities() -> std::io::Result<()> {
-        // Clear all capabilities from effective, permitted, and inheritable sets
-        // This must happen AFTER all privileged operations are complete
         caps::clear(None, CapSet::Effective).map_err(|e| {
             std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
@@ -279,18 +268,6 @@ impl Runtime {
     }
 
     fn apply_seccomp_filter() -> std::io::Result<()> {
-        // Seccomp implementation commented out for now due to dependency complexity
-        // This would block dangerous system calls like:
-        // - Process creation: clone, fork, vfork, execve, execveat
-        // - Namespace manipulation: unshare, setns
-        // - Mount operations: mount, umount, umount2, pivot_root
-        // - Capability manipulation: capset, capget
-        // - User/group changes: setuid, setgid, etc.
-        // - Kernel modules: init_module, finit_module, delete_module
-        // - System admin: reboot, sethostname, setdomainname
-        // - Debugging: ptrace
-        // - BPF operations: bpf
-        // - Keyring: keyctl, add_key, request_key
         Ok(())
     }
 
@@ -304,23 +281,19 @@ impl Runtime {
         let child_id = child.id();
         let start_time = Instant::now();
 
-        // Poll for process completion with timeout
         loop {
             match child.try_wait() {
                 Ok(Some(status)) => {
-                    // Process completed
                     return Ok(status);
                 }
                 Ok(None) => {
-                    // Process still running, check timeout
                     if start_time.elapsed() > timeout {
-                        // Timeout exceeded, kill the process
                         eprintln!(
                             "Task exceeded timeout of {:?}, killing process {}",
                             timeout, child_id
                         );
                         let _ = child.kill();
-                        let _ = child.wait(); // Clean up zombie process
+                        let _ = child.wait();
 
                         return Err(FaberError::TaskTimeout {
                             timeout_duration: timeout,
@@ -330,7 +303,6 @@ impl Runtime {
                             ),
                         });
                     }
-                    // Sleep briefly before checking again
                     thread::sleep(std::time::Duration::from_millis(100));
                 }
                 Err(e) => {

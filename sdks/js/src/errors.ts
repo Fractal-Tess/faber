@@ -24,14 +24,18 @@ export class TimeoutError extends FaberError {
 }
 
 export class ValidationError extends FaberError {
-  constructor(message: string, public validationErrors?: string[]) {
+  constructor(message: string, public validationErrors?: string) {
     super(message, 'VALIDATION_ERROR');
     this.name = 'ValidationError';
   }
 }
 
 export class ExecutionError extends FaberError {
-  constructor(message: string, public exitCode?: number, public stderr?: string) {
+  constructor(
+    message: string,
+    public exitCode?: number,
+    public stderr?: string
+  ) {
     super(message, 'EXECUTION_ERROR');
     this.name = 'ExecutionError';
   }
