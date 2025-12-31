@@ -1,0 +1,61 @@
+{
+  "project_root": "/home/fractal-tess/dev/faber",
+  "project_type": "single",
+  "services": {
+    "main": {
+      "name": "main",
+      "path": "/home/fractal-tess/dev/faber",
+      "language": "Rust",
+      "framework": null,
+      "type": "unknown",
+      "package_manager": "cargo",
+      "key_directories": {
+        "src": {
+          "path": "src",
+          "purpose": "Source code"
+        }
+      },
+      "entry_point": "src/main.rs",
+      "api": {
+        "routes": [
+          {
+            "path": "/health",
+            "methods": [
+              "GET"
+            ],
+            "file": "crates/faber-api/src/router.rs",
+            "framework": "Rust",
+            "requires_auth": false
+          },
+          {
+            "path": "/execute",
+            "methods": [
+              "POST"
+            ],
+            "file": "crates/faber-api/src/router.rs",
+            "framework": "Rust",
+            "requires_auth": false
+          }
+        ],
+        "total_routes": 2,
+        "methods": [
+          "POST",
+          "GET"
+        ],
+        "protected_routes": []
+      },
+      "monitoring": {
+        "health_checks": [
+          "/health"
+        ]
+      }
+    }
+  },
+  "infrastructure": {
+    "ci": "GitHub Actions",
+    "ci_workflows": [
+      "docker-build-push.yml"
+    ]
+  },
+  "conventions": {}
+}

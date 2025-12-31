@@ -1,0 +1,62 @@
+{
+  "complexity": "simple",
+  "workflow_type": "feature",
+  "confidence": 0.85,
+  "reasoning": "Single-file CSS change using built-in Fumadocs theming system. No dependencies, infrastructure changes, or external integrations involved.",
+
+  "analysis": {
+    "scope": {
+      "estimated_files": 1,
+      "estimated_services": 1,
+      "is_cross_cutting": false,
+      "notes": "Only global.css needs modification to switch theme import and add red color variable overrides."
+    },
+    "integrations": {
+      "external_services": [],
+      "new_dependencies": [],
+      "research_needed": false,
+      "notes": "No external services. Fumadocs-ui is already installed and in use."
+    },
+    "infrastructure": {
+      "docker_changes": false,
+      "database_changes": false,
+      "config_changes": false,
+      "notes": "Pure CSS/styling change only. No infrastructure impact."
+    },
+    "knowledge": {
+      "patterns_exist": true,
+      "research_required": false,
+      "unfamiliar_tech": [],
+      "notes": "Fumadocs has built-in theming with CSS variables. The 'black' theme already exists and can be customized with red accents using --color-fd-* variables."
+    },
+    "risk": {
+      "level": "low",
+      "concerns": ["Color accessibility/contrast", "Visual appeal of red/black combination"],
+      "notes": "Low risk as this is purely cosmetic. Worst case is colors need adjustment. No functional code changes."
+    }
+  },
+
+  "recommended_phases": [
+    "discovery",
+    "quick_spec",
+    "validation"
+  ],
+
+  "flags": {
+    "needs_research": false,
+    "needs_self_critique": false,
+    "needs_infrastructure_setup": false
+  },
+
+  "validation_recommendations": {
+    "risk_level": "low",
+    "skip_validation": false,
+    "minimal_mode": true,
+    "test_types_required": [],
+    "security_scan_required": false,
+    "staging_deployment_required": false,
+    "reasoning": "CSS-only styling change with no functional code, API changes, or security implications. Visual verification is sufficient. No automated tests needed as there are no functional changes."
+  },
+
+  "created_at": "2025-12-31T10:35:00.000Z"
+}

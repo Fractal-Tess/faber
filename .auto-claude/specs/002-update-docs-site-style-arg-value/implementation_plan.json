@@ -1,0 +1,36 @@
+{
+  "feature": "Update Documentation Site to Red/Black Color Scheme",
+  "spec_name": "002-update-docs-site-style-arg-value",
+  "workflow_type": "simple",
+  "total_phases": 1,
+  "recommended_workers": 1,
+  "phases": [
+    {
+      "phase": 1,
+      "name": "Update Color Scheme",
+      "description": "Apply red/black color theme to documentation site",
+      "depends_on": [],
+      "subtasks": [
+        {
+          "id": "subtask-1-1",
+          "description": "Add CSS variable overrides to global.css for red/black color scheme",
+          "service": "main",
+          "status": "failed",
+          "error": "BLOCKER: Target file docs/src/app/global.css does not exist. The docs directory is not present in the repository. Documentation site needs to be created before styling can be applied.",
+          "files_to_create": [],
+          "files_to_modify": ["docs/src/app/global.css"],
+          "patterns_from": [],
+          "verification": {
+            "type": "manual",
+            "run": "cd docs && bun run dev, then visually verify red/black theme in browser"
+          }
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "created_at": "2025-12-31T10:45:00Z",
+    "complexity": "simple",
+    "estimated_sessions": 1
+  }
+}

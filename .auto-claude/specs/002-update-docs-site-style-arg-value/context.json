@@ -1,0 +1,20 @@
+{
+  "task_description": "Change the style of the docs site to be red/black",
+  "scoped_services": ["docs"],
+  "files_to_modify": ["docs/src/app/global.css"],
+  "files_to_reference": [],
+  "patterns": {
+    "framework": "Fumadocs UI with Tailwind CSS v4",
+    "theming": "CSS variables prefixed with --fd-",
+    "configuration": "CSS-based (no tailwind.config file)"
+  },
+  "service_contexts": {
+    "docs": {
+      "type": "documentation_site",
+      "framework": "Fumadocs UI",
+      "styling": "Tailwind CSS v4",
+      "theme_approach": "CSS variable overrides"
+    }
+  },
+  "created_at": "2025-12-31T10:45:00Z"
+}
