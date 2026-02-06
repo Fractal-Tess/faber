@@ -1,0 +1,40 @@
+{
+  "docs": [
+    {
+      "title": "Introduction",
+      "type": "page",
+      "url": "/docs"
+    },
+    {
+      "title": "Getting Started",
+      "type": "folder",
+      "items": [
+        {
+          "title": "Getting Started",
+          "type": "page",
+          "url": "/docs/getting-started"
+        }
+      ]
+    },
+    {
+      "title": "API Reference",
+      "type": "page",
+      "url": "/docs/api-reference"
+    },
+    {
+      "title": "Runtime",
+      "type": "page",
+      "url": "/docs/runtime"
+    },
+    {
+      "title": "Configuration",
+      "type": "page",
+      "url": "/docs/configuration"
+    },
+    {
+      "title": "Examples",
+      "type": "page",
+      "url": "/docs/examples"
+    }
+  ]
+}

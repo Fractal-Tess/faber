@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "baseUrl": ".",
-    "target": "ESNext",
+    "target": "ES2017",
     "lib": [
       "dom",
       "dom.iterable",
@@ -24,7 +24,7 @@
         "./.source/index.ts"
       ],
       "@/*": [
-        "./src/*"
+        "./*"
       ]
     },
     "plugins": [

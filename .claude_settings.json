@@ -1,0 +1,31 @@
+{
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true
+  },
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Read(./**)",
+      "Write(./**)",
+      "Edit(./**)",
+      "Glob(./**)",
+      "Grep(./**)",
+      "Read(/home/fractal-tess/dev/faber/.worktrees/001-update-docs-for-rust-api/**)",
+      "Write(/home/fractal-tess/dev/faber/.worktrees/001-update-docs-for-rust-api/**)",
+      "Edit(/home/fractal-tess/dev/faber/.worktrees/001-update-docs-for-rust-api/**)",
+      "Glob(/home/fractal-tess/dev/faber/.worktrees/001-update-docs-for-rust-api/**)",
+      "Grep(/home/fractal-tess/dev/faber/.worktrees/001-update-docs-for-rust-api/**)",
+      "Bash(*)",
+      "WebFetch(*)",
+      "WebSearch(*)",
+      "mcp__context7__resolve-library-id(*)",
+      "mcp__context7__get-library-docs(*)",
+      "mcp__graphiti-memory__search_nodes(*)",
+      "mcp__graphiti-memory__search_facts(*)",
+      "mcp__graphiti-memory__add_episode(*)",
+      "mcp__graphiti-memory__get_episodes(*)",
+      "mcp__graphiti-memory__get_entity_edge(*)"
+    ]
+  }
+}
