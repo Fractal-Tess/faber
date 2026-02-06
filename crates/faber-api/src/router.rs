@@ -1,12 +1,21 @@
-use axum::{Router, routing::get, routing::post};
+use axum::{Router, middleware, routing::get, routing::post};
 
-use crate::{handlers, state::AppState};
+use crate::{handlers, middleware::api_key_middleware, state::AppState};
 
-pub fn build_router() -> Router {
-    let state = AppState::new();
+pub fn build_router(api_key: String) -> Router {
+    let state = AppState::new(api_key);
 
-    Router::new()
+    let public_routes = Router::new()
         .route("/health", get(handlers::health))
+        .with_state(state.clone());
+
+    let protected_routes = Router::new()
         .route("/execute", post(handlers::execute))
-        .with_state(state)
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            api_key_middleware,
+        ))
+        .with_state(state);
+
+    public_routes.merge(protected_routes)
 }

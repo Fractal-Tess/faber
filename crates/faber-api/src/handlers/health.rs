@@ -8,7 +8,7 @@ pub struct HealthResponse {
 
 pub async fn health() -> Result<Json<HealthResponse>, StatusCode> {
     let response = HealthResponse {
-        status: "healthy".to_string(),
+        status: "ok".to_string(),
     };
 
     Ok(Json(response))

@@ -5,10 +5,10 @@ use std::{
 };
 
 use nix::{
-    mount::{MntFlags, MsFlags, mount, umount2},
-    sched::CloneFlags,
+    mount::{mount, umount2, MntFlags, MsFlags},
     sched::unshare,
-    sys::stat::{Mode, SFlag, makedev, mknod},
+    sched::CloneFlags,
+    sys::stat::{makedev, mknod, Mode, SFlag},
     unistd::sethostname,
 };
 
@@ -27,10 +27,11 @@ impl Container {
     pub(crate) fn setup(&self) -> Result<()> {
         self.create_container_root_dir()?;
 
-        let unshare_flags = CloneFlags::CLONE_NEWUTS // hostname
-            | CloneFlags::CLONE_NEWNET // network
-            | CloneFlags::CLONE_NEWIPC // ipc
-            | CloneFlags::CLONE_NEWNS; // mount
+        let unshare_flags = CloneFlags::CLONE_NEWUTS
+            | CloneFlags::CLONE_NEWNET
+            | CloneFlags::CLONE_NEWIPC
+            | CloneFlags::CLONE_NEWNS
+            | CloneFlags::CLONE_NEWPID;
 
         unshare(unshare_flags).map_err(|e| FaberError::Unshare { e })?;
 
@@ -110,7 +111,6 @@ impl Container {
 
     fn bind_mounts(&self) -> Result<()> {
         for source in &self.config.bind_mounts_ro {
-            // Check if source exists before mounting
             if !Path::new(source).exists() {
                 println!("⚠️  Skipping mount for non-existent path: {}", source);
                 continue;
@@ -121,13 +121,11 @@ impl Container {
                 .container_root_dir
                 .join(source.strip_prefix("/").unwrap_or(source));
 
-            // Create target directory and its parent
             create_dir_all(&target).map_err(|e| FaberError::CreateDir {
                 e,
                 details: "Failed to create target directory".to_string(),
             })?;
 
-            // Use MS_BIND without MS_RDONLY initially, then remount as read-only
             mount(
                 Some(*source),
                 target.as_os_str(),
@@ -155,7 +153,6 @@ impl Container {
                     details: "Failed to convert container root directory to string".to_string(),
                 })?;
 
-        // First, bind mount the new root to itself
         mount(
             Some(target),
             target,
@@ -264,7 +261,6 @@ impl Container {
             details: "Failed to create workdir".to_string(),
         })?;
 
-        // Mount tmpfs with specified size and mode 0777 (readable, writable, executable by everyone)
         let mount_options = format!("size={},mode=0777", self.config.workdir_size);
         let workdir_str = self
             .config

@@ -15,21 +15,19 @@ impl ExecutionCache {
         }
     }
 
-    fn generate_hash(task_group: &TaskGroup) -> String {
+    pub fn generate_hash(task_group: &TaskGroup) -> String {
         let serialized = serde_json::to_string(task_group).unwrap_or_default();
         let mut hasher = Sha256::new();
         hasher.update(serialized.as_bytes());
         format!("{:x}", hasher.finalize())
     }
 
-    pub fn cache_result(&self, task_group: TaskGroup, result: TaskGroupResult) {
-        let hash = Self::generate_hash(&task_group);
+    pub fn cache_result(&self, hash: String, result: TaskGroupResult) {
         self.cache.insert(hash, result);
     }
 
-    pub fn try_get(&self, task_group: &TaskGroup) -> Option<TaskGroupResult> {
-        let hash = Self::generate_hash(task_group);
-        self.cache.get(&hash).map(|entry| entry.clone())
+    pub fn try_from_hash(&self, hash: &String) -> Option<TaskGroupResult> {
+        self.cache.get(hash).map(|entry| entry.clone())
     }
 }
 

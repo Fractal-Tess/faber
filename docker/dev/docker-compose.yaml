@@ -10,12 +10,21 @@ services:
       - ../../crates:/faber/crates:ro
       - ../../Cargo.toml:/faber/Cargo.toml:ro
       - cargo-target:/faber/target
+    environment:
+      - API_KEY=just-a-test-api-key
+      - CARGO_HOME=/usr/local/cargo
     privileged: true
     cgroup: host
     ports:
       - '3000:3000'
-    environment:
-      - CARGO_HOME=/usr/local/cargo
 
 volumes:
   cargo-target:
+
+networks:
+  default:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.22.0.0/16
+          gateway: 172.22.0.1

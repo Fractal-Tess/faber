@@ -1,0 +1,25 @@
+{
+  "name": "@faber/runtime-sdk-examples",
+  "version": "0.1.0",
+  "description": "Examples for the Faber Runtime SDK",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "gnu-commands": "bun run gnu-commands.ts",
+    "c-compilation": "bun run c-compilation.ts",
+    "advanced-testing": "bun run advanced-testing.ts",
+    "all": "bun run gnu-commands.ts && bun run c-compilation.ts && bun run advanced-testing.ts"
+  },
+  "keywords": [
+    "faber",
+    "runtime",
+    "examples",
+    "sdk",
+    "testing"
+  ],
+  "author": "Faber Team",
+  "license": "MIT",
+  "dependencies": {
+    "zod": "^4.1.11"
+  }
+}
