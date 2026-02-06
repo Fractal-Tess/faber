@@ -2,15 +2,15 @@ use std::{
     io::{Read, Write},
     os::{fd::IntoRawFd, unix::process::CommandExt},
     path::PathBuf,
-    process::{Command, Stdio, exit},
+    process::{exit, Command, Stdio},
     time::Duration,
 };
 
 use caps::CapSet;
 use nix::{
-    sched::{CloneFlags, unshare},
+    sched::{unshare, CloneFlags},
     sys::wait::waitpid,
-    unistd::{ForkResult, fork, setgid, setuid},
+    unistd::{fork, setgid, setuid, ForkResult},
 };
 
 use crate::{
@@ -143,7 +143,6 @@ impl Runtime {
         setgid(65534.into()).unwrap();
         setuid(65534.into()).unwrap();
 
-        Self::drop_capabilities().unwrap();
         Self::drop_capabilities().unwrap();
 
         Self::apply_seccomp_filter().unwrap();

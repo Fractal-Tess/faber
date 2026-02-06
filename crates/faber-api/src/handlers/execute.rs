@@ -12,9 +12,9 @@ pub async fn execute(
 
     let task_hash = ExecutionCache::generate_hash(&task_group);
 
-    // if let Some(cached_result) = app_state.cache.try_from_hash(&task_hash) {
-    //     return Ok(Json(cached_result));
-    // }
+    if let Some(cached_result) = app_state.cache.try_from_hash(&task_hash) {
+        return Ok(Json(cached_result));
+    }
 
     let runtime = RuntimeBuilder::default()
         .with_task_group(task_group.clone())

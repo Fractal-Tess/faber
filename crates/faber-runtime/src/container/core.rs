@@ -5,10 +5,10 @@ use std::{
 };
 
 use nix::{
-    mount::{MntFlags, MsFlags, mount, umount2},
-    sched::CloneFlags,
+    mount::{mount, umount2, MntFlags, MsFlags},
     sched::unshare,
-    sys::stat::{Mode, SFlag, makedev, mknod},
+    sched::CloneFlags,
+    sys::stat::{makedev, mknod, Mode, SFlag},
     unistd::sethostname,
 };
 
@@ -30,7 +30,8 @@ impl Container {
         let unshare_flags = CloneFlags::CLONE_NEWUTS
             | CloneFlags::CLONE_NEWNET
             | CloneFlags::CLONE_NEWIPC
-            | CloneFlags::CLONE_NEWNS;
+            | CloneFlags::CLONE_NEWNS
+            | CloneFlags::CLONE_NEWPID;
 
         unshare(unshare_flags).map_err(|e| FaberError::Unshare { e })?;
 

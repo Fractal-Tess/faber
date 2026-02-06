@@ -225,7 +225,7 @@ Faber implements multiple layers of security:
 
 ## 📄 License
 
-[Add your license here]
+MIT License - see [LICENSE](LICENSE) file for details.
 
 ## 🤝 Contributing
 
