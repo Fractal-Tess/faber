@@ -5,10 +5,10 @@ use std::{
 };
 
 use nix::{
-    mount::{MntFlags, MsFlags, mount, umount2},
-    sched::CloneFlags,
+    mount::{mount, umount2, MntFlags, MsFlags},
     sched::unshare,
-    sys::stat::{Mode, SFlag, makedev, mknod},
+    sched::CloneFlags,
+    sys::stat::{makedev, mknod, Mode, SFlag},
     unistd::sethostname,
 };
 
@@ -30,14 +30,15 @@ impl Container {
         let unshare_flags = CloneFlags::CLONE_NEWUTS
             | CloneFlags::CLONE_NEWNET
             | CloneFlags::CLONE_NEWIPC
-            | CloneFlags::CLONE_NEWNS;
+            | CloneFlags::CLONE_NEWNS
+            | CloneFlags::CLONE_NEWPID;
 
         unshare(unshare_flags).map_err(|e| FaberError::Unshare { e })?;
 
         self.rebind_new_root()?;
         self.bind_mounts()?;
+        self.bind_dev_devices()?;
         self.pivot_root()?;
-        self.create_dev_devices()?;
         self.create_proc()?;
         self.create_sys()?;
         self.create_cgroup()?;
@@ -49,6 +50,19 @@ impl Container {
     }
 
     pub(crate) fn cleanup(&self) -> Result<()> {
+        // Unmount filesystems mounted in newroot before removing directory
+        let _ = umount2(
+            &self.config.container_root_dir.join("proc"),
+            MntFlags::MNT_DETACH,
+        );
+        let _ = umount2(
+            &self.config.container_root_dir.join("sys/fs/cgroup"),
+            MntFlags::MNT_DETACH,
+        );
+        let _ = umount2(
+            &self.config.container_root_dir.join("sys"),
+            MntFlags::MNT_DETACH,
+        );
         let _ = umount2(&self.config.container_root_dir, MntFlags::MNT_DETACH);
 
         remove_dir_all(&self.config.container_root_dir).map_err(|e| {
@@ -194,6 +208,13 @@ impl Container {
             details: "Failed to change current directory".to_string(),
         })?;
 
+        // Note: oldroot is NOT unmounted here - mounts need to be moved first
+        // The cleanup happens in move_mounts_to_newroot() and final cleanup
+
+        Ok(())
+    }
+
+    fn unmount_oldroot(&self) -> Result<()> {
         umount2("/oldroot", MntFlags::MNT_DETACH).map_err(|e| FaberError::Umount {
             e,
             details: "Failed to unmount old root".to_string(),
@@ -203,6 +224,49 @@ impl Container {
             e,
             details: "Failed to remove old root directory".to_string(),
         })?;
+
+        Ok(())
+    }
+
+    fn bind_dev_devices(&self) -> Result<()> {
+        let dev_dir = self.config.container_root_dir.join("dev");
+        create_dir_all(&dev_dir).map_err(|e| FaberError::CreateDir {
+            e,
+            details: "Failed to create dev directory in container root".to_string(),
+        })?;
+
+        let devices = [
+            "/dev/null",
+            "/dev/zero",
+            "/dev/full",
+            "/dev/random",
+            "/dev/urandom",
+        ];
+
+        for device in &devices {
+            let target = self.config.container_root_dir.join(&device[1..]);
+
+            std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .open(&target)
+                .map_err(|e| FaberError::MkDevDevice {
+                    detaills: format!("Failed to create mount point for {}", device),
+                    e: nix::errno::Errno::from_raw(e.raw_os_error().unwrap_or(0)),
+                })?;
+
+            mount(
+                Some(*device),
+                target.as_os_str(),
+                None::<&str>,
+                MsFlags::MS_BIND,
+                None::<&str>,
+            )
+            .map_err(|e| FaberError::Mount {
+                e,
+                details: format!("Failed to bind mount {}", device),
+            })?;
+        }
 
         Ok(())
     }
@@ -291,49 +355,72 @@ impl Container {
 
     fn create_proc(&self) -> Result<()> {
         let proc_path = "/proc";
-        let proc_fstype = "proc";
-        let proc_flags = MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC;
 
         create_dir_all(proc_path).map_err(|e| FaberError::CreateDir {
             e,
             details: "Failed to create proc directory".to_string(),
         })?;
 
-        mount(
-            None::<&str>,
+        eprintln!("DEBUG: Attempting to bind mount /oldroot/proc to /proc");
+
+        // Check if source exists
+        if !std::path::Path::new("/oldroot/proc").exists() {
+            eprintln!("DEBUG: /oldroot/proc does not exist!");
+        } else {
+            eprintln!("DEBUG: /oldroot/proc exists");
+        }
+
+        // Always use bind mount from oldroot/proc for Docker compatibility
+        // Mounting a new proc filesystem in a PID namespace doesn't work reliably
+        // because the calling process of unshare(CLONE_NEWPID) doesn't enter
+        // the new namespace - only its children do.
+        match mount(
+            Some("/oldroot/proc"),
             proc_path,
-            Some(proc_fstype),
-            proc_flags,
             None::<&str>,
-        )
-        .map_err(|e| FaberError::Mount {
-            e,
-            details: "Failed to mount proc filesystem".to_string(),
-        })?;
+            MsFlags::MS_BIND,
+            None::<&str>,
+        ) {
+            Ok(_) => eprintln!("DEBUG: Bind mount succeeded"),
+            Err(e) => eprintln!("DEBUG: Bind mount failed: {:?}", e),
+        }
 
         Ok(())
     }
 
     fn create_sys(&self) -> Result<()> {
         let sys_target = "/sys";
-        let sys_fstype = "sysfs";
-        let sys_flags = MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC;
 
         create_dir_all(sys_target).map_err(|e| FaberError::CreateDir {
             e,
             details: "Failed to create sys directory".to_string(),
         })?;
 
-        mount(
+        // Try to mount new sysfs first
+        let sys_flags = MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC;
+        if mount(
             None::<&str>,
             sys_target,
-            Some(sys_fstype),
+            Some("sysfs"),
             sys_flags,
+            None::<&str>,
+        )
+        .is_ok()
+        {
+            return Ok(());
+        }
+
+        // Fallback: bind mount from oldroot/sys
+        mount(
+            Some("/oldroot/sys"),
+            sys_target,
+            None::<&str>,
+            MsFlags::MS_BIND,
             None::<&str>,
         )
         .map_err(|e| FaberError::Mount {
             e,
-            details: "Failed to mount sys filesystem".to_string(),
+            details: "Failed to bind mount sys from oldroot".to_string(),
         })?;
 
         Ok(())
@@ -341,20 +428,148 @@ impl Container {
 
     fn create_cgroup(&self) -> Result<()> {
         let cgroup_path = "/sys/fs/cgroup";
+
+        create_dir_all(cgroup_path).map_err(|e| FaberError::CreateDir {
+            e,
+            details: "Failed to create cgroup directory".to_string(),
+        })?;
+
+        // Try to mount new cgroup2 filesystem first
+        let cgroup_flags =
+            MsFlags::MS_RELATIME | MsFlags::MS_NOSUID | MsFlags::MS_NODEV | MsFlags::MS_NOEXEC;
+        if mount(
+            None::<&str>,
+            cgroup_path,
+            Some("cgroup2"),
+            cgroup_flags,
+            None::<&str>,
+        )
+        .is_ok()
+        {
+            return Ok(());
+        }
+
+        // Fallback: bind mount from oldroot/sys/fs/cgroup
+        mount(
+            Some("/oldroot/sys/fs/cgroup"),
+            cgroup_path,
+            None::<&str>,
+            MsFlags::MS_BIND,
+            None::<&str>,
+        )
+        .map_err(|e| FaberError::Mount {
+            e,
+            details: "Failed to bind mount cgroup from oldroot".to_string(),
+        })?;
+
+        Ok(())
+    }
+
+    fn create_proc_in_newroot(&self) -> Result<()> {
+        let proc_path = self.config.container_root_dir.join("proc");
+        let proc_fstype = "proc";
+        let proc_flags = MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC;
+
+        create_dir_all(&proc_path).map_err(|e| FaberError::CreateDir {
+            e,
+            details: "Failed to create proc directory in newroot".to_string(),
+        })?;
+
+        mount(
+            None::<&str>,
+            proc_path.as_os_str(),
+            Some(proc_fstype),
+            proc_flags,
+            None::<&str>,
+        )
+        .map_err(|e| FaberError::Mount {
+            e,
+            details: "Failed to mount proc filesystem in newroot".to_string(),
+        })?;
+
+        Ok(())
+    }
+
+    fn create_sys_in_newroot(&self) -> Result<()> {
+        let sys_path = self.config.container_root_dir.join("sys");
+        let sys_fstype = "sysfs";
+        let sys_flags = MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC;
+
+        create_dir_all(&sys_path).map_err(|e| FaberError::CreateDir {
+            e,
+            details: "Failed to create sys directory in newroot".to_string(),
+        })?;
+
+        mount(
+            None::<&str>,
+            sys_path.as_os_str(),
+            Some(sys_fstype),
+            sys_flags,
+            None::<&str>,
+        )
+        .map_err(|e| FaberError::Mount {
+            e,
+            details: "Failed to mount sys filesystem in newroot".to_string(),
+        })?;
+
+        Ok(())
+    }
+
+    fn create_cgroup_in_newroot(&self) -> Result<()> {
+        let cgroup_path = self.config.container_root_dir.join("sys/fs/cgroup");
         let cgroup_fstype = "cgroup2";
         let cgroup_flags =
             MsFlags::MS_RELATIME | MsFlags::MS_NOSUID | MsFlags::MS_NODEV | MsFlags::MS_NOEXEC;
 
+        create_dir_all(&cgroup_path).map_err(|e| FaberError::CreateDir {
+            e,
+            details: "Failed to create cgroup directory in newroot".to_string(),
+        })?;
+
         mount(
             None::<&str>,
-            cgroup_path,
+            cgroup_path.as_os_str(),
             Some(cgroup_fstype),
             cgroup_flags,
             None::<&str>,
         )
         .map_err(|e| FaberError::Mount {
             e,
-            details: "Failed to mount cgroup2 filesystem".to_string(),
+            details: "Failed to mount cgroup2 filesystem in newroot".to_string(),
+        })?;
+
+        Ok(())
+    }
+
+    fn move_mounts_to_newroot(&self) -> Result<()> {
+        // After pivot_root, mounts under oldroot need to be moved to new root
+        // Use MS_MOVE to relocate them without unmounting
+        let move_flags = MsFlags::MS_MOVE;
+
+        // Move proc mount
+        mount(
+            Some("/oldroot/proc"),
+            "/proc",
+            None::<&str>,
+            move_flags,
+            None::<&str>,
+        )
+        .map_err(|e| FaberError::Mount {
+            e,
+            details: "Failed to move proc mount to new root".to_string(),
+        })?;
+
+        // Move sys mount
+        mount(
+            Some("/oldroot/sys"),
+            "/sys",
+            None::<&str>,
+            move_flags,
+            None::<&str>,
+        )
+        .map_err(|e| FaberError::Mount {
+            e,
+            details: "Failed to move sys mount to new root".to_string(),
         })?;
 
         Ok(())
