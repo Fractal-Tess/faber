@@ -1,16 +1,18 @@
 use std::{
+    ffi::CString,
     io::{Read, Write},
-    os::{fd::IntoRawFd, unix::process::CommandExt},
+    os::fd::{AsRawFd, FromRawFd, IntoRawFd},
     path::PathBuf,
-    process::{Command, Stdio, exit},
+    process::exit,
     time::Duration,
 };
 
 use caps::CapSet;
 use nix::{
-    sched::{CloneFlags, unshare},
-    sys::wait::waitpid,
-    unistd::{ForkResult, fork, setgid, setuid},
+    libc,
+    sched::{unshare, CloneFlags},
+    sys::wait::{waitpid, WaitPidFlag, WaitStatus},
+    unistd::{execvpe, fork, pipe, setgid, setuid, ForkResult, Pid},
 };
 
 use crate::{
@@ -134,23 +136,6 @@ impl Runtime {
         task_results
     }
 
-    fn pre_execute_task() -> std::io::Result<()> {
-        let unshare_flags = CloneFlags::CLONE_NEWNS;
-
-        unshare(unshare_flags).unwrap();
-        Container::mask_paths().unwrap();
-
-        setgid(65534.into()).unwrap();
-        setuid(65534.into()).unwrap();
-
-        Self::drop_capabilities().unwrap();
-        Self::drop_capabilities().unwrap();
-
-        Self::apply_seccomp_filter().unwrap();
-
-        Ok(())
-    }
-
     fn execute_single_task(
         task: Task,
         cgroup: &Cgroup,
@@ -160,26 +145,11 @@ impl Runtime {
 
         let start_time = Instant::now();
 
+        // Create task cgroup before fork
         let task_cgroup = cgroup.create_task_cgroup()?;
-        let mut cmd = Command::new(task.cmd);
 
-        for (key, value) in task.env.unwrap_or_default() {
-            cmd.env(key, value);
-        }
-
-        let has_path = cmd.get_envs().any(|(key, _)| key == "PATH");
-        if !has_path {
-            cmd.env(
-                "PATH",
-                "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-            );
-        }
-
-        if let Some(args) = task.args {
-            cmd.args(args);
-        }
-
-        for (file_path, file_content) in task.files.unwrap_or_default() {
+        // Write files before fork (in parent's namespace context)
+        for (file_path, file_content) in task.files.clone().unwrap_or_default() {
             let file_path = PathBuf::from(file_path);
             std::fs::write(file_path, file_content).map_err(|e| FaberError::WriteFile {
                 e,
@@ -187,59 +157,310 @@ impl Runtime {
             })?;
         }
 
-        unsafe { cmd.pre_exec(Runtime::pre_execute_task) };
-
-        cmd.stdout(Stdio::piped());
-        cmd.stderr(Stdio::piped());
-        cmd.stdin(Stdio::piped());
-
-        let mut child = cmd.spawn().map_err(|e| FaberError::ExecuteTask {
-            e,
-            details: "Failed to spawn task".to_string(),
+        // Create pipes for stdout, stderr, stdin
+        let (stdout_read, stdout_write) = pipe().map_err(|e| FaberError::MkPipe {
+            e: std::io::Error::from_raw_os_error(e as i32),
+            details: "Failed to create stdout pipe".to_string(),
+        })?;
+        let (stderr_read, stderr_write) = pipe().map_err(|e| FaberError::MkPipe {
+            e: std::io::Error::from_raw_os_error(e as i32),
+            details: "Failed to create stderr pipe".to_string(),
+        })?;
+        let (stdin_read, stdin_write) = pipe().map_err(|e| FaberError::MkPipe {
+            e: std::io::Error::from_raw_os_error(e as i32),
+            details: "Failed to create stdin pipe".to_string(),
         })?;
 
-        let child_pid = child.id();
-        task_cgroup.add_process(child_pid)?;
+        match unsafe { fork() } {
+            Ok(ForkResult::Child) => {
+                // FIRST: Add self to cgroup BEFORE any other work
+                // This ensures resource limits apply from the start
+                let my_pid = std::process::id();
+                if let Err(e) = task_cgroup.add_process(my_pid) {
+                    eprintln!("Failed to add process to cgroup: {}", e);
+                    exit(127);
+                }
 
-        if let Some(stdin) = task.stdin
-            && let Some(mut child_stdin) = child.stdin.take()
-        {
-            child_stdin
-                .write_all(stdin.as_bytes())
-                .map_err(|e| FaberError::WriteStdin {
-                    e,
-                    details: "Failed to write stdin".to_string(),
-                })?;
+                // Close read ends of pipes in child
+                drop(stdout_read);
+                drop(stderr_read);
+                drop(stdin_write);
+
+                // Redirect stdout/stderr/stdin using libc dup2
+                unsafe {
+                    libc::dup2(stdout_write.as_raw_fd(), libc::STDOUT_FILENO);
+                    libc::dup2(stderr_write.as_raw_fd(), libc::STDERR_FILENO);
+                    libc::dup2(stdin_read.as_raw_fd(), libc::STDIN_FILENO);
+                }
+
+                // Close original fds after dup2
+                drop(stdout_write);
+                drop(stderr_write);
+                drop(stdin_read);
+
+                // Apply security restrictions
+                if let Err(e) = Self::child_setup_security() {
+                    eprintln!("Security setup failed: {}", e);
+                    exit(126);
+                }
+
+                // Build environment
+                let mut env_vars: Vec<(CString, CString)> = Vec::new();
+                let mut has_path = false;
+
+                for (key, value) in task.env.unwrap_or_default() {
+                    if key == "PATH" {
+                        has_path = true;
+                    }
+                    if let (Ok(k), Ok(v)) = (CString::new(key.clone()), CString::new(value)) {
+                        env_vars.push((k, v));
+                    }
+                }
+
+                if !has_path {
+                    if let (Ok(k), Ok(v)) = (
+                        CString::new("PATH"),
+                        CString::new(
+                            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                        ),
+                    ) {
+                        env_vars.push((k, v));
+                    }
+                }
+
+                // Build args
+                let cmd_cstr = match CString::new(task.cmd.clone()) {
+                    Ok(c) => c,
+                    Err(_) => exit(127),
+                };
+
+                let mut args_cstr: Vec<CString> = vec![cmd_cstr.clone()];
+                if let Some(args) = task.args {
+                    for arg in args {
+                        if let Ok(a) = CString::new(arg) {
+                            args_cstr.push(a);
+                        }
+                    }
+                }
+
+                // Format env as "KEY=VALUE"
+                let env_cstr: Vec<CString> = env_vars
+                    .into_iter()
+                    .filter_map(|(k, v)| {
+                        let s = format!("{}={}", k.to_string_lossy(), v.to_string_lossy());
+                        CString::new(s).ok()
+                    })
+                    .collect();
+
+                // Execute
+                let _ = execvpe(&cmd_cstr, &args_cstr, &env_cstr);
+
+                // If exec fails, exit with error
+                exit(127);
+            }
+            Ok(ForkResult::Parent { child }) => {
+                // Close write ends of pipes in parent
+                drop(stdout_write);
+                drop(stderr_write);
+                drop(stdin_read);
+
+                // Write stdin if provided
+                if let Some(stdin_data) = task.stdin {
+                    let mut stdin_file =
+                        unsafe { std::fs::File::from_raw_fd(stdin_write.into_raw_fd()) };
+                    if let Err(e) = stdin_file.write_all(stdin_data.as_bytes()) {
+                        eprintln!("Warning: Failed to write stdin: {}", e);
+                    }
+                    // stdin_file is dropped here, closing the write end
+                } else {
+                    drop(stdin_write);
+                }
+
+                // Wait with timeout
+                let exit_code = Self::wait_for_child_with_timeout(child, timeout)?;
+
+                // Read stdout and stderr
+                let mut stdout_buf = String::new();
+                let mut stderr_buf = String::new();
+
+                let mut stdout_file =
+                    unsafe { std::fs::File::from_raw_fd(stdout_read.into_raw_fd()) };
+                let mut stderr_file =
+                    unsafe { std::fs::File::from_raw_fd(stderr_read.into_raw_fd()) };
+
+                if let Err(e) = stdout_file.read_to_string(&mut stdout_buf) {
+                    eprintln!("Warning: Failed to read stdout: {}", e);
+                }
+                if let Err(e) = stderr_file.read_to_string(&mut stderr_buf) {
+                    eprintln!("Warning: Failed to read stderr: {}", e);
+                }
+
+                // Measure resources
+                let task_stats = match task_cgroup.measure_resources() {
+                    Ok(stats) => stats,
+                    Err(e) => {
+                        eprintln!("Warning: Failed to measure resources: {}", e);
+                        Default::default()
+                    }
+                };
+
+                // Cleanup cgroup
+                if let Err(e) = task_cgroup.cleanup() {
+                    eprintln!("Warning: Failed to cleanup task cgroup: {}", e);
+                }
+
+                let stats = TaskResultStats {
+                    execution_time_ms: start_time.elapsed().as_millis() as u64,
+                    memory_peak_bytes: task_stats.memory_peak_bytes,
+                    cpu_usage_usec: task_stats.cpu_usage_usec,
+                    pids_peak: task_stats.pids_max,
+                };
+
+                Ok(TaskResult::Completed {
+                    stdout: stdout_buf,
+                    stderr: stderr_buf,
+                    exit_code,
+                    stats,
+                })
+            }
+            Err(e) => Err(FaberError::Fork { e }),
+        }
+    }
+
+    /// Set up security restrictions in child process before exec
+    fn child_setup_security() -> std::io::Result<()> {
+        let unshare_flags = CloneFlags::CLONE_NEWNS;
+
+        unshare(unshare_flags).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+        // mask_paths unmounts and masks proc/sys with tmpfs for security
+        Container::mask_paths()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+
+        // Mount a fresh proc filesystem in the child's PID namespace
+        // This is critical: the child is PID 1 in the new PID namespace,
+        // so mounting proc here will show only the namespace's processes
+        Self::mount_proc_in_pid_namespace()?;
+
+        // Mount sys from oldroot (sysfs doesn't have PID-specific info)
+        Self::mount_sys()?;
+
+        setgid(65534.into()).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        setuid(65534.into()).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+        Self::drop_capabilities()?;
+        Self::apply_seccomp_filter()?;
+
+        Ok(())
+    }
+
+    /// Mount proc filesystem in the child's PID namespace
+    /// This MUST be called after the child enters the PID namespace
+    fn mount_proc_in_pid_namespace() -> std::io::Result<()> {
+        use nix::mount::{mount, MsFlags};
+
+        // Create /proc directory
+        std::fs::create_dir_all("/proc").ok();
+
+        // Mount a fresh proc filesystem
+        // This will show only the processes in the current PID namespace
+        // because we're calling this from the child that is PID 1 in the new namespace
+        let proc_flags = MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC;
+        match mount(
+            Some("proc"),
+            "/proc",
+            Some("proc"),
+            proc_flags,
+            None::<&str>,
+        ) {
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("Warning: Failed to mount proc in PID namespace: {:?}", e);
+                // Fallback: bind mount from oldroot (less secure but functional)
+                mount(
+                    Some("/oldroot/proc"),
+                    "/proc",
+                    None::<&str>,
+                    MsFlags::MS_BIND,
+                    None::<&str>,
+                )
+                .ok();
+            }
         }
 
-        let exit_status = Runtime::wait_with_timeout(&mut child, timeout)?;
+        Ok(())
+    }
 
-        let mut stdout = child.stdout.unwrap();
-        let mut stderr = child.stderr.unwrap();
+    /// Mount sysfs in the new mount namespace
+    fn mount_sys() -> std::io::Result<()> {
+        use nix::mount::{mount, MsFlags};
 
-        let mut stdout_buf = String::new();
-        let mut stderr_buf = String::new();
+        std::fs::create_dir_all("/sys").ok();
 
-        stdout.read_to_string(&mut stdout_buf).unwrap();
-        stderr.read_to_string(&mut stderr_buf).unwrap();
+        // Try to mount new sysfs first
+        let sys_flags = MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC;
+        if mount(None::<&str>, "/sys", Some("sysfs"), sys_flags, None::<&str>).is_ok() {
+            return Ok(());
+        }
 
-        let task_stats = task_cgroup.measure_resources().unwrap_or_default();
+        // Fallback: bind mount from oldroot
+        mount(
+            Some("/oldroot/sys"),
+            "/sys",
+            None::<&str>,
+            MsFlags::MS_BIND,
+            None::<&str>,
+        )
+        .ok();
 
-        let _ = task_cgroup.cleanup();
+        Ok(())
+    }
 
-        let stats = TaskResultStats {
-            execution_time_ms: start_time.elapsed().as_millis() as u64,
-            memory_peak_bytes: task_stats.memory_peak_bytes,
-            cpu_usage_percent: task_stats.cpu_usage_usec,
-            pids_peak: task_stats.pids_max,
-        };
+    /// Wait for child process with timeout using WNOHANG polling
+    fn wait_for_child_with_timeout(child: Pid, timeout: Duration) -> Result<i32> {
+        use std::thread;
+        use std::time::Instant;
 
-        Ok(TaskResult::Completed {
-            stdout: stdout_buf,
-            stderr: stderr_buf,
-            exit_code: exit_status.code().unwrap_or(-1),
-            stats,
-        })
+        let start_time = Instant::now();
+
+        loop {
+            match waitpid(child, Some(WaitPidFlag::WNOHANG)) {
+                Ok(WaitStatus::Exited(_, code)) => return Ok(code),
+                Ok(WaitStatus::Signaled(_, signal, _)) => {
+                    // Process was killed by signal, return 128 + signal number
+                    return Ok(128 + signal as i32);
+                }
+                Ok(WaitStatus::StillAlive) => {
+                    if start_time.elapsed() > timeout {
+                        // Kill the child process
+                        let _ = nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL);
+                        // Reap the zombie
+                        let _ = waitpid(child, None);
+
+                        return Err(FaberError::TaskTimeout {
+                            timeout_duration: timeout,
+                            details: format!(
+                                "Task exceeded timeout of {} seconds",
+                                timeout.as_secs()
+                            ),
+                        });
+                    }
+                    // Short sleep for efficient polling
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Ok(_) => {
+                    // Other wait statuses (Stopped, Continued, etc.) - continue waiting
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(nix::errno::Errno::ECHILD) => {
+                    // Child already reaped
+                    return Ok(-1);
+                }
+                Err(e) => {
+                    return Err(FaberError::WaitPid { e });
+                }
+            }
+        }
     }
 
     fn drop_capabilities() -> std::io::Result<()> {
@@ -269,49 +490,5 @@ impl Runtime {
 
     fn apply_seccomp_filter() -> std::io::Result<()> {
         Ok(())
-    }
-
-    fn wait_with_timeout(
-        child: &mut std::process::Child,
-        timeout: std::time::Duration,
-    ) -> Result<std::process::ExitStatus> {
-        use std::thread;
-        use std::time::Instant;
-
-        let child_id = child.id();
-        let start_time = Instant::now();
-
-        loop {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    return Ok(status);
-                }
-                Ok(None) => {
-                    if start_time.elapsed() > timeout {
-                        eprintln!(
-                            "Task exceeded timeout of {:?}, killing process {}",
-                            timeout, child_id
-                        );
-                        let _ = child.kill();
-                        let _ = child.wait();
-
-                        return Err(FaberError::TaskTimeout {
-                            timeout_duration: timeout,
-                            details: format!(
-                                "Task exceeded timeout of {:?} seconds",
-                                timeout.as_secs()
-                            ),
-                        });
-                    }
-                    thread::sleep(std::time::Duration::from_millis(100));
-                }
-                Err(e) => {
-                    return Err(FaberError::ExecuteTask {
-                        e,
-                        details: "Failed to check process status".to_string(),
-                    });
-                }
-            }
-        }
     }
 }
