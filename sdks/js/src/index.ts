@@ -30,6 +30,10 @@
 // Core client
 export { FaberClient } from './client';
 
+// Builders
+export { TaskBuilder } from './builders';
+export type { TaskWithTests } from './builders';
+
 // Models
 export { TaskGroup } from './models';
 export type { Task, ExecutionStep } from './models';
@@ -45,6 +49,24 @@ export type {
   TestResult,
   TestFunction,
 } from './types';
+
+// Test Types
+export type {
+  TaskTest,
+  EqualsTest,
+  ContainsTest,
+  MatchesTest,
+  CustomTest,
+  TaskTestResult,
+  StepWithTestsResult,
+  SingleStepWithTestsResult,
+  ParallelStepWithTestsResult,
+  ExecutionWithTestsResult,
+} from './types/tests';
+
+// Utils
+export { TestResultAnalyzer, runTests, stripTests, stripTestsFromStep } from './utils';
+export type { FailedStepInfo, StageSummary, ReportOptions } from './utils';
 
 // Errors
 export {

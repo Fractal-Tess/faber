@@ -3,13 +3,25 @@
  */
 
 import { ValidationError } from '../errors';
+import { TaskBuilder } from '../builders';
+import { stripTestsFromStep } from '../utils/task-utils';
+import { runTests } from '../utils/test-runner';
 import type { ExecutionStep } from '../models';
 import type {
   FaberConfig,
   TaskResult,
   ApiExecutionResponse,
   ApiTaskResult,
+  TaskGroupResult,
+  HealthResponse,
 } from '../types';
+import type { 
+  TaskWithTests, 
+  ExecutionWithTestsResult,
+  StepWithTestsResult,
+  SingleStepWithTestsResult,
+  ParallelStepWithTestsResult
+} from '../types/tests';
 
 /**
  * FaberClient provides a JavaScript/TypeScript interface to the Faber
@@ -103,5 +115,90 @@ export class FaberClient {
       exitCode: result.exit_code,
       stats: result.stats,
     };
+  }
+
+  async health(): Promise<HealthResponse> {
+    const response = await this.fetchFn(`${this.baseUrl}/api/v1/health`);
+    if (!response.ok) {
+      throw new Error(`Health check failed: ${response.status}`);
+    }
+    return response.json();
+  }
+
+  async executeSingle(task: ExecutionStep): Promise<TaskResult> {
+    const results = await this.execute([task]);
+    return results[0] as TaskResult;
+  }
+
+  async executeGroup(
+    steps: ExecutionStep[] | TaskBuilder
+  ): Promise<TaskGroupResult> {
+    const executionSteps = steps instanceof TaskBuilder 
+      ? steps.build() 
+      : steps;
+    return this.execute(executionSteps);
+  }
+
+  async executeWithTests(
+    steps: ExecutionStep[] | TaskBuilder
+  ): Promise<ExecutionWithTestsResult> {
+    const executionSteps = steps instanceof TaskBuilder 
+      ? steps.build() 
+      : steps;
+    
+    const cleanSteps = executionSteps.map(stripTestsFromStep);
+    const results = await this.execute(cleanSteps);
+    
+    const stepResults: StepWithTestsResult[] = [];
+    let allTestsPassed = true;
+    let passedCount = 0;
+    let failedCount = 0;
+
+    for (let i = 0; i < executionSteps.length; i++) {
+      const step = executionSteps[i];
+      const result = results[i];
+      
+      if (Array.isArray(step)) {
+        const parallelResults = step.map((task, idx) => {
+          const taskResult = (result as TaskResult[])[idx];
+          const testResults = runTests(task as TaskWithTests, taskResult);
+          const testsPassed = testResults.every(t => t.passed);
+          return {
+            task: task as TaskWithTests,
+            result: taskResult,
+            testResults,
+            testsPassed,
+          };
+        });
+        
+        const stepPassed = parallelResults.every(r => r.testsPassed);
+        stepResults.push({
+          stepIndex: i,
+          parallel: true,
+          results: parallelResults,
+          passed: stepPassed,
+        } as ParallelStepWithTestsResult);
+
+        if (stepPassed) passedCount++;
+        else { failedCount++; allTestsPassed = false; }
+      } else {
+        const testResults = runTests(step as TaskWithTests, result as TaskResult);
+        const testsPassed = testResults.every(t => t.passed);
+        
+        stepResults.push({
+          stepIndex: i,
+          parallel: false,
+          task: step as TaskWithTests,
+          result: result as TaskResult,
+          testResults,
+          passed: testsPassed,
+        } as SingleStepWithTestsResult);
+
+        if (testsPassed) passedCount++;
+        else { failedCount++; allTestsPassed = false; }
+      }
+    }
+    
+    return { results, stepResults, allTestsPassed, passedCount, failedCount };
   }
 }
