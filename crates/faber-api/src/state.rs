@@ -4,22 +4,15 @@ use crate::cache::ExecutionCache;
 pub struct AppState {
     pub cache: ExecutionCache,
     pub api_key: String,
+    pub cache_enabled: bool,
 }
 
 impl AppState {
-    pub fn new(api_key: String) -> Self {
+    pub fn new(api_key: String, cache_enabled: bool) -> Self {
         Self {
             cache: ExecutionCache::new(),
             api_key,
-        }
-    }
-}
-
-impl Default for AppState {
-    fn default() -> Self {
-        Self {
-            cache: ExecutionCache::new(),
-            api_key: "default-api-key".to_string(), // This should never be used in production
+            cache_enabled,
         }
     }
 }

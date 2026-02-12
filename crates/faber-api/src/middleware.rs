@@ -24,17 +24,6 @@ pub async fn api_key_middleware(
             return Ok(next.run(request).await);
         }
     }
-    let uri = request.uri();
-    if let Some(query) = uri.query() {
-        for param in query.split('&') {
-            if let Some((key, value)) = param.split_once('=')
-                && key == "api_key"
-                && value == app_state.api_key
-            {
-                return Ok(next.run(request).await);
-            }
-        }
-    }
 
     Err(StatusCode::UNAUTHORIZED)
 }
