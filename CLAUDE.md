@@ -157,6 +157,7 @@ Environment variables:
 - `PORT`: Server port (default: 3000)
 - `MAX_CONCURRENCY`: Maximum concurrent executions (default: 10)
 - `API_KEY`: API key for authentication (required)
+- `CACHE_ENABLED`: Enable/disable request caching (default: true)
 
 ## Dependencies
 
