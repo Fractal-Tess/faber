@@ -1,5 +1,6 @@
 # deps
 /node_modules
+node_modules
 
 # generated content
 .contentlayer
@@ -26,3 +27,5 @@ yarn-error.log*
 .env*.local
 .vercel
 next-env.d.ts
+.next
+out

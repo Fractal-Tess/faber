@@ -1,0 +1,390 @@
+---
+title: Rust API
+description: Complete reference for the Faber Rust API
+---
+
+# Rust API Reference
+
+The Faber Rust API provides a comprehensive interface for executing sandboxed tasks with resource isolation and monitoring. This document covers both the runtime and API layers.
+
+## Overview
+
+Faber consists of three main components:
+
+- **faber-runtime**: Core execution engine with containerization and resource management
+- **faber-api**: REST API server for HTTP interface
+- **faber**: Main binary that combines everything
+
+## Runtime API
+
+### Core Components
+
+#### Runtime
+
+The main orchestrator that executes task groups with configurable resource limits and isolation.
+
+```rust
+use faber_runtime::{Runtime, RuntimeBuilder};
+
+// Create a runtime with default configuration
+let runtime = RuntimeBuilder::new()
+    .build()?;
+
+// Execute a task group
+let result = runtime.execute(task_group).await?;
+```
+
+#### RuntimeBuilder
+
+Builder pattern for configuring runtime behavior:
+
+```rust
+let runtime = RuntimeBuilder::new()
+    .with_max_concurrent_tasks(10)
+    .with_default_timeout(Duration::from_secs(30))
+    .build()?;
+```
+
+### Task Management
+
+#### TaskGroup
+
+A collection of tasks that can be executed in parallel or sequentially:
+
+```rust
+use faber_runtime::{TaskGroup, ExecutionStep};
+
+let task_group = vec![
+    ExecutionStep::Single(Task {
+        cmd: "/bin/echo".to_string(),
+        args: Some(vec!["hello".to_string()]),
+        env: None,
+        stdin: None,
+        files: None,
+        working_dir: None,
+    }),
+];
+```
+
+#### ExecutionStep
+
+Represents a single executable task or parallel group:
+
+```rust
+pub enum ExecutionStep {
+    Single(Task),
+    Parallel(Vec<Task>),
+}
+```
+
+#### Task
+
+Individual execution configuration:
+
+```rust
+pub struct Task {
+    pub cmd: String,
+    pub args: Option<Vec<String>>,
+    pub env: Option<HashMap<String, String>>,
+    pub stdin: Option<String>,
+    pub files: Option<HashMap<String, String>>,
+    pub working_dir: Option<String>,
+}
+```
+
+### Container Configuration
+
+#### ContainerConfigBuilder
+
+Configure container execution environment:
+
+```rust
+use faber_runtime::ContainerConfigBuilder;
+
+let config = ContainerConfigBuilder::new()
+    .with_working_dir("/tmp")
+    .with_environment("PATH", "/usr/bin:/bin")
+    .with_uid(1000)
+    .with_gid(1000)
+    .build()?;
+```
+
+### Resource Management
+
+#### CgroupConfigBuilder
+
+Configure resource limits and monitoring:
+
+```rust
+use faber_runtime::CgroupConfigBuilder;
+
+let config = CgroupConfigBuilder::new()
+    .with_memory_limit_bytes(100 * 1024 * 1024) // 100MB
+    .with_cpu_limit_percent(50.0)
+    .with_pid_limit(10)
+    .build()?;
+```
+
+## API Server
+
+### Server Configuration
+
+#### ServeConfig
+
+Configure the HTTP API server:
+
+```rust
+use faber_api::{ServeConfig, serve};
+
+let config = ServeConfig {
+    host: "0.0.0.0".to_string(),
+    port: 3000,
+    max_concurrency: 10,
+    api_key: "your-api-key".to_string(),
+};
+
+serve(config).await?;
+```
+
+#### AppState
+
+Shared application state with execution cache:
+
+```rust
+use faber_api::{AppState, ExecutionCache};
+
+let state = AppState {
+    runtime,
+    cache: ExecutionCache::new(),
+    max_concurrency: 10,
+};
+```
+
+### HTTP API Endpoints
+
+#### POST /api/v1/execute
+
+Execute a task group via HTTP:
+
+```bash
+curl -X POST http://localhost:3000/api/v1/execute \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-api-key" \
+  -d '[
+    {
+      "cmd": "/usr/bin/gcc",
+      "args": ["hello.c", "-o", "hello"],
+      "files": {
+        "hello.c": "#include <stdio.h>\nint main() { return 0; }"
+      }
+    },
+    {
+      "cmd": "./hello"
+    }
+  ]'
+```
+
+#### GET /api/v1/health
+
+Health check endpoint:
+
+```bash
+curl http://localhost:3000/api/v1/health
+# Returns: {"status": "ok"}
+```
+
+## Error Handling
+
+### RuntimeResult
+
+Result type for runtime operations:
+
+```rust
+pub enum RuntimeResult {
+    Success(TaskGroupResult),
+    ContainerSetupFailed { error: String },
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum RuntimeError {
+    // Additional error variants may be added in future
+}
+```
+
+### TaskGroupResult
+
+Result type for task execution:
+
+```rust
+pub type TaskGroupResult = Vec<ExecutionStepResult>;
+
+pub enum ExecutionStepResult {
+    Single(TaskResult),
+    Parallel(Vec<TaskResult>),
+}
+
+pub enum TaskResult {
+    Completed {
+        stdout: String,
+        pub stderr: String,
+        pub exit_code: i32,
+        pub stats: TaskResultStats,
+    },
+    Failed {
+        error: String,
+        stats: TaskResultStats,
+    },
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct TaskResultStats {
+    pub memory_peak_bytes: u64,
+    pub cpu_usage_percent: u64,
+    pub pids_peak: u64,
+    pub execution_time_ms: u64,
+}
+```
+
+## Security Features
+
+### Container Isolation
+
+- **Namespace Isolation**: PID, mount, network, UTS, IPC namespaces
+- **Unprivileged Execution**: Runs as non-root user (default UID/GID 1000:1000)
+- **Capability Dropping**: Most privileged capabilities are dropped
+- **Resource Limits**: Memory, CPU, and PID limits via cgroups v2
+
+### File System Security
+
+- **Minimal Mount Namespace**: Only essential `/proc` and `/sys` mounted
+- **Working Directory Isolation**: Tasks execute in isolated working directory
+- **File Management**: Files are embedded in requests/reponses, no filesystem persistence
+
+## Performance Optimization
+
+### Request Caching
+
+The API server implements request fingerprinting using SHA2 hashing to prevent duplicate executions:
+
+```rust
+use faber_api::ExecutionCache;
+
+let cache = ExecutionCache::new();
+let cached_result = cache.get(&request_fingerprint);
+```
+
+### Concurrent Execution
+
+- Configurable maximum concurrent task groups
+- Parallel task execution within groups
+- Resource-aware scheduling
+
+## Advanced Usage
+
+### Custom Error Handling
+
+```rust
+use faber_runtime::{RuntimeError, RuntimeResult};
+
+fn handle_execution_error(err: RuntimeError) {
+    match err {
+        RuntimeError::ContainerError(msg) => {
+            eprintln!("Container failed: {}", msg);
+        }
+        RuntimeError::ResourceLimitExceeded(limit) => {
+            eprintln!("Resource limit exceeded: {}", limit);
+        }
+    }
+}
+```
+
+### Resource Monitoring
+
+```rust
+use faber_runtime::TaskResultStats;
+
+fn analyze_performance(stats: &TaskResultStats) {
+    println!("Memory usage: {} bytes", stats.memory_peak_bytes);
+    println!("CPU usage: {}%", stats.cpu_usage_percent);
+    println!("Execution time: {}ms", stats.execution_time_ms);
+    println!("Peak PIDs: {}", stats.pids_peak);
+}
+```
+
+## Integration Examples
+
+### Basic Runtime Usage
+
+```rust
+use faber_runtime::*;
+use std::time::Duration;
+
+#[tokio::main]
+async fn main() -> RuntimeResult<()> {
+    let runtime = RuntimeBuilder::new()
+        .with_default_timeout(Duration::from_secs(10))
+        .build()?;
+
+    let task_group = vec![
+        ExecutionStep::Single(Task {
+            cmd: "echo".to_string(),
+            args: Some(vec!["Hello, Faber!".to_string()]),
+            env: None,
+            stdin: None,
+            files: None,
+            working_dir: None,
+        }),
+    ];
+
+    let result = runtime.execute(task_group).await?;
+    println!("Result: {:?}", result);
+
+    Ok(())
+}
+```
+
+### API Server with Custom Configuration
+
+```rust
+use faber_api::*;
+use faber_runtime::*;
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    let runtime = RuntimeBuilder::new()
+        .with_max_concurrent_tasks(20)
+        .build()
+        .expect("Failed to create runtime");
+
+    let config = ServeConfig {
+        host: "127.0.0.1".to_string(),
+        port: 8080,
+        max_concurrency: 20,
+        api_key: std::env::var("FABER_API_KEY")
+            .expect("FABER_API_KEY environment variable required"),
+    };
+
+    serve(config).await
+}
+```
+
+## Dependencies
+
+Runtime dependencies include:
+- `tokio`: Async runtime
+- `nix`: Linux system calls and utilities
+- `caps`: Linux capabilities manipulation
+- `seccompiler`: seccomp filtering (planned)
+- `serde`: Serialization/deserialization
+
+API dependencies include:
+- `axum`: HTTP framework
+- `dashmap`: Concurrent hashmap for caching
+- `sha2`: Request fingerprinting
+- `tower`: HTTP middleware
+
+## Platform Requirements
+
+- Linux kernel 5.2+ (cgroups v2 support)
+- Container privileges (typically `--privileged` flag in Docker)
+- x86_64-unknown-linux-musl target for static builds

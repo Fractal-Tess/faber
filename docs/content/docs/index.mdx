@@ -1,13 +1,196 @@
 ---
-title: Hello World
-description: Your first document
+title: Faber
+description: A secure, sandboxed task execution runtime that runs commands in isolated containers with resource limits and monitoring
 ---
 
-Welcome to the docs! You can start writing documents in `/content/docs`.
+# Welcome to Faber
 
-## What is Next?
+<img src="/faber.png" alt="Faber Logo" width="200" />
 
-<Cards>
-  <Card title="Learn more about Next.js" href="https://nextjs.org/docs" />
-  <Card title="Learn more about Fumadocs" href="https://fumadocs.dev" />
-</Cards>
+Faber is a **secure, sandboxed task execution runtime** that runs commands in isolated containers with resource limits and monitoring.
+
+## What is Faber?
+
+Faber provides a robust runtime environment for executing untrusted code safely. It combines Linux container technologies with resource monitoring to create a secure execution environment.
+
+### Key Features
+
+- **Container Isolation**: Uses Linux namespaces to isolate execution environments
+- **Resource Limits**: Cgroups-based memory and CPU constraints
+- **Security**: Runs as unprivileged user with dropped capabilities
+- **Monitoring**: Tracks memory, CPU usage, process count, and execution time
+- **Flexible Execution**: Support for sequential and parallel task execution
+- **REST API**: Simple HTTP API for task submission and execution
+
+## Architecture
+
+Faber consists of several core components:
+
+### Runtime
+
+The runtime is responsible for:
+- Creating isolated container environments using namespaces
+- Enforcing resource limits via cgroups
+- Managing task lifecycle (creation, execution, cleanup)
+- Monitoring resource usage during execution
+- Capturing stdout, stderr, and exit codes
+
+**Progress:**
+- [x] Cgroups for resource limiting
+- [x] Namespaces for isolation
+- [x] Timeouts (partial)
+- [x] Resource usage reporting
+- [x] Parallel and sequential execution
+- [x] Dropped capabilities
+- [x] Unprivileged user execution
+- [ ] Syscall filtering
+- [ ] Step caching
+- [ ] Rootless operation (currently needs root for device creation)
+
+### API
+
+The REST API provides:
+- Health check endpoint
+- Task execution endpoint with JSON request/response
+- Support for complex task workflows (sequential and parallel)
+
+## Quick Start
+
+### Using Docker
+
+Create a Dockerfile that extends the base Faber image with your required compilers or interpreters:
+
+```dockerfile
+FROM vgfractal/faber AS faber
+FROM debian:latest
+
+# Install compilers
+RUN apt update && apt install -y \
+    gcc \
+    make \
+    libc-dev
+
+WORKDIR /opt
+COPY --from=faber /opt/faber /opt
+
+EXPOSE 3000/tcp
+ENTRYPOINT ["./faber"]
+```
+
+Build and run:
+
+```bash
+docker build -t custom-faber .
+docker run --privileged --cgroupns=host -p 3000:3000 custom-faber
+```
+
+### Example: Running a C Program
+
+Compile and execute a simple C program:
+
+```c
+// hello.c
+#include <stdio.h>
+
+int main() {
+    printf("Hello, World!\n");
+    return 0;
+}
+```
+
+```bash
+curl -X POST http://localhost:3000/api/v1/execute \
+  -H "Content-Type: application/json" \
+  -d '[
+    {
+      "cmd": "/usr/bin/gcc",
+      "args": ["hello.c", "-o", "hello"],
+      "files": {
+        "hello.c": "#include <stdio.h>\n\nint main() {\n    printf(\"Hello, World!\\n\);\n    return 0;\n}\n"
+      }
+    },
+    {
+      "cmd": "./hello"
+    }
+  ]'
+```
+
+## API Overview
+
+Faber exposes a simple REST API:
+
+### Health Check
+
+```bash
+GET /api/v1/health
+```
+
+Returns the health status of the service.
+
+**Response:**
+```json
+{
+  "status": "healthy"
+}
+```
+
+### Execute Tasks
+
+```bash
+POST /api/v1/execute
+Content-Type: application/json
+```
+
+Execute a sequence or parallel group of tasks in isolated containers.
+
+**Request Body:** An array of execution steps where each step is either:
+- **Single Task**: An object with `cmd`, `args`, `env`, `stdin`, `files`, `working_dir`
+- **Parallel Tasks**: An array of tasks to execute concurrently
+
+**Response:** An array of execution results with stdout, stderr, exit codes, and resource statistics.
+
+## Security Model
+
+Faber implements multiple layers of security:
+
+1. **Namespace Isolation**: Separate mount, network, PID, UTS, IPC namespaces
+2. **Unprivileged User**: Tasks run as a non-root user
+3. **Dropped Capabilities**: Linux capabilities are dropped to reduce attack surface
+4. **Resource Limits**: Cgroups enforce memory and CPU constraints
+5. **Timeouts**: Execution time limits prevent runaway processes
+
+> **Note:** Currently requires root privileges to create device nodes. Future versions will support fully rootless operation.
+
+## Documentation
+
+- [API Reference](/docs/api-reference) - Complete API documentation
+- [Getting Started](/docs/getting-started) - Setup and installation guide
+- [Runtime Architecture](/docs/runtime) - Deep dive into runtime internals
+- [Configuration](/docs/configuration) - Environment variables and settings
+- [Examples](/docs/examples) - Practical code examples
+
+## Progress & Roadmap
+
+### Completed
+- [x] Runtime with cgroups and namespaces
+- [x] REST API with health and execute endpoints
+- [x] Parallel and sequential execution
+- [x] Resource monitoring and reporting
+
+### In Progress
+- [ ] Complete timeout implementation
+- [ ] Improved resource usage accuracy
+
+### Planned
+- [ ] Syscall filtering with seccomp
+- [ ] Step caching for faster re-runs
+- [ ] Rootless operation
+- [ ] SDK libraries (JS/TS, Python, Go, Rust, PHP)
+
+## Contributing
+
+Faber is open source and welcomes contributions. Please see the GitHub repository for issue tracking and pull requests.
+
+## License
+
+MIT License - see the [LICENSE](https://github.com/Fractal-Tess/faber/blob/main/LICENSE) file for details.
