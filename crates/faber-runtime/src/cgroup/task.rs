@@ -1,5 +1,8 @@
-use std::fs::{create_dir_all, read_to_string, remove_dir, write};
+use std::fs::{create_dir_all, read_to_string, remove_dir, write, File};
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
+use std::thread;
+use std::time::Duration;
 
 use super::config::CgroupConfig;
 use crate::prelude::*;
@@ -9,6 +12,28 @@ use crate::utils::generate_random_string;
 pub struct TaskCgroup {
     task_cgroup_path: PathBuf,
     config: CgroupConfig,
+    cleaned: bool,
+}
+
+impl Drop for TaskCgroup {
+    fn drop(&mut self) {
+        if self.cleaned {
+            return;
+        }
+        self.cleaned = true;
+        self.kill_all_processes().ok();
+        for attempt in 0..10 {
+            if remove_dir(&self.task_cgroup_path).is_ok() {
+                return;
+            }
+            self.kill_all_processes().ok();
+            thread::sleep(Duration::from_millis(10 * (attempt + 1)));
+        }
+        eprintln!(
+            "Warning: Failed to cleanup task cgroup after all retries: {}",
+            self.task_cgroup_path.display()
+        );
+    }
 }
 
 impl TaskCgroup {
@@ -25,6 +50,7 @@ impl TaskCgroup {
         let task_cgroup = Self {
             task_cgroup_path,
             config,
+            cleaned: false,
         };
 
         task_cgroup.setup_cgroup_files()?;
@@ -83,11 +109,60 @@ impl TaskCgroup {
         })
     }
 
-    pub fn cleanup(self) -> Result<()> {
+    pub fn cleanup(mut self) -> Result<()> {
+        self.cleaned = true;
+        self.kill_all_processes()?;
+
+        for attempt in 0..10 {
+            if remove_dir(&self.task_cgroup_path).is_ok() {
+                return Ok(());
+            }
+
+            if attempt < 9 {
+                self.kill_all_processes().ok();
+                thread::sleep(Duration::from_millis(10 * (attempt + 1)));
+            }
+        }
+
         remove_dir(&self.task_cgroup_path).map_err(|e| FaberError::RemoveDir {
             e,
-            details: "Failed to remove task cgroup directory".to_string(),
+            details: format!(
+                "Failed to remove task cgroup directory after retries: {}",
+                self.task_cgroup_path.display()
+            ),
         })?;
+
+        Ok(())
+    }
+
+    fn kill_all_processes(&self) -> Result<()> {
+        let procs_path = self.task_cgroup_path.join("cgroup.procs");
+
+        if let Ok(file) = File::open(&procs_path) {
+            let reader = BufReader::new(file);
+            for line in reader.lines().filter_map(|l| l.ok()) {
+                if let Ok(pid) = line.trim().parse::<i32>() {
+                    let _ = nix::sys::signal::kill(
+                        nix::unistd::Pid::from_raw(pid),
+                        nix::sys::signal::Signal::SIGKILL,
+                    );
+                }
+            }
+        }
+
+        let mut attempts = 0;
+        while attempts < 50 {
+            if let Ok(file) = File::open(&procs_path) {
+                let reader = BufReader::new(file);
+                let count = reader.lines().count();
+                if count == 0 {
+                    break;
+                }
+            }
+            thread::sleep(Duration::from_millis(10));
+            attempts += 1;
+        }
+
         Ok(())
     }
 
