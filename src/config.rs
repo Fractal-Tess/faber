@@ -6,6 +6,7 @@ pub struct Config {
     pub host: String,
     pub max_concurrency: usize,
     pub api_key: String,
+    pub cache_enabled: bool,
 }
 
 impl Config {
@@ -15,6 +16,7 @@ impl Config {
             host: Self::load_host(),
             max_concurrency: Self::load_max_concurrency()?,
             api_key: Self::load_api_key()?,
+            cache_enabled: Self::load_cache_enabled(),
         })
     }
 
@@ -33,19 +35,13 @@ impl Config {
     }
 
     fn load_api_key() -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        env::var("API_KEY").map_err(|_| {
-            "API_KEY environment variable is required but not set".into()
-        })
+        env::var("API_KEY")
+            .map_err(|_| "API_KEY environment variable is required but not set".into())
     }
-}
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            port: 3000,
-            host: "0.0.0.0".to_string(),
-            max_concurrency: 10,
-            api_key: "default-api-key".to_string(),
-        }
+    fn load_cache_enabled() -> bool {
+        env::var("CACHE_ENABLED")
+            .map(|v| v.to_lowercase() == "true" || v == "1")
+            .unwrap_or(true)
     }
 }
