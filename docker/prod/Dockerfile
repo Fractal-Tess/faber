@@ -16,9 +16,17 @@ RUN cargo build --release
 FROM debian:bookworm-slim
 
 # Install necessary runtime dependencies
-RUN apt-get update && apt-get install -y \
+# Note: gcc, g++, make, libc-dev are included for C compilation use cases.
+# These increase image size but are required for compiling user-submitted code.
+# Security is maintained through namespace isolation, cgroup resource limits,
+# and capability dropping - see crates/faber-runtime/src/runtime/core.rs
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3 \
     ca-certificates \
+    gcc \
+    g++ \
+    make \
+    libc-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the binary and make it executable
