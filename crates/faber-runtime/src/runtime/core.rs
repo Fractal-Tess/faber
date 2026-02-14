@@ -12,7 +12,7 @@ use nix::{
     libc,
     sched::{unshare, CloneFlags},
     sys::wait::{waitpid, WaitPidFlag, WaitStatus},
-    unistd::{execvpe, fork, pipe, setgid, setuid, ForkResult, Pid},
+    unistd::{chdir, execvpe, fork, pipe, setgid, setuid, ForkResult, Pid},
 };
 
 use crate::{
@@ -141,14 +141,13 @@ impl Runtime {
             match unsafe { fork() } {
                 Ok(ForkResult::Child) => {
                     drop(reader);
-                    let result =
-                        match Self::execute_single_task(task, &self.cgroup, self.timeout) {
-                            Ok(task_result) => task_result,
-                            Err(e) => TaskResult::Failed {
-                                error: format!("Task execution failed: {}", e),
-                                stats: TaskResultStats::default(),
-                            },
-                        };
+                    let result = match Self::execute_single_task(task, &self.cgroup, self.timeout) {
+                        Ok(task_result) => task_result,
+                        Err(e) => TaskResult::Failed {
+                            error: format!("Task execution failed: {}", e),
+                            stats: TaskResultStats::default(),
+                        },
+                    };
                     let _ = serde_json::to_writer(writer, &result);
                     exit(0);
                 }
@@ -169,10 +168,11 @@ impl Runtime {
         let mut task_results = Vec::with_capacity(children.len());
         for (child, reader) in children {
             let _ = waitpid(child, None);
-            let result: TaskResult = serde_json::from_reader(reader).unwrap_or(TaskResult::Failed {
-                error: "Failed to read result from parallel task".to_string(),
-                stats: TaskResultStats::default(),
-            });
+            let result: TaskResult =
+                serde_json::from_reader(reader).unwrap_or(TaskResult::Failed {
+                    error: "Failed to read result from parallel task".to_string(),
+                    stats: TaskResultStats::default(),
+                });
             task_results.push(result);
         }
 
@@ -245,6 +245,21 @@ impl Runtime {
                 if let Err(e) = Self::child_setup_security() {
                     eprintln!("Security setup failed: {}", e);
                     exit(126);
+                }
+
+                // Change working directory if specified
+                if let Some(ref working_dir) = task.working_dir {
+                    let dir_cstr = match CString::new(working_dir.clone()) {
+                        Ok(c) => c,
+                        Err(_) => {
+                            eprintln!("Invalid working directory path");
+                            exit(127);
+                        }
+                    };
+                    if let Err(e) = chdir(dir_cstr.as_c_str()) {
+                        eprintln!("Failed to change directory to {}: {}", working_dir, e);
+                        exit(127);
+                    }
                 }
 
                 // Build environment
