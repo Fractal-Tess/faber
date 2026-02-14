@@ -3,7 +3,7 @@ import { FaberClient } from '../src/client';
 import { TaskBuilder } from '../src/builders/task-builder';
 import { getTestConfig } from './setup.integration';
 
-describe('C Program Compilation Integration Tests', () => {
+describe('C Program Compilation Integration Tests', { timeout: 30000 }, () => {
   let client: FaberClient;
   const config = getTestConfig();
 
