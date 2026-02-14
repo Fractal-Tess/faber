@@ -1,0 +1,15 @@
+[package]
+name = "cgroup-demo"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+nix = { version = "0.29", features = ["process", "fs", "signal", "user", "sched", "mount", "hostname", "resource"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

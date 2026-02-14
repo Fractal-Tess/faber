@@ -1,6 +1,6 @@
 {
   "name": "@faber/runtime-sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "JavaScript/TypeScript SDK for Faber secure task execution runtime",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -40,8 +40,5 @@
     "url": "https://github.com/Fractal-Tess/faber.git",
     "directory": "sdks/js"
   },
-  "homepage": "https://github.com/Fractal-Tess/faber#readme",
-  "dependencies": {
-    "zod": "^4.1.11"
-  }
+  "homepage": "https://github.com/Fractal-Tess/faber#readme"
 }

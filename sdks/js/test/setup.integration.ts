@@ -7,8 +7,8 @@
  */
 
 export const getTestConfig = () => {
-  const baseUrl = process.env.FABER_BASE_URL || 'http://localhost:3000';
-  const apiKey = process.env.FABER_API_KEY || 'just-a-test-api-key';
+  const baseUrl = process.env.FABER_BASE_URL || 'http://localhost:3001';
+  const apiKey = process.env.FABER_API_KEY || 'test-api-key';
 
   return {
     baseUrl,

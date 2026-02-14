@@ -10,6 +10,6 @@ mod utils;
 pub use cgroup::CgroupConfigBuilder;
 pub use container::ContainerConfigBuilder;
 
-pub use result::{RuntimeResult, TaskGroupResult};
+pub use result::{ExecutionStepResult, RuntimeResult, TaskGroupResult, TaskResult};
 pub use runtime::{Runtime, RuntimeBuilder};
-pub use task::TaskGroup;
+pub use task::{ExecutionStep, Task, TaskGroup};

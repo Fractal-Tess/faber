@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/faber-runtime", "crates/faber-api"]
+members = ["crates/faber-runtime", "crates/faber-api", "crates/faber-store"]
 resolver = "2"
 
 [package]
@@ -9,6 +9,7 @@ edition = "2024"
 
 [dependencies]
 faber-api = { path = "crates/faber-api" }
+faber-store = { path = "crates/faber-store", features = ["full"] }
 tokio = { version = "1.47", features = ["rt-multi-thread", "macros"] }
 
 [profile.release]

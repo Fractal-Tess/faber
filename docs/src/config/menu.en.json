@@ -1,0 +1,81 @@
+{
+  "main": [
+    {
+      "name": "Home",
+      "url": "/"
+    },
+    {
+      "name": "Docs",
+      "url": "/getting-started/introduction/overview/"
+    },
+    {
+      "name": "API",
+      "url": "/api/rest/endpoints/"
+    },
+    {
+      "name": "SDK",
+      "url": "/sdk/javascript/overview/"
+    }
+  ],
+  "footer": {
+    "community": {
+      "title": "Community",
+      "links": [
+        {
+          "name": "GitHub",
+          "url": "https://github.com/Fractal-Tess/faber"
+        },
+        {
+          "name": "NPM Package",
+          "url": "https://www.npmjs.com/package/@faber/runtime-sdk"
+        },
+        {
+          "name": "Docker Hub",
+          "url": "https://hub.docker.com/r/vgfractal/faber"
+        }
+      ]
+    },
+    "help_links": {
+      "title": "Documentation",
+      "links": [
+        {
+          "name": "Getting Started",
+          "url": "/getting-started/introduction/overview/"
+        },
+        {
+          "name": "API Reference",
+          "url": "/api/rest/endpoints/"
+        },
+        {
+          "name": "SDK Guide",
+          "url": "/sdk/javascript/overview/"
+        },
+        {
+          "name": "Examples",
+          "url": "/examples/patterns/basic/"
+        }
+      ]
+    },
+    "company": {
+      "title": "Resources",
+      "links": [
+        {
+          "name": "Installation",
+          "url": "/getting-started/installation/docker/"
+        },
+        {
+          "name": "Core Concepts",
+          "url": "/core-concepts/isolation/overview/"
+        },
+        {
+          "name": "Deployment",
+          "url": "/deployment/docker/setup/"
+        },
+        {
+          "name": "GitHub Issues",
+          "url": "https://github.com/Fractal-Tess/faber/issues"
+        }
+      ]
+    }
+  }
+}
