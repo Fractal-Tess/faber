@@ -20,7 +20,7 @@ FROM debian:bookworm-slim
 # These increase image size but are required for compiling user-submitted code.
 # Security is maintained through namespace isolation, cgroup resource limits,
 # and capability dropping - see crates/faber-runtime/src/runtime/core.rs
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3 \
     ca-certificates \
     gcc \
