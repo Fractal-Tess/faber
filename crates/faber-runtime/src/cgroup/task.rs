@@ -38,7 +38,7 @@ impl Drop for TaskCgroup {
 
 impl TaskCgroup {
     pub fn new(config: CgroupConfig) -> Result<Self> {
-        let faber_cgroup_path = PathBuf::from("/sys/fs/cgroup/faber");
+        let faber_cgroup_path = super::core::Cgroup::get_faber_cgroup_path()?;
         let task_id = generate_random_string(16);
         let task_cgroup_path = faber_cgroup_path.join(format!("task-{task_id}"));
 
@@ -179,17 +179,20 @@ impl TaskCgroup {
         })?;
 
         let memory_max_path = self.task_cgroup_path.join("memory.max");
+        let memory_max_value = if self.config.memory_max == "max" {
+            "max".to_string()
+        } else {
+            self.parse_memory_string(&self.config.memory_max)?
+                .to_string()
+        };
 
-        let memory_max_bytes = self.parse_memory_string(&self.config.memory_max)?;
-
-        write(&memory_max_path, memory_max_bytes.to_string()).map_err(|e| {
-            FaberError::WriteFile {
-                e,
-                details: format!(
-                    "Failed to write memory limit '{}' bytes to task cgroup",
-                    memory_max_bytes
-                ),
-            }
+        write(&memory_max_path, &memory_max_value).map_err(|e| FaberError::WriteFile {
+            e,
+            details: format!(
+                "Failed to write memory limit '{}' to task cgroup at {}",
+                memory_max_value,
+                memory_max_path.display()
+            ),
         })?;
 
         let pids_max_path = self.task_cgroup_path.join("pids.max");

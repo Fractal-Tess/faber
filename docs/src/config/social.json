@@ -1,0 +1,14 @@
+{
+  "main": [
+    {
+      "icon": "github",
+      "label": "GitHub",
+      "href": "https://github.com/Fractal-Tess/faber"
+    },
+    {
+      "icon": "seti:npm",
+      "label": "NPM",
+      "href": "https://www.npmjs.com/package/@faber/runtime-sdk"
+    }
+  ]
+}

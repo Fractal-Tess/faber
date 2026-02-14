@@ -6,10 +6,13 @@ description = "REST API server for Faber"
 
 [dependencies]
 faber-runtime = { path = "../faber-runtime" }
+faber-store = { path = "../faber-store", features = ["memory"] }
 tokio = { version = "1.47" }
-axum = { version = "0.8", features = ["json"] }
+axum = { version = "0.8", features = ["json", "multipart"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tower = { version = "0.5.2", features = ["limit"] }
 sha2 = "0.10"
 dashmap = "6.0"
+bytes = "1.5"
+tracing = "0.1"

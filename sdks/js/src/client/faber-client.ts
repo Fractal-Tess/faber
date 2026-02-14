@@ -2,7 +2,7 @@
  * Faber Runtime SDK Client
  */
 
-import { ValidationError } from '../errors';
+import { ValidationError, ApiError } from '../errors';
 import { TaskBuilder } from '../builders';
 import { stripTestsFromStep } from '../utils/task-utils';
 import { runTests } from '../utils/test-runner';
@@ -82,8 +82,17 @@ export class FaberClient {
     });
 
     if (!response.ok) {
-      throw new Error(
-        `API request failed: ${response.status} ${response.statusText}`
+      let errorBody: unknown;
+      try {
+        errorBody = await response.json();
+      } catch {
+        errorBody = await response.text().catch(() => '');
+      }
+      throw new ApiError(
+        `API request failed: ${response.status} ${response.statusText}`,
+        response.status,
+        response.statusText,
+        errorBody
       );
     }
 

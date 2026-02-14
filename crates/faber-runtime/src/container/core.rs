@@ -45,6 +45,7 @@ impl Container {
         self.create_tmpdir()?;
         self.change_hostname()?;
         self.create_workdir()?;
+        self.unmount_oldroot()?;
 
         Ok(())
     }
@@ -361,19 +362,6 @@ impl Container {
             details: "Failed to create proc directory".to_string(),
         })?;
 
-        eprintln!("DEBUG: Attempting to bind mount /oldroot/proc to /proc");
-
-        // Check if source exists
-        if !std::path::Path::new("/oldroot/proc").exists() {
-            eprintln!("DEBUG: /oldroot/proc does not exist!");
-        } else {
-            eprintln!("DEBUG: /oldroot/proc exists");
-        }
-
-        // Always use bind mount from oldroot/proc for Docker compatibility
-        // Mounting a new proc filesystem in a PID namespace doesn't work reliably
-        // because the calling process of unshare(CLONE_NEWPID) doesn't enter
-        // the new namespace - only its children do.
         match mount(
             Some("/oldroot/proc"),
             proc_path,
@@ -381,8 +369,24 @@ impl Container {
             MsFlags::MS_BIND,
             None::<&str>,
         ) {
-            Ok(_) => eprintln!("DEBUG: Bind mount succeeded"),
-            Err(e) => eprintln!("DEBUG: Bind mount failed: {:?}", e),
+            Ok(_) => {
+                tracing::debug!("Bind mounted /oldroot/proc to /proc");
+            }
+            Err(e) => {
+                tracing::debug!("Bind mount failed, attempting fresh proc mount: {:?}", e);
+                let proc_flags = MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC;
+                mount(
+                    None::<&str>,
+                    proc_path,
+                    Some("proc"),
+                    proc_flags,
+                    None::<&str>,
+                )
+                .map_err(|e| FaberError::Mount {
+                    e,
+                    details: "Failed to mount proc filesystem".to_string(),
+                })?;
+            }
         }
 
         Ok(())

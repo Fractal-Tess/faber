@@ -1,0 +1,98 @@
+{
+  "main": [
+    {
+      "label": "Getting Started",
+      "items": [
+        {
+          "label": "[rocket] Introduction",
+          "autogenerate": { "directory": "getting-started/introduction" }
+        },
+        {
+          "label": "[seti:config] Installation",
+          "autogenerate": { "directory": "getting-started/installation" }
+        },
+        {
+          "label": "[seti:rust] Quick Start",
+          "autogenerate": { "directory": "getting-started/quick-start" }
+        }
+      ]
+    },
+    {
+      "label": "Core Concepts",
+      "items": [
+        {
+          "label": "[seti:docker] Container Isolation",
+          "autogenerate": { "directory": "core-concepts/isolation" }
+        },
+        {
+          "label": "[seti:cpu] Resource Management",
+          "autogenerate": { "directory": "core-concepts/resources" }
+        },
+        {
+          "label": "[seti:typescript] Task Execution",
+          "autogenerate": { "directory": "core-concepts/execution" }
+        }
+      ]
+    },
+    {
+      "label": "API Reference",
+      "items": [
+        {
+          "label": "[document] REST API",
+          "autogenerate": { "directory": "api/rest" }
+        },
+        {
+          "label": "[seti:json] Types",
+          "autogenerate": { "directory": "api/types" }
+        },
+        {
+          "label": "[setting] Authentication",
+          "autogenerate": { "directory": "api/authentication" }
+        }
+      ]
+    },
+    {
+      "label": "SDK",
+      "items": [
+        {
+          "label": "[seti:javascript] JavaScript SDK",
+          "autogenerate": { "directory": "sdk/javascript" }
+        },
+        {
+          "label": "[seti:npm] TaskBuilder",
+          "autogenerate": { "directory": "sdk/taskbuilder" }
+        },
+        {
+          "label": "[seti:code-search] Testing",
+          "autogenerate": { "directory": "sdk/testing" }
+        }
+      ]
+    },
+    {
+      "label": "Examples",
+      "items": [
+        {
+          "label": "[seti:code-search] Common Patterns",
+          "autogenerate": { "directory": "examples/patterns" }
+        },
+        {
+          "label": "[seti:rust] C/C++ Compilation",
+          "autogenerate": { "directory": "examples/compilation" }
+        }
+      ]
+    },
+    {
+      "label": "Deployment",
+      "items": [
+        {
+          "label": "[seti:docker] Docker",
+          "autogenerate": { "directory": "deployment/docker" }
+        },
+        {
+          "label": "[seti:config] Configuration",
+          "autogenerate": { "directory": "deployment/configuration" }
+        }
+      ]
+    }
+  ]
+}

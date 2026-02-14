@@ -2,7 +2,21 @@
 target
 old
 
-
 # Added by cargo
-
 /target
+
+# Node
+node_modules/
+
+# Build outputs
+dist/
+.astro/
+*.tsbuildinfo
+
+# Temp/log files
+*.log
+.sisyphus/
+telemetry-id
+.changeset/*.md
+! .changeset/config.json
+! .changeset/README.md

@@ -1,0 +1,223 @@
+---
+title: Faber - Secure Task Execution Runtime
+description: Secure, isolated task execution runtime built in Rust with Linux namespaces and cgroups
+template: splash
+hero:
+  title: |
+    Secure <span class="text-primary">Task Execution</span>
+    <span class="light-text">Runtime</span>
+  tagline: Run commands in isolated Linux containers with strict resource limits, comprehensive monitoring, and robust security controls. Built with Rust for reliability and performance.
+---
+
+import Section from "~/components/Section.astro";
+import Card from "~/components/user-components/NewCard.astro";
+import Grid from "~/components/user-components/Grid.astro";
+import Button from "~/components/user-components/Button.astro";
+
+<Section title="Powerful features
+<span class='light-text'>for secure execution</span>" description="Explore the tools and capabilities that make Faber the ideal solution for sandboxed task execution.">
+
+<Grid columns={4}>
+  <Card title="Secure Isolation" icon="seti:lock" iconColor="#DE4F2E">
+    Linux namespaces and cgroups provide complete process isolation with minimal overhead
+  </Card>
+  <Card title="Resource Monitoring" icon="seti:cpu" iconColor="#7BE1A4">
+    Real-time tracking of CPU, memory, and process usage with configurable limits
+  </Card>
+
+<Card title="Parallel Execution" icon="seti:play" iconColor="#FFD97B">
+  Run multiple tasks concurrently with full isolation and independent resource accounting
+</Card>
+<Card title="RESTful API" icon="seti:json" iconColor="#979BFF">
+  Simple HTTP API with support for sequential and parallel task groups
+</Card>
+
+</Grid>
+</Section>
+
+import HeroTabs from "~/components/HeroTabs.astro";
+import HeroTabsItem from "~/components/HeroTabsItem.astro";
+
+<Section
+  title="Get started quickly <span class='light-text'>in just 3 simple steps</span>"
+  description="A fast and straightforward way to set up and start using Faber."
+>
+  <HeroTabs>
+    <HeroTabsItem
+      title="Install Faber"
+      subtitle="Run the Docker container with one command."
+      number={1}
+      image="/src/assets/step-1.png"
+      imageAlt="Install Faber"
+    />
+    <HeroTabsItem
+      title="Execute a task"
+      subtitle="Send your first task via the REST API."
+      number={2}
+      image="/src/assets/step-2.png"
+      imageAlt="Execute Task"
+    />
+    <HeroTabsItem
+      title="Use the SDK"
+      subtitle="Integrate with our JavaScript/TypeScript SDK."
+      number={3}
+      image="/src/assets/step-3.png"
+      imageAlt="Use SDK"
+    />
+  </HeroTabs>
+</Section>
+
+import ListCard from "~/components/user-components/ListCard.astro";
+import LinkButton from "~/components/LinkButton.astro";
+
+<Section title="Documentation topics <span class='light-text'>and guides</span>" description="Explore our comprehensive documentation to get the most out of Faber.">
+
+<Grid columns={3}>
+<ListCard title="Getting Started" imageIcon="/src/assets/element.svg" number="3">
+- [Installation Guide](/getting-started/installation/docker/)
+- [Quick Start](/getting-started/quick-start/first-task/)
+- [Core Concepts](/core-concepts/isolation/overview/)
+- [Architecture](/getting-started/introduction/architecture/)
+
+<LinkButton href="/getting-started/introduction/overview/" variant="text" className="mt-6 mb-8 ml-4">View getting started</LinkButton>
+</ListCard>
+
+<ListCard title="API Reference" imageIcon="/src/assets/content.svg" number="3">
+- [REST Endpoints](/api/rest/endpoints/)
+- [Type Definitions](/api/types/task/)
+- [Authentication](/api/authentication/overview/)
+
+<LinkButton href="/api/rest/endpoints/" variant="text" className="mt-6 mb-8 ml-4">View API docs</LinkButton>
+</ListCard>
+
+<ListCard title="SDK" imageIcon="/src/assets/code-block.svg" number="4">
+- [JavaScript SDK](/sdk/javascript/overview/)
+- [TaskBuilder](/sdk/taskbuilder/overview/)
+- [Testing Framework](/sdk/testing/overview/)
+- [Examples](/examples/patterns/basic/)
+
+<LinkButton href="/sdk/javascript/overview/" variant="text" className="mt-6 mb-8 ml-4">View SDK docs</LinkButton>
+</ListCard>
+</Grid>
+
+</Section>
+
+<Section
+  title="Quick Example <span class='light-text'>JavaScript SDK</span>"
+  description="See how easy it is to execute tasks with Faber using our JavaScript SDK."
+>
+
+```typescript
+import { FaberClient, TaskBuilder } from '@faber/runtime-sdk';
+
+const client = new FaberClient({
+  baseUrl: 'http://localhost:3000',
+  apiKey: 'your-api-key',
+});
+
+// Build and execute a task sequence
+const builder = new TaskBuilder()
+  .single({ cmd: '/bin/echo', args: ['Hello, Faber!'] })
+  .parallel([
+    { cmd: '/bin/sleep', args: ['1'] },
+    { cmd: '/bin/sleep', args: ['1'] },
+  ]);
+
+const results = await client.executeGroup(builder);
+console.log(results);
+```
+
+<Button
+  label="View Full Documentation"
+  link="/getting-started/introduction/overview/"
+  variant="primary"
+/>
+
+</Section>
+
+import AccordionContainer from "~/components/AccordionContainer.astro";
+import Accordion from "~/components/Accordion.astro";
+
+<Section
+  title="Frequently Asked <span class='light-text'>Questions</span>"
+  description="Get answers to common questions about Faber."
+>
+
+<AccordionContainer tabList={
+  [
+    {
+      type: 'basic',
+      title: 'Getting Started',
+      subtitle:'Common questions about Faber.',
+      icon: "rocket"
+
+    },
+    {
+      type: 'technical',
+      title: 'Technical Details',
+      subtitle:'Architecture and security.',
+      icon: "seti:config"
+
+    },
+    {
+      type: 'sdk',
+      title: 'SDK & API',
+      subtitle:'Integration questions.',
+      icon: "seti:javascript"
+
+    }
+
+]
+}>
+
+<Accordion
+  question="What is Faber?"
+  answer="Faber is a secure task execution runtime built in Rust that runs commands in isolated Linux containers with strict resource limits and monitoring."
+  type="basic"
+/>
+<Accordion
+  question="How do I install Faber?"
+  answer="The easiest way is using Docker: docker run --privileged --cgroupns=host -p 3000:3000 vgfractal/faber. See the Installation guide for more details."
+  type="basic"
+/>
+<Accordion
+  question="Is Faber production-ready?"
+  answer="Faber is actively developed and used in various projects. It provides solid isolation mechanisms, but as with any software, review the security documentation before production use."
+  type="basic"
+/>
+
+<Accordion
+  question="How does container isolation work?"
+  answer="Faber uses Linux namespaces (PID, mount, network, UTS, IPC) and cgroups v2 for complete process isolation. Tasks run as unprivileged users with dropped capabilities."
+  type="technical"
+/>
+<Accordion
+  question="What are the system requirements?"
+  answer="Faber requires Linux with cgroups v2 support. For Docker deployment, you need --privileged mode and --cgroupns=host for proper cgroup access."
+  type="technical"
+/>
+<Accordion
+  question="Can I customize resource limits?"
+  answer="Yes, you can configure CPU, memory, and PID limits through the runtime configuration. See the Resource Management section for details."
+  type="technical"
+/>
+
+<Accordion
+  question="Which SDKs are available?"
+  answer="Currently, we offer a JavaScript/TypeScript SDK (@faber/runtime-sdk). Additional SDKs for Python, Go, and Rust are planned."
+  type="sdk"
+/>
+<Accordion
+  question="How do I authenticate requests?"
+  answer="Use the Authorization header with a Bearer token: Authorization: Bearer your-api-key. See the Authentication documentation for more details."
+  type="sdk"
+/>
+<Accordion
+  question="Can I run tests on task results?"
+  answer="Yes! The JavaScript SDK includes a client-side testing framework that allows you to define assertions on stdout, stderr, exit codes, and more."
+  type="sdk"
+/>
+
+</AccordionContainer>
+
+</Section>

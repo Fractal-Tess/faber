@@ -72,6 +72,27 @@ impl Runtime {
             };
         }
 
+        // Fork a dedicated "init" process to keep the PID namespace alive.
+        // container.setup() calls unshare(CLONE_NEWPID), so the first child we
+        // fork becomes PID 1 in the new namespace. If PID 1 exits, the kernel
+        // destroys the namespace and all subsequent forks fail with ENOMEM.
+        // This init process stays alive for the duration of task execution,
+        // allowing task children to get PID 2, 3, etc.
+        let init_pid = match unsafe { fork() } {
+            Ok(ForkResult::Child) => {
+                // PID 1 in the new namespace — just sleep until killed
+                loop {
+                    std::thread::sleep(Duration::from_secs(3600));
+                }
+            }
+            Ok(ForkResult::Parent { child }) => child,
+            Err(e) => {
+                return RuntimeResult::ContainerSetupFailed {
+                    error: format!("Failed to fork namespace init process: {}", e),
+                };
+            }
+        };
+
         let mut results = Vec::with_capacity(self.task_group.len());
 
         for step in &self.task_group {
@@ -81,6 +102,10 @@ impl Runtime {
             };
             results.push(result);
         }
+
+        // Tear down the namespace init process
+        let _ = nix::sys::signal::kill(init_pid, nix::sys::signal::Signal::SIGKILL);
+        let _ = waitpid(init_pid, None);
 
         RuntimeResult::Success(results)
     }
@@ -96,44 +121,62 @@ impl Runtime {
     }
 
     fn execute_parallel(&self, tasks: Vec<Task>) -> ExecutionStepResult {
-        let mut handles = Vec::with_capacity(tasks.len());
+        // Cannot use std::thread::spawn after unshare(CLONE_NEWPID) because
+        // the kernel rejects CLONE_THREAD when pid_ns_for_children differs
+        // from the active PID namespace (EINVAL). Use fork + pipes instead.
+        let mut children: Vec<(Pid, std::io::PipeReader)> = Vec::with_capacity(tasks.len());
 
         for task in tasks {
-            let cgroup = self.cgroup.clone();
-            let timeout = self.timeout;
-            let handle = std::thread::spawn(move || {
-                match Self::execute_single_task(task, &cgroup, timeout) {
-                    Ok(task_result) => task_result,
-                    Err(e) => TaskResult::Failed {
-                        error: format!("Task execution failed: {}", e),
+            let pipe = match mk_pipe() {
+                Ok(p) => p,
+                Err(e) => {
+                    return ExecutionStepResult::Parallel(vec![TaskResult::Failed {
+                        error: format!("Failed to create pipe for parallel task: {}", e),
                         stats: TaskResultStats::default(),
-                    },
+                    }]);
                 }
-            });
-            handles.push(handle);
+            };
+            let (reader, writer) = pipe;
+
+            match unsafe { fork() } {
+                Ok(ForkResult::Child) => {
+                    drop(reader);
+                    let result =
+                        match Self::execute_single_task(task, &self.cgroup, self.timeout) {
+                            Ok(task_result) => task_result,
+                            Err(e) => TaskResult::Failed {
+                                error: format!("Task execution failed: {}", e),
+                                stats: TaskResultStats::default(),
+                            },
+                        };
+                    let _ = serde_json::to_writer(writer, &result);
+                    exit(0);
+                }
+                Ok(ForkResult::Parent { child }) => {
+                    drop(writer);
+                    children.push((child, reader));
+                }
+                Err(e) => {
+                    return ExecutionStepResult::Parallel(vec![TaskResult::Failed {
+                        error: format!("Failed to fork parallel task: {}", e),
+                        stats: TaskResultStats::default(),
+                    }]);
+                }
+            }
         }
 
-        let task_results = Self::collect_parallel_results(handles);
-        ExecutionStepResult::Parallel(task_results)
-    }
-
-    fn collect_parallel_results(
-        handles: Vec<std::thread::JoinHandle<TaskResult>>,
-    ) -> Vec<TaskResult> {
-        let mut task_results = Vec::with_capacity(handles.len());
-
-        for handle in handles {
-            let result = match handle.join() {
-                Ok(task_result) => task_result,
-                Err(_) => TaskResult::Failed {
-                    error: "Thread panicked during task execution".to_string(),
-                    stats: TaskResultStats::default(),
-                },
-            };
+        // Wait for all parallel children and collect results
+        let mut task_results = Vec::with_capacity(children.len());
+        for (child, reader) in children {
+            let _ = waitpid(child, None);
+            let result: TaskResult = serde_json::from_reader(reader).unwrap_or(TaskResult::Failed {
+                error: "Failed to read result from parallel task".to_string(),
+                stats: TaskResultStats::default(),
+            });
             task_results.push(result);
         }
 
-        task_results
+        ExecutionStepResult::Parallel(task_results)
     }
 
     fn execute_single_task(
@@ -374,8 +417,8 @@ impl Runtime {
             None::<&str>,
         ) {
             Ok(_) => {}
-            Err(e) => {
-                eprintln!("Warning: Failed to mount proc in PID namespace: {:?}", e);
+            Err(_) => {
+                // Fresh procfs mount may fail in rootless Docker (EPERM).
                 // Fallback: bind mount from oldroot (less secure but functional)
                 mount(
                     Some("/oldroot/proc"),

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Faber Integration Tests
 # Run this against a running Faber container from the host
 # Usage: API_URL=http://localhost:3000/api/v1 API_KEY=test-key ./comprehensive-test.sh

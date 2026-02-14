@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Docker Integration Test Runner for Faber
 # Builds image, runs container, executes tests, cleans up
 
