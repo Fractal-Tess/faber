@@ -1,8 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { FaberClient } from '../src/client';
-import { TaskBuilder } from '../src/task-builder';
+import { TaskBuilder } from '../src/builders/task-builder';
 import { getTestConfig } from './setup.integration';
-import type { TaskWithTest, TestContext, TestResult } from '../src/types';
 
 describe('C Program Compilation Integration Tests', () => {
   let client: FaberClient;
@@ -39,17 +38,15 @@ describe('C Program Compilation Integration Tests', () => {
       expect(result).toBeDefined();
       expect(result.length).toBe(2);
 
-      // Compilation step
       const compileResult = result[0];
-      if (!Array.isArray(compileResult) && 'stdout' in compileResult) {
-        expect(compileResult.exit_code).toBe(0);
+      if (!Array.isArray(compileResult)) {
+        expect(compileResult.exitCode).toBe(0);
       }
 
-      // Execution step
       const runResult = result[1];
-      if (!Array.isArray(runResult) && 'stdout' in runResult) {
+      if (!Array.isArray(runResult)) {
         expect(runResult.stdout).toContain('Hello, World!');
-        expect(runResult.exit_code).toBe(0);
+        expect(runResult.exitCode).toBe(0);
       }
     });
 
@@ -73,10 +70,7 @@ describe('C Program Compilation Integration Tests', () => {
       });
 
       expect(result).toBeDefined();
-      const stepResult = result[0];
-      if (!Array.isArray(stepResult) && 'stdout' in stepResult) {
-        expect(stepResult.exit_code).toBe(0);
-      }
+      expect(result.exitCode).toBe(0);
     });
 
     it('should compile with debug symbols', async () => {
@@ -96,10 +90,7 @@ describe('C Program Compilation Integration Tests', () => {
       });
 
       expect(result).toBeDefined();
-      const stepResult = result[0];
-      if (!Array.isArray(stepResult) && 'stdout' in stepResult) {
-        expect(stepResult.exit_code).toBe(0);
-      }
+      expect(result.exitCode).toBe(0);
     });
   });
 
@@ -120,12 +111,8 @@ describe('C Program Compilation Integration Tests', () => {
       });
 
       expect(result).toBeDefined();
-      const stepResult = result[0];
-      if (!Array.isArray(stepResult) && 'stdout' in stepResult) {
-        // GCC returns non-zero exit code on compilation errors
-        expect(stepResult.exit_code).not.toBe(0);
-        expect(stepResult.stderr).toBeTruthy();
-      }
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toBeTruthy();
     });
 
     it('should handle missing include errors', async () => {
@@ -143,11 +130,8 @@ describe('C Program Compilation Integration Tests', () => {
       });
 
       expect(result).toBeDefined();
-      const stepResult = result[0];
-      if (!Array.isArray(stepResult) && 'stdout' in stepResult) {
-        expect(stepResult.exit_code).not.toBe(0);
-        expect(stepResult.stderr).toContain('nonexistent.h');
-      }
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toContain('nonexistent.h');
     });
 
     it('should handle undefined reference errors', async () => {
@@ -166,11 +150,8 @@ describe('C Program Compilation Integration Tests', () => {
       });
 
       expect(result).toBeDefined();
-      const stepResult = result[0];
-      if (!Array.isArray(stepResult) && 'stdout' in stepResult) {
-        expect(stepResult.exit_code).not.toBe(0);
-        expect(stepResult.stderr).toBeTruthy();
-      }
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toBeTruthy();
     });
   });
 
@@ -207,9 +188,9 @@ describe('C Program Compilation Integration Tests', () => {
       expect(result.length).toBe(2);
 
       const runResult = result[1];
-      if (!Array.isArray(runResult) && 'stdout' in runResult) {
+      if (!Array.isArray(runResult)) {
         expect(runResult.stdout).toContain('Result: 12');
-        expect(runResult.exit_code).toBe(0);
+        expect(runResult.exitCode).toBe(0);
       }
     });
 
@@ -254,9 +235,9 @@ describe('C Program Compilation Integration Tests', () => {
       expect(result.length).toBe(4);
 
       const runResult = result[3];
-      if (!Array.isArray(runResult) && 'stdout' in runResult) {
+      if (!Array.isArray(runResult)) {
         expect(runResult.stdout).toContain('Product: 42');
-        expect(runResult.exit_code).toBe(0);
+        expect(runResult.exitCode).toBe(0);
       }
     });
   });
@@ -292,9 +273,9 @@ describe('C Program Compilation Integration Tests', () => {
 
       expect(result).toBeDefined();
       const runResult = result[1];
-      if (!Array.isArray(runResult) && 'stdout' in runResult) {
+      if (!Array.isArray(runResult)) {
         expect(runResult.stdout).toContain('Value: 42');
-        expect(runResult.exit_code).toBe(0);
+        expect(runResult.exitCode).toBe(0);
       }
     });
 
@@ -341,10 +322,10 @@ describe('C Program Compilation Integration Tests', () => {
 
       expect(result).toBeDefined();
       const runResult = result[1];
-      if (!Array.isArray(runResult) && 'stdout' in runResult) {
+      if (!Array.isArray(runResult)) {
         expect(runResult.stdout).toContain('Square of 5: 25');
         expect(runResult.stdout).toContain('Cube of 3: 27');
-        expect(runResult.exit_code).toBe(0);
+        expect(runResult.exitCode).toBe(0);
       }
     });
   });
@@ -375,9 +356,9 @@ describe('C Program Compilation Integration Tests', () => {
 
       expect(result).toBeDefined();
       const runResult = result[1];
-      if (!Array.isArray(runResult) && 'stdout' in runResult) {
+      if (!Array.isArray(runResult)) {
         expect(runResult.stdout).toContain('Square root of 16: 4.0');
-        expect(runResult.exit_code).toBe(0);
+        expect(runResult.exitCode).toBe(0);
       }
     });
 
@@ -409,10 +390,10 @@ describe('C Program Compilation Integration Tests', () => {
 
       expect(result).toBeDefined();
       const runResult = result[1];
-      if (!Array.isArray(runResult) && 'stdout' in runResult) {
+      if (!Array.isArray(runResult)) {
         expect(runResult.stdout).toContain('Hello World');
         expect(runResult.stdout).toContain('Length: 11');
-        expect(runResult.exit_code).toBe(0);
+        expect(runResult.exitCode).toBe(0);
       }
     });
   });
@@ -435,14 +416,9 @@ describe('C Program Compilation Integration Tests', () => {
       });
 
       expect(result).toBeDefined();
-      const stepResult = result[0];
-      if (!Array.isArray(stepResult) && 'stdout' in stepResult) {
-        // Compilation should succeed but may have warnings
-        expect(stepResult.exit_code).toBe(0);
-        // Check if stderr contains warning about unused variable
-        if (stepResult.stderr) {
-          expect(stepResult.stderr).toContain('unused');
-        }
+      expect(result.exitCode).toBe(0);
+      if (result.stderr) {
+        expect(result.stderr).toContain('unused');
       }
     });
 
@@ -463,11 +439,7 @@ describe('C Program Compilation Integration Tests', () => {
       });
 
       expect(result).toBeDefined();
-      const stepResult = result[0];
-      if (!Array.isArray(stepResult) && 'stdout' in stepResult) {
-        // Should fail because warnings are treated as errors
-        expect(stepResult.exit_code).not.toBe(0);
-      }
+      expect(result.exitCode).not.toBe(0);
     });
   });
 
@@ -482,7 +454,6 @@ describe('C Program Compilation Integration Tests', () => {
               #include <stdio.h>
               
               int main() {
-                // Variable declaration in for loop (C99 feature)
                 for (int i = 0; i < 5; i++) {
                   printf("%d ", i);
                 }
@@ -499,9 +470,9 @@ describe('C Program Compilation Integration Tests', () => {
 
       expect(result).toBeDefined();
       const runResult = result[1];
-      if (!Array.isArray(runResult) && 'stdout' in runResult) {
+      if (!Array.isArray(runResult)) {
         expect(runResult.stdout).toContain('0 1 2 3 4');
-        expect(runResult.exit_code).toBe(0);
+        expect(runResult.exitCode).toBe(0);
       }
     });
 
@@ -522,10 +493,7 @@ describe('C Program Compilation Integration Tests', () => {
       });
 
       expect(result).toBeDefined();
-      const stepResult = result[0];
-      if (!Array.isArray(stepResult) && 'stdout' in stepResult) {
-        expect(stepResult.exit_code).toBe(0);
-      }
+      expect(result.exitCode).toBe(0);
     });
   });
 
@@ -556,10 +524,6 @@ describe('C Program Compilation Integration Tests', () => {
           {
             cmd: './calculator',
           },
-          {
-            cmd: 'sh',
-            args: ['-c', 'ls -la calculator'],
-          },
         ]);
 
       const result = await client.executeGroup(plan);
@@ -567,20 +531,11 @@ describe('C Program Compilation Integration Tests', () => {
       expect(result).toBeDefined();
       expect(result.length).toBe(2);
 
-      // Check parallel execution results
       const parallelResults = result[1];
       if (Array.isArray(parallelResults)) {
-        // First parallel task - run calculator
-        if ('stdout' in parallelResults[0]) {
-          expect(parallelResults[0].stdout).toContain('Add: 15');
-          expect(parallelResults[0].stdout).toContain('Subtract: 5');
-          expect(parallelResults[0].stdout).toContain('Multiply: 50');
-        }
-
-        // Second parallel task - list executable
-        if ('stdout' in parallelResults[1]) {
-          expect(parallelResults[1].stdout).toContain('calculator');
-        }
+        expect(parallelResults[0].stdout).toContain('Add: 15');
+        expect(parallelResults[0].stdout).toContain('Subtract: 5');
+        expect(parallelResults[0].stdout).toContain('Multiply: 50');
       }
     });
 
@@ -636,9 +591,7 @@ describe('C Program Compilation Integration Tests', () => {
       if (Array.isArray(parallelResults)) {
         expect(parallelResults.length).toBe(3);
         parallelResults.forEach((taskResult) => {
-          if ('stdout' in taskResult) {
-            expect(taskResult.exit_code).toBe(0);
-          }
+          expect(taskResult.exitCode).toBe(0);
         });
       }
     });
@@ -672,9 +625,9 @@ describe('C Program Compilation Integration Tests', () => {
 
       expect(result).toBeDefined();
       const runResult = result[1];
-      if (!Array.isArray(runResult) && 'stdout' in runResult) {
+      if (!Array.isArray(runResult)) {
         expect(runResult.stdout).toContain('Debug mode enabled');
-        expect(runResult.exit_code).toBe(0);
+        expect(runResult.exitCode).toBe(0);
       }
     });
 
@@ -701,16 +654,16 @@ describe('C Program Compilation Integration Tests', () => {
 
       expect(result).toBeDefined();
       const runResult = result[1];
-      if (!Array.isArray(runResult) && 'stdout' in runResult) {
+      if (!Array.isArray(runResult)) {
         expect(runResult.stdout).toContain('Max size: 100');
-        expect(runResult.exit_code).toBe(0);
+        expect(runResult.exitCode).toBe(0);
       }
     });
   });
 
-  describe('TaskWithTest functionality', () => {
-    it('should validate compilation and execution with built-in tests', async () => {
-      const tasksWithTests: TaskWithTest[] = [
+  describe('Client-side tests with executeWithTests', () => {
+    it('should validate compilation and execution with tests', async () => {
+      const result = await client.executeWithTests([
         {
           cmd: 'gcc',
           args: ['calculator.c', '-o', 'calculator', '-Wall'],
@@ -728,77 +681,42 @@ describe('C Program Compilation Integration Tests', () => {
               }
             `
           },
-          test: (context: TestContext): TestResult => {
-            const hasWarnings = context.stderr.includes('warning');
-            const hasErrors = context.stderr.includes('error');
-
-            return {
-              passed: context.exit_code === 0 && !hasErrors,
-              message: hasErrors
-                ? `Compilation failed: ${context.stderr}`
-                : hasWarnings
-                  ? `Compiled with warnings: ${context.stderr}`
-                  : 'Compilation successful',
-              details: {
-                exit_code: context.exit_code,
-                has_warnings: hasWarnings,
-                has_errors: hasErrors,
-                compilation_time: context.stats.execution_time_ms,
-                memory_used: context.stats.memory_peak_bytes
-              }
-            };
-          }
+          tests: [
+            {
+              name: 'compilation succeeds',
+              assertion: 'equals',
+              field: 'exitCode',
+              expected: 0,
+            },
+          ],
         },
         {
           cmd: './calculator',
-          test: (context: TestContext): TestResult => {
-            const expectedOutput = ['5 + 3 = 8', '4 * 7 = 28'];
-            const outputLines = context.stdout.trim().split('\n');
-            const allLinesPresent = expectedOutput.every(line =>
-              context.stdout.includes(line)
-            );
-
-            return {
-              passed: context.exit_code === 0 && allLinesPresent,
-              message: allLinesPresent
-                ? 'Program output is correct'
-                : `Program output mismatch. Expected lines: ${expectedOutput.join(', ')}, Got: ${outputLines.join(', ')}`,
-              details: {
-                exit_code: context.exit_code,
-                expected_lines: expectedOutput,
-                actual_lines: outputLines,
-                execution_time: context.stats.execution_time_ms,
-                output_length: context.stdout.length
-              }
-            };
-          }
-        }
-      ];
-
-      const result = await client.executeGroupWithTests(tasksWithTests);
+          tests: [
+            {
+              name: 'output contains addition',
+              assertion: 'contains',
+              field: 'stdout',
+              expected: '5 + 3 = 8',
+            },
+            {
+              name: 'output contains multiplication',
+              assertion: 'contains',
+              field: 'stdout',
+              expected: '4 * 7 = 28',
+            },
+          ],
+        },
+      ]);
 
       expect(result).toBeDefined();
       expect(result.results).toHaveLength(2);
       expect(result.stepResults).toHaveLength(2);
       expect(result.allTestsPassed).toBe(true);
-      expect(result.failedSteps).toHaveLength(0);
-
-      // Check individual step results
-      const compilationStep = result.stepResults[0];
-      expect(compilationStep.passed).toBe(true);
-      expect(compilationStep.testResult).toBeDefined();
-      expect(compilationStep.testResult!.passed).toBe(true);
-      expect(compilationStep.testResult!.message).toContain('Compilation successful');
-
-      const executionStep = result.stepResults[1];
-      expect(executionStep.passed).toBe(true);
-      expect(executionStep.testResult).toBeDefined();
-      expect(executionStep.testResult!.passed).toBe(true);
-      expect(executionStep.testResult!.message).toContain('Program output is correct');
     });
 
     it('should handle test failures correctly', async () => {
-      const tasksWithTests: TaskWithTest[] = [
+      const result = await client.executeWithTests([
         {
           cmd: 'gcc',
           args: ['broken.c', '-o', 'broken'],
@@ -806,105 +724,80 @@ describe('C Program Compilation Integration Tests', () => {
             'broken.c': `
               #include <stdio.h>
               int main() {
-                printf("Hello")  // Missing semicolon
+                printf("Hello")
                 return 0;
               }
             `
           },
-          test: (context: TestContext): TestResult => {
-            return {
-              passed: context.exit_code === 0,
-              message: context.exit_code === 0 ? 'Compilation succeeded' : 'Compilation failed',
-              details: { exit_code: context.exit_code }
-            };
-          }
-        }
-      ];
-
-      const result = await client.executeGroupWithTests(tasksWithTests);
+          tests: [
+            {
+              name: 'compilation succeeds',
+              assertion: 'equals',
+              field: 'exitCode',
+              expected: 0,
+            },
+          ],
+        },
+      ]);
 
       expect(result).toBeDefined();
       expect(result.allTestsPassed).toBe(false);
-      expect(result.failedSteps).toHaveLength(1);
-
-      const failedStep = result.failedSteps[0];
-      expect(failedStep.passed).toBe(false);
-      expect(failedStep.testResult).toBeDefined();
-      expect(failedStep.testResult!.passed).toBe(false);
-      expect(failedStep.testResult!.message).toContain('Compilation failed');
+      expect(result.failedCount).toBe(1);
     });
 
-    it('should work with TaskBuilder and test functions', async () => {
-      const taskBuilder = new TaskBuilder()
-        .singleWithTest({
-          cmd: 'echo',
-          args: ['Hello, World!']
-        }, (context: TestContext): TestResult => {
-          return {
-            passed: context.stdout.includes('Hello, World!') && context.exit_code === 0,
-            message: context.stdout.includes('Hello, World!')
-              ? 'Echo command worked correctly'
-              : 'Echo command failed',
-            details: {
-              output: context.stdout.trim(),
-              exit_code: context.exit_code,
-              execution_time: context.stats.execution_time_ms
-            }
-          };
-        });
+    it('should work with TaskBuilder and singleWithTests', async () => {
+      const plan = new TaskBuilder().singleWithTests(
+        { cmd: 'echo', args: ['Hello, World!'] },
+        [
+          {
+            name: 'output check',
+            assertion: 'contains',
+            field: 'stdout',
+            expected: 'Hello, World!',
+          },
+        ]
+      );
 
-      const result = await client.executeGroupWithTests(taskBuilder);
+      const result = await client.executeWithTests(plan);
 
       expect(result).toBeDefined();
       expect(result.allTestsPassed).toBe(true);
       expect(result.stepResults).toHaveLength(1);
-
-      const stepResult = result.stepResults[0];
-      expect(stepResult.passed).toBe(true);
-      expect(stepResult.testResult).toBeDefined();
-      expect(stepResult.testResult!.passed).toBe(true);
-      expect(stepResult.testResult!.message).toContain('Echo command worked correctly');
     });
 
     it('should handle parallel tasks with tests', async () => {
-      const parallelTasks: TaskWithTest[] = [
-        {
-          cmd: 'echo',
-          args: ['Task 1'],
-          test: (context: TestContext): TestResult => ({
-            passed: context.stdout.includes('Task 1'),
-            message: context.stdout.includes('Task 1') ? 'Task 1 passed' : 'Task 1 failed',
-            details: { output: context.stdout.trim() }
-          })
-        },
-        {
-          cmd: 'echo',
-          args: ['Task 2'],
-          test: (context: TestContext): TestResult => ({
-            passed: context.stdout.includes('Task 2'),
-            message: context.stdout.includes('Task 2') ? 'Task 2 passed' : 'Task 2 failed',
-            details: { output: context.stdout.trim() }
-          })
-        }
-      ];
-
-      // For parallel execution, we need to pass the array as a single step
-      const result = await client.executeGroupWithTests([parallelTasks]);
+      const result = await client.executeWithTests([
+        [
+          {
+            cmd: 'echo',
+            args: ['Task 1'],
+            tests: [
+              {
+                name: 'task 1 check',
+                assertion: 'contains',
+                field: 'stdout',
+                expected: 'Task 1',
+              },
+            ],
+          },
+          {
+            cmd: 'echo',
+            args: ['Task 2'],
+            tests: [
+              {
+                name: 'task 2 check',
+                assertion: 'contains',
+                field: 'stdout',
+                expected: 'Task 2',
+              },
+            ],
+          },
+        ],
+      ]);
 
       expect(result).toBeDefined();
       expect(result.allTestsPassed).toBe(true);
       expect(result.stepResults).toHaveLength(1);
-
-      // This is a parallel step with two tasks
-      const parallelStep = result.stepResults[0];
-      expect(parallelStep.passed).toBe(true);
-      expect(parallelStep.testResult).toBeDefined();
-      expect(Array.isArray(parallelStep.testResult)).toBe(true);
-
-      const parallelTestResults = parallelStep.testResult as TestResult[];
-      expect(parallelTestResults).toHaveLength(2);
-      expect(parallelTestResults[0].passed).toBe(true);
-      expect(parallelTestResults[1].passed).toBe(true);
     });
   });
 });
