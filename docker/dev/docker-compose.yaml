@@ -15,7 +15,6 @@ services:
       - CARGO_HOME=/usr/local/cargo
       - CACHE_ENABLED=true
     privileged: true
-    cgroup: host
     ports:
       - '3000:3000'
 

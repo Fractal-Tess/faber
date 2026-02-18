@@ -32,7 +32,7 @@ Build and run:
 
 ```bash
 docker build -t faber-gcc .
-docker run --privileged --cgroupns=host -p 3000:3000 faber-gcc
+docker run --privileged -p 3000:3000 faber-gcc
 ```
 
 ## Basic C Program

@@ -29,20 +29,10 @@ fi
 echo -e "${GREEN}✓ Docker image built${NC}"
 echo ""
 
-# Setup cgroup hierarchy (required for faber to work)
-echo "[2/4] Setting up cgroup hierarchy..."
-sudo mkdir -p /sys/fs/cgroup/faber 2>/dev/null || true
-sudo chmod 777 /sys/fs/cgroup/faber 2>/dev/null || true
-echo "+cpu +memory +pids" | sudo tee /sys/fs/cgroup/faber/cgroup.subtree_control 2>/dev/null || true
-echo -e "${GREEN}✓ Cgroup hierarchy ready${NC}"
-echo ""
-
 # Run the container in background
-echo "[3/4] Starting Faber container..."
+echo "[2/4] Starting Faber container..."
 CONTAINER_ID=$(sudo docker run -d \
     --privileged \
-    --cgroupns=host \
-    -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
     -e API_KEY=$API_KEY \
     -e CACHE_ENABLED=true \
     -p $PORT:$PORT \
@@ -58,10 +48,9 @@ echo -e "${GREEN}✓ Container started: $CONTAINER_ID${NC}"
 # Cleanup function
 cleanup() {
     echo ""
-    echo "[4/4] Cleaning up..."
+    echo "[3/4] Cleaning up..."
     sudo docker stop $CONTAINER_ID > /dev/null 2>&1 || true
     sudo docker rm $CONTAINER_ID > /dev/null 2>&1 || true
-    sudo rm -rf /sys/fs/cgroup/faber/task-* 2>/dev/null || true
     echo -e "${GREEN}✓ Cleanup complete${NC}"
 }
 
