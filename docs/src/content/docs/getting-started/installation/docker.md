@@ -18,13 +18,12 @@ The easiest way to get started with Faber is using our official Docker image.
 Run Faber with a single command:
 
 ```bash
-docker run --privileged --cgroupns=host -p 3000:3000 vgfractal/faber
+docker run --privileged -p 3000:3000 vgfractal/faber
 ```
 
 This will:
 - Start Faber on port 3000
-- Enable privileged mode for cgroup access
-- Use host cgroup namespace
+- Enable privileged mode for namespace and cgroup access
 
 ## Custom Image with Tools
 
@@ -53,7 +52,7 @@ Build and run:
 
 ```bash
 docker build -t my-faber .
-docker run --privileged --cgroupns=host -p 3000:3000 my-faber
+docker run --privileged -p 3000:3000 my-faber
 ```
 
 ### Python Support
@@ -93,15 +92,12 @@ services:
   faber:
     image: vgfractal/faber
     privileged: true
-    cgroup: host
     ports:
       - "3000:3000"
     environment:
       - API_KEY=your-secret-api-key
       - CACHE_ENABLED=true
       - RUST_LOG=info
-    volumes:
-      - /sys/fs/cgroup:/sys/fs/cgroup:rw
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/v1/health"]
@@ -130,9 +126,8 @@ docker-compose up -d
 For persistent data or custom configurations:
 
 ```bash
-docker run --privileged --cgroupns=host \
+docker run --privileged \
   -p 3000:3000 \
-  -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
   -e API_KEY=your-key \
   vgfractal/faber
 ```
@@ -142,7 +137,7 @@ docker run --privileged --cgroupns=host \
 ### Expose to Specific Interface
 
 ```bash
-docker run --privileged --cgroupns=host \
+docker run --privileged \
   -p 127.0.0.1:3000:3000 \
   -e API_KEY=your-key \
   vgfractal/faber
@@ -155,7 +150,7 @@ docker run --privileged --cgroupns=host \
 docker network create faber-network
 
 # Run Faber
-docker run --privileged --cgroupns=host \
+docker run --privileged \
   --network faber-network \
   --name faber \
   -e API_KEY=your-key \
@@ -166,22 +161,17 @@ docker run --privileged --cgroupns=host \
 
 ### Permission Denied Errors
 
-If you see cgroup permission errors:
+If you see cgroup permission errors, ensure the container is running in privileged mode:
 
 ```bash
-# Pre-create cgroup directory
-sudo mkdir -p /sys/fs/cgroup/faber
-sudo chmod 777 /sys/fs/cgroup/faber
-
-# Enable controllers
-echo "+cpu +memory +pids" | sudo tee /sys/fs/cgroup/faber/cgroup.subtree_control
+docker inspect <container> --format '{{.HostConfig.Privileged}}'
 ```
 
 ### Port Already in Use
 
 ```bash
 # Use a different port
-docker run --privileged --cgroupns=host \
+docker run --privileged \
   -p 8080:3000 \
   -e API_KEY=your-key \
   vgfractal/faber

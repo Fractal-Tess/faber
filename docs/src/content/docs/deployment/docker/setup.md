@@ -15,7 +15,6 @@ Run Faber container:
 docker run -d \
   --name faber \
   --privileged \
-  --cgroupns=host \
   -p 3000:3000 \
   -e API_KEY=your-secret-api-key \
   vgfractal/faber
@@ -33,15 +32,12 @@ services:
     image: vgfractal/faber:latest
     container_name: faber
     privileged: true
-    cgroup: host
     ports:
       - "3000:3000"
     environment:
       - API_KEY=${FABER_API_KEY}
       - CACHE_ENABLED=true
       - RUST_LOG=info
-    volumes:
-      - /sys/fs/cgroup:/sys/fs/cgroup:rw
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/v1/health"]
@@ -281,10 +277,8 @@ Check cgroup setup:
 # Host must have cgroup v2
 ls /sys/fs/cgroup/cgroup.controllers
 
-# Pre-create faber cgroup
-sudo mkdir -p /sys/fs/cgroup/faber
-sudo chmod 777 /sys/fs/cgroup/faber
-echo "+cpu +memory +pids" | sudo tee /sys/fs/cgroup/faber/cgroup.subtree_control
+# Ensure container runs in privileged mode
+docker inspect <container> --format '{{.HostConfig.Privileged}}'
 ```
 
 ### Out of Memory

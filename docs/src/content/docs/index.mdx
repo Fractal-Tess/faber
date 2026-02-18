@@ -177,7 +177,7 @@ import Accordion from "~/components/Accordion.astro";
 />
 <Accordion
   question="How do I install Faber?"
-  answer="The easiest way is using Docker: docker run --privileged --cgroupns=host -p 3000:3000 vgfractal/faber. See the Installation guide for more details."
+  answer="The easiest way is using Docker: docker run --privileged -p 3000:3000 vgfractal/faber. See the Installation guide for more details."
   type="basic"
 />
 <Accordion
@@ -193,7 +193,7 @@ import Accordion from "~/components/Accordion.astro";
 />
 <Accordion
   question="What are the system requirements?"
-  answer="Faber requires Linux with cgroups v2 support. For Docker deployment, you need --privileged mode and --cgroupns=host for proper cgroup access."
+  answer="Faber requires Linux with cgroups v2 support. For Docker deployment, you need --privileged mode for proper namespace and cgroup access."
   type="technical"
 />
 <Accordion

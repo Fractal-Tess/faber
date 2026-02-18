@@ -114,8 +114,6 @@ docker build -f docker/prod/Dockerfile -t faber:latest .
 # Run with required privileges
 docker run -d \
   --privileged \
-  --cgroupns=host \
-  -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
   -e API_KEY=your-api-key \
   -p 3000:3000 \
   faber:latest
@@ -139,7 +137,7 @@ RUN apt-get update && apt-get install -y \
 
 **NEVER:**
 - **Run Faber directly on the host** - Always use Docker (see Critical Deployment Rule above)
-- Run Docker without `--privileged --cgroupns=host` (Faber requires host cgroup access)
+- Run Docker without `--privileged` (Faber requires privileged mode for namespace operations)
 - Use `as any` or `@ts-ignore` in TypeScript (strict types enforced)
 - Skip cgroup setup before running tests (causes ENOMEM errors)
 - Commit without conventional format (`type: description`)
@@ -168,7 +166,7 @@ npm run test:integration # Integration tests
 npx changeset version    # Version bump + changelog
 
 # Docker
-sudo docker run --privileged --cgroupns=host -p 3000:3000 faber
+sudo docker run --privileged -p 3000:3000 faber
 ./scripts/test-docker.sh # Full integration test
 
 # Docs (cd docs)
@@ -188,9 +186,7 @@ echo "+cpu +memory +pids" | sudo tee /sys/fs/cgroup/faber/cgroup.subtree_control
 ```
 
 ### Docker Requirements
-- `--privileged` flag required
-- `--cgroupns=host` for cgroup v2 access
-- Volume mount: `-v /sys/fs/cgroup:/sys/fs/cgroup:rw`
+- `--privileged` flag required for namespace operations and cgroup access
 
 ---
 

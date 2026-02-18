@@ -362,19 +362,7 @@ timeout: 5 seconds
 ### Prerequisites
 
 - Linux kernel with cgroups v2
-- Root privileges (or appropriate capabilities)
-- Cgroup hierarchy at `/sys/fs/cgroup/faber`
-
-### Host Setup
-
-```bash
-# Create faber cgroup directory
-sudo mkdir -p /sys/fs/cgroup/faber
-sudo chmod 777 /sys/fs/cgroup/faber
-
-# Enable required controllers
-echo "+cpu +memory +pids" | sudo tee /sys/fs/cgroup/faber/cgroup.subtree_control
-```
+- Docker with privileged mode support
 
 ### Docker Deployment
 
@@ -386,17 +374,13 @@ docker build -f docker/prod/Dockerfile -t faber:latest .
 sudo docker run -d \
     --name faber \
     --privileged \
-    --cgroupns=host \
-    -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
     -e API_KEY=your-secret-key \
     -p 3000:3000 \
     faber:latest
 ```
 
 **Required Docker flags:**
-- `--privileged`: Required for namespace operations
-- `--cgroupns=host`: Use host cgroup namespace
-- `-v /sys/fs/cgroup:/sys/fs/cgroup:rw`: Mount cgroup filesystem
+- `--privileged`: Required for namespace operations and cgroup access
 
 ### With GCC (for code compilation)
 

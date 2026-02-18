@@ -54,7 +54,7 @@ ENTRYPOINT ["./faber"]
 
 ```bash
 docker build -t my-faber .
-docker run --privileged --cgroupns=host -p 3000:3000 my-faber
+docker run --privileged -p 3000:3000 my-faber
 ```
 
 3. **Execute a task**:

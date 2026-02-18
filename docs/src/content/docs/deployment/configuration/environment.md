@@ -57,7 +57,7 @@ Default: `3000`
 ## Docker Example
 
 ```bash
-docker run --privileged --cgroupns=host \
+docker run --privileged \
   -p 3000:3000 \
   -e API_KEY=your-secret-key \
   -e CACHE_ENABLED=true \
