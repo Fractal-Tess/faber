@@ -62,8 +62,8 @@ slice.
   and `NoNewPrivs`
 - [x] Bounded process I/O: concurrent draining, stream limits, truncation, and
   output-limit tests
-- [ ] Process lifecycle: PID 1 reaping, process-tree termination, timeout,
-  cancellation, and zombie tests
+- [x] Process lifecycle: PID 1 reaping, process-tree termination, timeout, and
+  zombie tests (API cancellation remains part of explicit execution outcomes)
 - [ ] Mount/sys hardening: private propagation, minimal read-only sysfs, removal
   of host fallbacks, and fail-closed tests
 - [ ] Rlimits and resource outcomes: CPU/file/FD/core/stack limits and explicit
@@ -104,8 +104,9 @@ Complete these before accepting hostile workloads:
 4. **Complete:** clear supplementary groups and ambient/bounding capabilities,
    then set `NoNewPrivs` before execution. The security-state probe verifies
    every resulting kernel field.
-5. Replace the sleeping namespace init with a signal-aware PID 1 that reaps all
-   descendants and terminates the full task cgroup on timeout or cancellation.
+5. **Complete for execution and timeout:** PID 1 continuously reaps orphaned
+   descendants and timeout/output enforcement kills the full task cgroup.
+   API-level cancellation remains pending with explicit outcomes.
 6. Remove host `/sys` fallbacks or expose only a minimal read-only subset. All
    security setup must fail closed and retain the original error.
 7. Add explicit execution outcomes: exited, signaled, timed out, OOM-killed,

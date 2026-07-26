@@ -79,6 +79,41 @@ int main(void) {
 }
 "#;
 
+const ORPHAN_PROBE_SOURCE: &str = r#"
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+int main(void) {
+    pid_t child = fork();
+    if (child < 0) {
+        return 1;
+    }
+    if (child == 0) {
+        int marker = open("orphan.pid", O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+        if (marker < 0) {
+            _exit(2);
+        }
+        dprintf(marker, "%d\n", getpid());
+        close(marker);
+        close(STDIN_FILENO);
+        close(STDOUT_FILENO);
+        close(STDERR_FILENO);
+        pause();
+        _exit(0);
+    }
+
+    for (int attempt = 0; attempt < 100; attempt++) {
+        if (access("orphan.pid", F_OK) == 0) {
+            return 0;
+        }
+        usleep(1000);
+    }
+    return 3;
+}
+"#;
+
 const MEMORY_PROBE_SOURCE: &str = r#"
 #include <stdlib.h>
 #include <unistd.h>
@@ -471,6 +506,71 @@ fn parallel_large_results_do_not_deadlock_result_transport() {
         assert_eq!(stdout.len(), OUTPUT_SIZE);
         assert!(!stats.stdout_truncated);
     }
+}
+
+#[test]
+fn namespace_init_reaps_orphaned_task_descendants() {
+    let _guard = lock_security_tests();
+    let results = execute(vec![
+        task_with_file(
+            "/usr/bin/gcc",
+            &["orphan_probe.c", "-o", "orphan_probe"],
+            "orphan_probe.c",
+            ORPHAN_PROBE_SOURCE,
+        ),
+        task("./orphan_probe", &[]),
+        task(
+            "/bin/sh",
+            &[
+                "-c",
+                "sleep 0.1; pid=$(cat orphan.pid); test ! -e /proc/$pid",
+            ],
+        ),
+    ]);
+
+    for (index, result) in results.iter().enumerate() {
+        let TaskResult::Completed {
+            exit_code, stderr, ..
+        } = single_result(result)
+        else {
+            panic!("orphan lifecycle step {index} failed: {result:?}");
+        };
+        assert_eq!(*exit_code, 0, "orphan lifecycle step {index}: {stderr}");
+    }
+}
+
+#[test]
+fn timeout_kills_the_complete_task_process_tree() {
+    let _guard = lock_security_tests();
+    let started = std::time::Instant::now();
+    let result = RuntimeBuilder::default()
+        .with_task_group(vec![ExecutionStep::Single(task(
+            "/bin/sh",
+            &["-c", "sleep 30 & wait"],
+        ))])
+        .with_timeout(std::time::Duration::from_millis(150))
+        .build()
+        .execute()
+        .expect("runtime execution failed");
+    let RuntimeResult::Success(results) = result else {
+        panic!("container setup failed: {result:?}");
+    };
+    assert_no_task_cgroups();
+
+    let TaskResult::Failed { error, .. } = single_result(&results[0]) else {
+        panic!(
+            "timed-out process tree was reported as completed: {:?}",
+            results[0]
+        );
+    };
+    assert!(
+        error.contains("timeout"),
+        "unexpected timeout error: {error}"
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "task process tree was not terminated promptly"
+    );
 }
 
 #[test]

@@ -93,12 +93,7 @@ impl Runtime {
         // This init process stays alive for the duration of task execution,
         // allowing task children to get PID 2, 3, etc.
         let init_pid = match unsafe { fork() } {
-            Ok(ForkResult::Child) => {
-                // PID 1 in the new namespace — just sleep until killed
-                loop {
-                    std::thread::sleep(Duration::from_secs(3600));
-                }
-            }
+            Ok(ForkResult::Child) => Self::run_namespace_init(),
             Ok(ForkResult::Parent { child }) => child,
             Err(e) => {
                 return RuntimeResult::ContainerSetupFailed {
@@ -122,6 +117,22 @@ impl Runtime {
         let _ = waitpid(init_pid, None);
 
         RuntimeResult::Success(results)
+    }
+
+    fn run_namespace_init() -> ! {
+        loop {
+            match waitpid(Pid::from_raw(-1), Some(WaitPidFlag::WNOHANG)) {
+                Ok(WaitStatus::StillAlive) | Err(nix::errno::Errno::ECHILD) => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Ok(_) => {}
+                Err(nix::errno::Errno::EINTR) => {}
+                Err(error) => {
+                    eprintln!("Namespace init failed to reap a descendant: {error}");
+                    exit(125);
+                }
+            }
+        }
     }
 
     fn execute_single(&self, task: Task) -> ExecutionStepResult {
