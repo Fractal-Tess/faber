@@ -1,10 +1,10 @@
 use std::time::Duration;
 
 use crate::{
+    Runtime,
     cgroup::{Cgroup, CgroupConfig},
     container::{Container, ContainerConfig},
     task::TaskGroup,
-    Runtime,
 };
 
 pub struct RuntimeBuilder {
@@ -12,6 +12,7 @@ pub struct RuntimeBuilder {
     container: Container,
     cgroup: Cgroup,
     timeout: Duration,
+    output_limit: usize,
 }
 
 impl Default for RuntimeBuilder {
@@ -21,6 +22,7 @@ impl Default for RuntimeBuilder {
             container: Container::default(),
             cgroup: Cgroup::default(),
             timeout: Duration::from_secs(5),
+            output_limit: 1024 * 1024,
         }
     }
 }
@@ -46,12 +48,18 @@ impl RuntimeBuilder {
         self
     }
 
+    pub fn with_output_limit(mut self, output_limit: usize) -> Self {
+        self.output_limit = output_limit;
+        self
+    }
+
     pub fn build(self) -> Runtime {
         Runtime {
             task_group: self.task_group,
             container: self.container,
             cgroup: self.cgroup,
             timeout: self.timeout,
+            output_limit: self.output_limit,
         }
     }
 }

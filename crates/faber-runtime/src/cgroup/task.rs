@@ -135,7 +135,7 @@ impl TaskCgroup {
         Ok(())
     }
 
-    fn kill_all_processes(&self) -> Result<()> {
+    pub(crate) fn kill_all_processes(&self) -> Result<()> {
         let procs_path = self.task_cgroup_path.join("cgroup.procs");
 
         if let Ok(file) = File::open(&procs_path) {

@@ -133,7 +133,9 @@ type TaskResult = {
     "memory_peak_bytes": 1048576,
     "cpu_usage_usec": 12345,
     "pids_peak": 1,
-    "execution_time_ms": 15
+    "execution_time_ms": 15,
+    "stdout_truncated": false,
+    "stderr_truncated": false
   }
 }
 ```
@@ -148,6 +150,8 @@ type ExecutionStats = {
   cpu_usage_usec: number;
   pids_peak: number;
   execution_time_ms: number;
+  stdout_truncated: boolean;
+  stderr_truncated: boolean;
 };
 ```
 
@@ -159,6 +163,8 @@ type ExecutionStats = {
 | `cpu_usage_usec` | `number` | CPU usage (microseconds) |
 | `pids_peak` | `number` | Peak process count |
 | `execution_time_ms` | `number` | Execution time (milliseconds) |
+| `stdout_truncated` | `boolean` | Whether stdout exceeded its configured byte limit |
+| `stderr_truncated` | `boolean` | Whether stderr exceeded its configured byte limit |
 
 ## TaskGroupResult
 
@@ -287,7 +293,9 @@ The SDK automatically converts between snake_case (API) and camelCase (SDK).
             "memory_peak_bytes": { "type": "integer" },
             "cpu_usage_usec": { "type": "integer" },
             "pids_peak": { "type": "integer" },
-            "execution_time_ms": { "type": "integer" }
+            "execution_time_ms": { "type": "integer" },
+            "stdout_truncated": { "type": "boolean" },
+            "stderr_truncated": { "type": "boolean" }
           }
         }
       }

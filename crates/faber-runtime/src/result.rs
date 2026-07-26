@@ -167,4 +167,6 @@ pub struct TaskResultStats {
     pub cpu_usage_usec: u64,
     pub pids_peak: u64,
     pub execution_time_ms: u64,
+    pub stdout_truncated: bool,
+    pub stderr_truncated: bool,
 }

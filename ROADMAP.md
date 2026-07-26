@@ -60,7 +60,7 @@ slice.
   seccomp, namespaces, mounts, routes, rlimits, and cgroup membership
 - [x] Privilege cleanup: supplementary groups, ambient/bounding capabilities,
   and `NoNewPrivs`
-- [ ] Bounded process I/O: concurrent draining, stream limits, truncation, and
+- [x] Bounded process I/O: concurrent draining, stream limits, truncation, and
   output-limit tests
 - [ ] Process lifecycle: PID 1 reaping, process-tree termination, timeout,
   cancellation, and zombie tests
@@ -95,9 +95,10 @@ Complete these before accepting hostile workloads:
    `RESOLVE_NO_SYMLINKS`, `RESOLVE_NO_MAGICLINKS`, and `RESOLVE_NO_XDEV`.
    Acceptance tests cover absolute paths, `..`, and adversarial workspace
    symlinks; disposable-VM race stress remains planned.
-2. Drain stdout and stderr concurrently while the child runs, cap each stream,
-   report truncation, and kill tasks that exceed configured output budgets.
-   The current wait-before-read flow can deadlock when a pipe fills.
+2. **Complete:** poll stdin/stdout/stderr concurrently while the child runs,
+   cap each output stream, report truncation, and kill the full task cgroup when
+   either budget is exceeded. Flood and bidirectional pipe tests cover the
+   former wait-before-read deadlock.
 3. Add rlimits for file size, descriptors, core dumps, stack, and CPU time.
    Keep cgroups as the authoritative aggregate process-tree limits.
 4. **Complete:** clear supplementary groups and ambient/bounding capabilities,

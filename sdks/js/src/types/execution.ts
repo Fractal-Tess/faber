@@ -5,32 +5,34 @@
 /**
  * Execution statistics from task execution
  */
-export interface ExecutionStats {
+export type ExecutionStats = {
   memory_peak_bytes: number;
-  cpu_usage_percent: number;
+  cpu_usage_usec: number;
   pids_peak: number;
   execution_time_ms: number;
-}
+  stdout_truncated: boolean;
+  stderr_truncated: boolean;
+};
 
 /**
  * Task execution result
  */
-export interface TaskResult {
+export type TaskResult = {
   stdout: string;
   stderr: string;
   exitCode: number;
   stats?: ExecutionStats;
-}
+};
 
 /**
  * Raw execution result from the API
  */
-export interface ExecutionResult {
+export type ExecutionResult = {
   stdout: string;
   stderr: string;
   exitCode: number;
   stats?: ExecutionStats;
-}
+};
 
 /**
  * Final result type that maintains single/parallel structure

@@ -362,6 +362,118 @@ fn submitted_files_do_not_follow_workspace_symlinks() {
 }
 
 #[test]
+fn output_streams_are_drained_bounded_and_report_truncation() {
+    let _guard = lock_security_tests();
+    const OUTPUT_LIMIT: usize = 4096;
+
+    for (command, args, stdout_should_truncate) in [
+        ("/usr/bin/yes", vec!["stdout"], true),
+        ("/bin/sh", vec!["-c", "exec /usr/bin/yes stderr >&2"], false),
+    ] {
+        let result = RuntimeBuilder::default()
+            .with_task_group(vec![ExecutionStep::Single(task(command, &args))])
+            .with_output_limit(OUTPUT_LIMIT)
+            .with_timeout(std::time::Duration::from_secs(2))
+            .build()
+            .execute()
+            .expect("runtime execution failed");
+        let RuntimeResult::Success(results) = result else {
+            panic!("container setup failed: {result:?}");
+        };
+        assert_no_task_cgroups();
+
+        let TaskResult::Completed {
+            stdout,
+            stderr,
+            exit_code,
+            stats,
+        } = single_result(&results[0])
+        else {
+            panic!("output flood did not produce a result: {:?}", results[0]);
+        };
+
+        assert_eq!(*exit_code, 137, "output-limited task was not killed");
+        assert!(stdout.len() <= OUTPUT_LIMIT);
+        assert!(stderr.len() <= OUTPUT_LIMIT);
+        assert_eq!(stats.stdout_truncated, stdout_should_truncate);
+        assert_eq!(stats.stderr_truncated, !stdout_should_truncate);
+    }
+}
+
+#[test]
+fn stdin_and_stdout_progress_concurrently_without_pipe_deadlock() {
+    let _guard = lock_security_tests();
+    let input = "x".repeat(256 * 1024);
+    let mut cat_task = task("/bin/cat", &[]);
+    cat_task.stdin = Some(input.clone());
+
+    let result = RuntimeBuilder::default()
+        .with_task_group(vec![ExecutionStep::Single(cat_task)])
+        .with_output_limit(input.len())
+        .with_timeout(std::time::Duration::from_secs(2))
+        .build()
+        .execute()
+        .expect("runtime execution failed");
+    let RuntimeResult::Success(results) = result else {
+        panic!("container setup failed: {result:?}");
+    };
+    assert_no_task_cgroups();
+
+    let TaskResult::Completed {
+        stdout,
+        exit_code,
+        stats,
+        ..
+    } = single_result(&results[0])
+    else {
+        panic!("cat did not produce a result: {:?}", results[0]);
+    };
+    assert_eq!(*exit_code, 0);
+    assert_eq!(stdout, &input);
+    assert!(!stats.stdout_truncated);
+}
+
+#[test]
+fn parallel_large_results_do_not_deadlock_result_transport() {
+    let _guard = lock_security_tests();
+    const OUTPUT_SIZE: usize = 128 * 1024;
+
+    let result = RuntimeBuilder::default()
+        .with_task_group(vec![ExecutionStep::Parallel(vec![
+            task("/usr/bin/head", &["-c", "131072", "/dev/zero"]),
+            task("/usr/bin/head", &["-c", "131072", "/dev/zero"]),
+        ])])
+        .with_output_limit(OUTPUT_SIZE * 2)
+        .with_timeout(std::time::Duration::from_secs(2))
+        .build()
+        .execute()
+        .expect("runtime execution failed");
+    let RuntimeResult::Success(results) = result else {
+        panic!("container setup failed: {result:?}");
+    };
+    assert_no_task_cgroups();
+
+    let ExecutionStepResult::Parallel(results) = &results[0] else {
+        panic!("expected parallel task results");
+    };
+    assert_eq!(results.len(), 2);
+    for result in results {
+        let TaskResult::Completed {
+            stdout,
+            exit_code,
+            stats,
+            ..
+        } = result
+        else {
+            panic!("large parallel task failed: {result:?}");
+        };
+        assert_eq!(*exit_code, 0);
+        assert_eq!(stdout.len(), OUTPUT_SIZE);
+        assert!(!stats.stdout_truncated);
+    }
+}
+
+#[test]
 fn pids_cgroup_enforces_the_process_limit() {
     let _guard = lock_security_tests();
     let task_group = vec![

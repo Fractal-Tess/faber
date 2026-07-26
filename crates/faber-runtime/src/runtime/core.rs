@@ -1,7 +1,7 @@
 use std::{
     ffi::CString,
     fs::OpenOptions,
-    io::{Read, Write},
+    io::{PipeReader, PipeWriter, Read, Write},
     os::{
         fd::{AsRawFd, FromRawFd, IntoRawFd},
         unix::{ffi::OsStrExt, fs::OpenOptionsExt},
@@ -20,7 +20,7 @@ use nix::{
 };
 
 use crate::{
-    cgroup::Cgroup,
+    cgroup::{Cgroup, task::TaskCgroup},
     container::Container,
     prelude::*,
     result::{ExecutionStepResult, RuntimeResult, TaskResult, TaskResultStats},
@@ -33,6 +33,15 @@ pub struct Runtime {
     pub(crate) container: Container,
     pub(crate) cgroup: Cgroup,
     pub(crate) timeout: Duration,
+    pub(crate) output_limit: usize,
+}
+
+struct CollectedOutput {
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    exit_code: i32,
+    stdout_truncated: bool,
+    stderr_truncated: bool,
 }
 
 impl Runtime {
@@ -51,19 +60,20 @@ impl Runtime {
             }
             Ok(ForkResult::Parent { child }) => {
                 close_fd(writer.into_raw_fd())?;
-                waitpid(child, None).map_err(|e| FaberError::WaitPid { e })?;
 
-                let runtime_result: RuntimeResult =
-                    serde_json::from_reader(reader).map_err(|e| FaberError::ParseResult {
-                        e,
-                        details: "Failed to parse results from child process".to_string(),
-                    })?;
+                // Read while the child serializes. Waiting first can deadlock
+                // when a bounded task result is larger than the pipe buffer.
+                let runtime_result = serde_json::from_reader(reader);
+                waitpid(child, None).map_err(|e| FaberError::WaitPid { e })?;
 
                 if let Err(e) = self.container.cleanup() {
                     eprintln!("Failed to cleanup container: {}", e);
                 }
 
-                Ok(runtime_result)
+                runtime_result.map_err(|e| FaberError::ParseResult {
+                    e,
+                    details: "Failed to parse results from child process".to_string(),
+                })
             }
             Err(e) => Err(FaberError::Fork { e }),
         }
@@ -115,7 +125,7 @@ impl Runtime {
     }
 
     fn execute_single(&self, task: Task) -> ExecutionStepResult {
-        match Self::execute_single_task(task, &self.cgroup, self.timeout) {
+        match Self::execute_single_task(task, &self.cgroup, self.timeout, self.output_limit) {
             Ok(task_result) => ExecutionStepResult::Single(task_result),
             Err(e) => ExecutionStepResult::Single(TaskResult::Failed {
                 error: format!("Task execution failed: {}", e),
@@ -145,7 +155,12 @@ impl Runtime {
             match unsafe { fork() } {
                 Ok(ForkResult::Child) => {
                     drop(reader);
-                    let result = match Self::execute_single_task(task, &self.cgroup, self.timeout) {
+                    let result = match Self::execute_single_task(
+                        task,
+                        &self.cgroup,
+                        self.timeout,
+                        self.output_limit,
+                    ) {
                         Ok(task_result) => task_result,
                         Err(e) => TaskResult::Failed {
                             error: format!("Task execution failed: {}", e),
@@ -171,12 +186,14 @@ impl Runtime {
         // Wait for all parallel children and collect results
         let mut task_results = Vec::with_capacity(children.len());
         for (child, reader) in children {
-            let _ = waitpid(child, None);
+            // Drain each result pipe before waiting so large bounded outputs do
+            // not block the child in serde_json::to_writer.
             let result: TaskResult =
                 serde_json::from_reader(reader).unwrap_or(TaskResult::Failed {
                     error: "Failed to read result from parallel task".to_string(),
                     stats: TaskResultStats::default(),
                 });
+            let _ = waitpid(child, None);
             task_results.push(result);
         }
 
@@ -187,6 +204,7 @@ impl Runtime {
         task: Task,
         cgroup: &Cgroup,
         timeout: std::time::Duration,
+        output_limit: usize,
     ) -> Result<TaskResult> {
         use std::time::Instant;
 
@@ -323,36 +341,16 @@ impl Runtime {
                 drop(stderr_write);
                 drop(stdin_read);
 
-                // Write stdin if provided
-                if let Some(stdin_data) = task.stdin {
-                    let mut stdin_file =
-                        unsafe { std::fs::File::from_raw_fd(stdin_write.into_raw_fd()) };
-                    if let Err(e) = stdin_file.write_all(stdin_data.as_bytes()) {
-                        eprintln!("Warning: Failed to write stdin: {}", e);
-                    }
-                    // stdin_file is dropped here, closing the write end
-                } else {
-                    drop(stdin_write);
-                }
-
-                // Wait with timeout
-                let exit_code = Self::wait_for_child_with_timeout(child, timeout)?;
-
-                // Read stdout and stderr
-                let mut stdout_buf = String::new();
-                let mut stderr_buf = String::new();
-
-                let mut stdout_file =
-                    unsafe { std::fs::File::from_raw_fd(stdout_read.into_raw_fd()) };
-                let mut stderr_file =
-                    unsafe { std::fs::File::from_raw_fd(stderr_read.into_raw_fd()) };
-
-                if let Err(e) = stdout_file.read_to_string(&mut stdout_buf) {
-                    eprintln!("Warning: Failed to read stdout: {}", e);
-                }
-                if let Err(e) = stderr_file.read_to_string(&mut stderr_buf) {
-                    eprintln!("Warning: Failed to read stderr: {}", e);
-                }
+                let collected = Self::wait_and_collect_output(
+                    child,
+                    timeout,
+                    stdout_read.into(),
+                    stderr_read.into(),
+                    stdin_write.into(),
+                    task.stdin.unwrap_or_default().into_bytes(),
+                    output_limit,
+                    &task_cgroup,
+                )?;
 
                 // Measure resources
                 let task_stats = match task_cgroup.measure_resources() {
@@ -373,12 +371,14 @@ impl Runtime {
                     memory_peak_bytes: task_stats.memory_peak_bytes,
                     cpu_usage_usec: task_stats.cpu_usage_usec,
                     pids_peak: task_stats.pids_max,
+                    stdout_truncated: collected.stdout_truncated,
+                    stderr_truncated: collected.stderr_truncated,
                 };
 
                 Ok(TaskResult::Completed {
-                    stdout: stdout_buf,
-                    stderr: stderr_buf,
-                    exit_code,
+                    stdout: String::from_utf8_lossy(&collected.stdout).into_owned(),
+                    stderr: String::from_utf8_lossy(&collected.stderr).into_owned(),
+                    exit_code: collected.exit_code,
                     stats,
                 })
             }
@@ -564,51 +564,205 @@ impl Runtime {
         Ok(())
     }
 
-    /// Wait for child process with timeout using WNOHANG polling
-    fn wait_for_child_with_timeout(child: Pid, timeout: Duration) -> Result<i32> {
-        use std::thread;
-        use std::time::Instant;
+    fn set_nonblocking(fd: i32) -> std::io::Result<()> {
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(())
+    }
 
-        let start_time = Instant::now();
-
+    fn drain_pipe(
+        reader: &mut PipeReader,
+        output: &mut Vec<u8>,
+        output_limit: usize,
+        truncated: &mut bool,
+    ) -> std::io::Result<bool> {
+        let mut chunk = [0u8; 8192];
         loop {
-            match waitpid(child, Some(WaitPidFlag::WNOHANG)) {
-                Ok(WaitStatus::Exited(_, code)) => return Ok(code),
-                Ok(WaitStatus::Signaled(_, signal, _)) => {
-                    // Process was killed by signal, return 128 + signal number
-                    return Ok(128 + signal as i32);
-                }
-                Ok(WaitStatus::StillAlive) => {
-                    if start_time.elapsed() > timeout {
-                        // Kill the child process
-                        let _ = nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL);
-                        // Reap the zombie
-                        let _ = waitpid(child, None);
-
-                        return Err(FaberError::TaskTimeout {
-                            timeout_duration: timeout,
-                            details: format!(
-                                "Task exceeded timeout of {} seconds",
-                                timeout.as_secs()
-                            ),
-                        });
+            match reader.read(&mut chunk) {
+                Ok(0) => return Ok(false),
+                Ok(bytes_read) => {
+                    let remaining = output_limit.saturating_sub(output.len());
+                    let retained = remaining.min(bytes_read);
+                    output.extend_from_slice(&chunk[..retained]);
+                    if retained < bytes_read {
+                        *truncated = true;
                     }
-                    // Short sleep for efficient polling
-                    thread::sleep(Duration::from_millis(10));
                 }
-                Ok(_) => {
-                    // Other wait statuses (Stopped, Continued, etc.) - continue waiting
-                    thread::sleep(Duration::from_millis(10));
-                }
-                Err(nix::errno::Errno::ECHILD) => {
-                    // Child already reaped
-                    return Ok(-1);
-                }
-                Err(e) => {
-                    return Err(FaberError::WaitPid { e });
-                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(true),
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error),
             }
         }
+    }
+
+    fn wait_status_exit_code(status: WaitStatus) -> Option<i32> {
+        match status {
+            WaitStatus::Exited(_, code) => Some(code),
+            WaitStatus::Signaled(_, signal, _) => Some(128 + signal as i32),
+            _ => None,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn wait_and_collect_output(
+        child: Pid,
+        timeout: Duration,
+        mut stdout_reader: PipeReader,
+        mut stderr_reader: PipeReader,
+        stdin_writer: PipeWriter,
+        stdin: Vec<u8>,
+        output_limit: usize,
+        task_cgroup: &TaskCgroup,
+    ) -> Result<CollectedOutput> {
+        use std::time::Instant;
+
+        Self::set_nonblocking(stdout_reader.as_raw_fd()).map_err(|error| FaberError::Generic {
+            message: format!("Failed to make stdout nonblocking: {error}"),
+        })?;
+        Self::set_nonblocking(stderr_reader.as_raw_fd()).map_err(|error| FaberError::Generic {
+            message: format!("Failed to make stderr nonblocking: {error}"),
+        })?;
+        Self::set_nonblocking(stdin_writer.as_raw_fd()).map_err(|error| FaberError::Generic {
+            message: format!("Failed to make stdin nonblocking: {error}"),
+        })?;
+
+        let start_time = Instant::now();
+        let mut stdout = Vec::with_capacity(output_limit.min(8192));
+        let mut stderr = Vec::with_capacity(output_limit.min(8192));
+        let mut stdout_open = true;
+        let mut stderr_open = true;
+        let mut stdin_writer = Some(stdin_writer);
+        let mut stdin_offset = 0;
+        let mut exit_code = None;
+        let mut stdout_truncated = false;
+        let mut stderr_truncated = false;
+        let mut output_terminated = false;
+
+        loop {
+            if stdin_offset == stdin.len() {
+                stdin_writer = None;
+            }
+
+            let mut poll_fds = Vec::with_capacity(3);
+            if stdout_open {
+                poll_fds.push(libc::pollfd {
+                    fd: stdout_reader.as_raw_fd(),
+                    events: libc::POLLIN | libc::POLLHUP,
+                    revents: 0,
+                });
+            }
+            if stderr_open {
+                poll_fds.push(libc::pollfd {
+                    fd: stderr_reader.as_raw_fd(),
+                    events: libc::POLLIN | libc::POLLHUP,
+                    revents: 0,
+                });
+            }
+            if let Some(writer) = stdin_writer.as_ref() {
+                poll_fds.push(libc::pollfd {
+                    fd: writer.as_raw_fd(),
+                    events: libc::POLLOUT | libc::POLLHUP,
+                    revents: 0,
+                });
+            }
+
+            let poll_result =
+                unsafe { libc::poll(poll_fds.as_mut_ptr(), poll_fds.len() as libc::nfds_t, 10) };
+            if poll_result < 0
+                && std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted
+            {
+                return Err(FaberError::Generic {
+                    message: format!(
+                        "Failed to poll task pipes: {}",
+                        std::io::Error::last_os_error()
+                    ),
+                });
+            }
+
+            if stdout_open {
+                stdout_open = Self::drain_pipe(
+                    &mut stdout_reader,
+                    &mut stdout,
+                    output_limit,
+                    &mut stdout_truncated,
+                )
+                .map_err(|error| FaberError::Generic {
+                    message: format!("Failed to read task stdout: {error}"),
+                })?;
+            }
+            if stderr_open {
+                stderr_open = Self::drain_pipe(
+                    &mut stderr_reader,
+                    &mut stderr,
+                    output_limit,
+                    &mut stderr_truncated,
+                )
+                .map_err(|error| FaberError::Generic {
+                    message: format!("Failed to read task stderr: {error}"),
+                })?;
+            }
+
+            if let Some(writer) = stdin_writer.as_mut() {
+                match writer.write(&stdin[stdin_offset..]) {
+                    Ok(0) => stdin_writer = None,
+                    Ok(bytes_written) => stdin_offset += bytes_written,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {
+                        stdin_writer = None;
+                    }
+                    Err(error) => {
+                        return Err(FaberError::Generic {
+                            message: format!("Failed to write task stdin: {error}"),
+                        });
+                    }
+                }
+            }
+
+            if !output_terminated && (stdout_truncated || stderr_truncated) {
+                task_cgroup.kill_all_processes()?;
+                stdin_writer = None;
+                output_terminated = true;
+            }
+
+            if exit_code.is_none() {
+                match waitpid(child, Some(WaitPidFlag::WNOHANG)) {
+                    Ok(WaitStatus::StillAlive) => {}
+                    Ok(status) => exit_code = Self::wait_status_exit_code(status),
+                    Err(nix::errno::Errno::ECHILD) => exit_code = Some(-1),
+                    Err(error) => return Err(FaberError::WaitPid { e: error }),
+                }
+            }
+
+            if exit_code.is_some() && !stdout_open && !stderr_open {
+                break;
+            }
+
+            if start_time.elapsed() > timeout {
+                task_cgroup.kill_all_processes()?;
+                let _ = waitpid(child, None);
+                return Err(FaberError::TaskTimeout {
+                    timeout_duration: timeout,
+                    details: format!(
+                        "Task process tree exceeded timeout of {} seconds",
+                        timeout.as_secs()
+                    ),
+                });
+            }
+        }
+
+        Ok(CollectedOutput {
+            stdout,
+            stderr,
+            exit_code: exit_code.unwrap_or(-1),
+            stdout_truncated,
+            stderr_truncated,
+        })
     }
 
     fn clear_capability_set(capability_set: CapSet, name: &str) -> std::io::Result<()> {

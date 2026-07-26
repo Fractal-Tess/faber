@@ -36,7 +36,7 @@ namespace flag is not sufficient evidence.
 | Memory | The complete task process tree cannot exceed `memory.max` | `memory_cgroup_kills_a_process_that_exceeds_memory_max` | Verified baseline |
 | Process count | The complete task process tree cannot exceed `pids.max` | `pids_cgroup_enforces_the_process_limit` | Verified baseline |
 | CPU | CPU bandwidth and total CPU/wall time are independently bounded | Throttling counter and CPU-time tests pending | Partial |
-| Output | stdout and stderr are drained concurrently and bounded | Tests and implementation pending | Not implemented |
+| Output | stdin/stdout/stderr progress concurrently and each output stream is bounded | Flood and bidirectional-pipe acceptance tests verify cgroup termination and truncation reporting | Verified baseline |
 | Cleanup | No process, cgroup, mount, or workspace survives any completion path | Failure-mode and host-observer tests pending | Partial |
 
 “Verified baseline” describes the behavior covered by the current test and is

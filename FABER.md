@@ -122,7 +122,9 @@ curl -X POST http://localhost:3000/api/v1/execute \
       "memory_peak_bytes": 512000,
       "cpu_usage_usec": 1500,
       "pids_peak": 1,
-      "execution_time_ms": 10
+      "execution_time_ms": 10,
+      "stdout_truncated": false,
+      "stderr_truncated": false
     }
   }
 ]
@@ -137,7 +139,9 @@ curl -X POST http://localhost:3000/api/v1/execute \
       "memory_peak_bytes": 0,
       "cpu_usage_usec": 0,
       "pids_peak": 0,
-      "execution_time_ms": 0
+      "execution_time_ms": 0,
+      "stdout_truncated": false,
+      "stderr_truncated": false
     }
   }
 ]
@@ -355,6 +359,7 @@ pids_max: 64
 
 // Runtime defaults (RuntimeBuilder)
 timeout: 5 seconds
+output_limit: 1 MiB per stdout/stderr stream
 ```
 
 ---

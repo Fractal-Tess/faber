@@ -126,12 +126,12 @@ case "${1:-}" in
     test)
         setup_cgroups
         compose build faber
-        compose run --rm faber cargo test --workspace -- --test-threads=1
+        compose run --rm --no-TTY faber cargo test --workspace -- --test-threads=1
         ;;
     test-security)
         setup_cgroups
         compose build faber
-        compose run --rm faber cargo test -p faber-runtime --test security_acceptance -- --test-threads=1
+        compose run --rm --no-TTY faber cargo test -p faber-runtime --test security_acceptance -- --test-threads=1
         ;;
     status)
         compose ps
