@@ -5,27 +5,37 @@ services:
       context: ../../
       dockerfile: docker/dev/Dockerfile
     volumes:
-      - ../../.cargo:/faber/.cargo:ro
       - ../../src:/faber/src:ro
       - ../../crates:/faber/crates:ro
       - ../../Cargo.toml:/faber/Cargo.toml:ro
+      - ../../Cargo.lock:/faber/Cargo.lock:ro
       - cargo-target:/faber/target
+      - cargo-registry:/root/.cargo/registry
+      - cargo-git:/root/.cargo/git
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
     environment:
       - API_KEY=just-a-test-api-key
-      - CARGO_HOME=/usr/local/cargo
-      - CACHE_ENABLED=true
+      - CACHE_ENABLED=false
+      - HOST=0.0.0.0
+      - PORT=3000
+      - RUST_BACKTRACE=1
+      - RUST_LOG=faber=debug,faber_api=debug,faber_runtime=debug
     privileged: true
     cgroup: host
+    pids_limit: -1
+    init: true
+    stop_signal: SIGINT
+    stop_grace_period: 10s
     ports:
-      - '3000:3000'
+      - '${FABER_BIND_ADDRESS:-127.0.0.1}:${FABER_PORT:-3000}:3000'
+    healthcheck:
+      test: ['CMD', 'curl', '--fail', '--silent', 'http://localhost:3000/api/v1/health']
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 10s
 
 volumes:
   cargo-target:
-
-networks:
-  default:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.22.0.0/16
-          gateway: 172.22.0.1
+  cargo-registry:
+  cargo-git:

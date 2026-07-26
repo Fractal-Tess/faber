@@ -1,4 +1,4 @@
-use std::fs::{create_dir_all, read_to_string, remove_dir, write, File};
+use std::fs::{File, create_dir_all, read_to_string, remove_dir, write};
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::thread;
@@ -140,7 +140,7 @@ impl TaskCgroup {
 
         if let Ok(file) = File::open(&procs_path) {
             let reader = BufReader::new(file);
-            for line in reader.lines().filter_map(|l| l.ok()) {
+            for line in reader.lines().map_while(|line| line.ok()) {
                 if let Ok(pid) = line.trim().parse::<i32>() {
                     let _ = nix::sys::signal::kill(
                         nix::unistd::Pid::from_raw(pid),
@@ -194,6 +194,17 @@ impl TaskCgroup {
                 memory_max_path.display()
             ),
         })?;
+
+        if memory_max_value != "max" {
+            let memory_swap_max_path = self.task_cgroup_path.join("memory.swap.max");
+            write(&memory_swap_max_path, "0").map_err(|e| FaberError::WriteFile {
+                e,
+                details: format!(
+                    "Failed to disable task swap at {}",
+                    memory_swap_max_path.display()
+                ),
+            })?;
+        }
 
         let pids_max_path = self.task_cgroup_path.join("pids.max");
         let pids_max_value = self.config.pids_max.to_string();

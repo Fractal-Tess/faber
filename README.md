@@ -12,13 +12,13 @@
 
 ---
 
-Faber is a high-performance task execution runtime that runs commands in isolated containers with strict resource limits, comprehensive monitoring, and robust security controls. Built with Rust for reliability and performance.
+Faber is an experimental task execution runtime that runs commands in Linux namespaces with cgroup v2 resource controls. The namespace backend is under active hardening and is not yet suitable for public hostile workloads; see [`SECURITY.md`](SECURITY.md) and [`ROADMAP.md`](ROADMAP.md).
 
 ## ✨ Features
 
-- 🔒 **Secure Isolation** - Linux namespaces and cgroups for complete process isolation
+- 🔒 **Namespace Isolation** - Linux mount, PID, network, UTS, and IPC namespaces
 - 📊 **Resource Monitoring** - Real-time tracking of CPU, memory, and process usage
-- ⚡ **Parallel Execution** - Run multiple tasks concurrently with full isolation
+- ⚡ **Parallel Execution** - Run multiple tasks concurrently within isolated namespaces
 - 🎯 **Flexible API** - RESTful API with support for sequential and parallel task groups
 - 🚀 **High Performance** - Built with Rust for minimal overhead
 - 📦 **Docker Ready** - Easy deployment with containerized builds
@@ -150,7 +150,7 @@ Execute a sequence of tasks. Each step can be:
 Faber consists of three main components:
 
 - **`faber-runtime`** - Core runtime with container isolation, cgroups, and resource monitoring
-- **`faber-api`** - HTTP API server with request caching and task orchestration
+- **`faber-api`** - HTTP API server with opt-in request memoization and task orchestration
 - **SDKs** - Client libraries for various languages (JavaScript/TypeScript available)
 
 ## 📚 Documentation
@@ -164,18 +164,22 @@ For detailed documentation, visit the [docs site](docs/) or check out:
 
 ## 🛠️ Development
 
-### Building from Source
+Faber's runtime must be developed and tested inside Docker. In particular, do
+not use `cargo run` on NixOS: the runtime needs a conventional FHS filesystem,
+privileged namespace operations, and writable cgroup v2 access.
+
+See [DEVELOPMENT.md](DEVELOPMENT.md) for the complete workflow. The short path
+is:
 
 ```bash
-# Build the project
-cargo build
-
-# Run tests
-cargo test
-
-# Run the server
-cargo run
+./scripts/dev.sh up
+./scripts/dev.sh logs
+./scripts/dev.sh test
+./scripts/dev.sh down
 ```
+
+The security and caching work required before exposing Faber to hostile users
+is tracked in [ROADMAP.md](ROADMAP.md).
 
 ### Project Structure
 
@@ -208,7 +212,7 @@ Faber implements multiple layers of security:
 - Container isolation (namespaces, cgroups)
 - Resource monitoring and limits
 - Sequential and parallel execution
-- HTTP API with request caching
+- Experimental whole-request memoization (disabled by default)
 - JavaScript/TypeScript SDK
 
 ### 🚧 In Progress

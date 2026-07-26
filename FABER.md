@@ -225,7 +225,7 @@ Faber uses the following namespaces for isolation:
 
 | Namespace | Flag | Purpose |
 |-----------|------|---------|
-| **PID** | `CLONE_NEWPID` | Process ID isolation - tasks see themselves as PID 1 |
+| **PID** | `CLONE_NEWPID` | Process ID isolation - namespace reaper is PID 1 and tasks start at PID 2 |
 | **Network** | `CLONE_NEWNET` | Network isolation - only loopback interface |
 | **Mount** | `CLONE_NEWNS` | Filesystem isolation - pivoted root |
 | **UTS** | `CLONE_NEWUTS` | Hostname isolation - hostname set to "faber" |
@@ -262,8 +262,9 @@ The container root is created via `pivot_root` with:
 ### Security Hardening
 
 1. **UID/GID drop**: Tasks run as `nobody` (65534:65534)
-2. **Capability drop**: All capabilities are dropped
-3. **Seccomp**: Placeholder for syscall filtering (not yet implemented)
+2. **Capability drop**: Effective, permitted, and inheritable capabilities are cleared
+3. **Workspace paths**: Submitted files must use normalized workspace-relative paths and cannot traverse symlinks
+4. **Seccomp**: Placeholder for syscall filtering (not yet implemented)
 
 ---
 
@@ -333,7 +334,7 @@ crates/
 | `PORT` | No | `3000` | Server port |
 | `HOST` | No | `0.0.0.0` | Server bind address |
 | `MAX_CONCURRENCY` | No | `10` | Max concurrent requests |
-| `CACHE_ENABLED` | No | `true` | Enable result caching |
+| `CACHE_ENABLED` | No | `false` | Enable experimental whole-request result caching |
 
 ### Runtime Defaults
 

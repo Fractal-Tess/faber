@@ -87,13 +87,18 @@ fn test_pid_namespace_isolation() {
                             stats: _,
                         } => {
                             assert_eq!(*exit_code, 0);
-                            // In a proper PID namespace, the shell should see itself as PID 1
+                            // The namespace reaper is PID 1, so the task is PID 2.
                             let lines: Vec<&str> = stdout.lines().collect();
                             let first_line = lines.first().unwrap_or(&"");
                             assert!(
-                                first_line.trim() == "1",
-                                "Expected PID 1 in namespace, got: {}",
+                                first_line.trim() == "2",
+                                "Expected task PID 2 after namespace init, got: {}",
                                 first_line
+                            );
+                            assert!(
+                                stdout.contains("PID"),
+                                "Expected ps output from the namespaced procfs, got: {}",
+                                stdout
                             );
                         }
                         faber_runtime::TaskResult::Failed { error, .. } => {
@@ -105,6 +110,51 @@ fn test_pid_namespace_isolation() {
             }
         }
         other => panic!("Expected success result, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_toolchain_mounts_are_read_only() {
+    let task_group: TaskGroup = vec![faber_runtime::ExecutionStep::Single(create_test_task(
+        "/bin/cat",
+        vec!["/proc/self/mountinfo"],
+    ))];
+
+    let runtime = RuntimeBuilder::default()
+        .with_task_group(task_group)
+        .build();
+
+    let result = runtime.execute().expect("Runtime execution failed");
+    let faber_runtime::RuntimeResult::Success(results) = result else {
+        panic!("Expected successful runtime result");
+    };
+    let faber_runtime::ExecutionStepResult::Single(task_result) = &results[0] else {
+        panic!("Expected single task result");
+    };
+    let faber_runtime::TaskResult::Completed {
+        stdout, exit_code, ..
+    } = task_result
+    else {
+        panic!("Expected completed task result");
+    };
+
+    assert_eq!(*exit_code, 0);
+
+    for mountpoint in ["/bin", "/usr"] {
+        let mount = stdout
+            .lines()
+            .find(|line| line.split_whitespace().nth(4) == Some(mountpoint))
+            .unwrap_or_else(|| panic!("Missing {} mount in mountinfo", mountpoint));
+        let options = mount
+            .split_whitespace()
+            .nth(5)
+            .unwrap_or_else(|| panic!("Missing mount options for {}", mountpoint));
+        assert!(
+            options.split(',').any(|option| option == "ro"),
+            "Expected {} to be read-only, got options: {}",
+            mountpoint,
+            options
+        );
     }
 }
 
@@ -291,10 +341,7 @@ fn test_file_operations() {
 fn test_network_isolation() {
     let task = Task {
         cmd: "/bin/sh".to_string(),
-        args: Some(vec![
-            "-c".to_string(),
-            "ip link show | grep -c 'LOOPBACK'".to_string(),
-        ]),
+        args: Some(vec!["-c".to_string(), "ip -o link show".to_string()]),
         env: None,
         stdin: None,
         files: None,
@@ -311,29 +358,34 @@ fn test_network_isolation() {
     assert!(result.is_ok(), "Runtime execution failed: {:?}", result);
 
     match result.unwrap() {
-        faber_runtime::RuntimeResult::Success(results) => {
-            match &results[0] {
-                faber_runtime::ExecutionStepResult::Single(task_result) => {
-                    match task_result {
-                        faber_runtime::TaskResult::Completed {
-                            stdout,
-                            stderr: _,
-                            exit_code,
-                            stats: _,
-                        } => {
-                            assert_eq!(*exit_code, 0);
-                            // Should have at least loopback interface
-                            let count: i32 = stdout.trim().parse().unwrap_or(0);
-                            assert!(count >= 1, "Expected at least loopback interface");
-                        }
-                        faber_runtime::TaskResult::Failed { error, .. } => {
-                            panic!("Task failed: {}", error);
-                        }
-                    }
+        faber_runtime::RuntimeResult::Success(results) => match &results[0] {
+            faber_runtime::ExecutionStepResult::Single(task_result) => match task_result {
+                faber_runtime::TaskResult::Completed {
+                    stdout,
+                    stderr: _,
+                    exit_code,
+                    stats: _,
+                } => {
+                    assert_eq!(*exit_code, 0);
+                    let interfaces: Vec<&str> = stdout.lines().collect();
+                    assert_eq!(
+                        interfaces.len(),
+                        1,
+                        "Expected an isolated namespace with only loopback, got: {}",
+                        stdout
+                    );
+                    assert!(
+                        interfaces[0].contains(": lo:"),
+                        "Expected loopback interface, got: {}",
+                        stdout
+                    );
                 }
-                _ => panic!("Expected single task result"),
-            }
-        }
+                faber_runtime::TaskResult::Failed { error, .. } => {
+                    panic!("Task failed: {}", error);
+                }
+            },
+            _ => panic!("Expected single task result"),
+        },
         other => panic!("Expected success result, got {:?}", other),
     }
 }

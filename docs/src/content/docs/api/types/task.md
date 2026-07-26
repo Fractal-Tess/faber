@@ -30,7 +30,7 @@ type Task = {
 | `args` | `string[]` | No | Command arguments |
 | `env` | `Record<string, string>` | No | Environment variables |
 | `stdin` | `string` | No | Standard input content |
-| `files` | `Record<string, string>` | No | Files to create |
+| `files` | `Record<string, string>` | No | Workspace-relative files to create; absolute paths, `..`, symlinks, and mount traversal are rejected |
 | `working_dir` | `string` | No | Working directory |
 
 ### Example

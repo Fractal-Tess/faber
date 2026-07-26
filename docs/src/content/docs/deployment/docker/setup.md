@@ -38,7 +38,7 @@ services:
       - "3000:3000"
     environment:
       - API_KEY=${FABER_API_KEY}
-      - CACHE_ENABLED=true
+      - CACHE_ENABLED=false
       - RUST_LOG=info
     volumes:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
@@ -300,12 +300,10 @@ deploy:
 
 ### Slow Responses
 
-Enable caching:
-
-```yaml
-environment:
-  - CACHE_ENABLED=true
-```
+Inspect queue depth, task duration, cgroup throttling, and configured concurrency
+before scaling workers. Do not enable whole-request caching as a general latency
+fix: it is only correct for explicitly deterministic task groups and is not a
+compile-artifact cache.
 
 ## Next Steps
 

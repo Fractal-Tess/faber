@@ -1,8 +1,12 @@
 use std::{
     ffi::CString,
+    fs::OpenOptions,
     io::{Read, Write},
-    os::fd::{AsRawFd, FromRawFd, IntoRawFd},
-    path::PathBuf,
+    os::{
+        fd::{AsRawFd, FromRawFd, IntoRawFd},
+        unix::{ffi::OsStrExt, fs::OpenOptionsExt},
+    },
+    path::{Component, Path},
     process::exit,
     time::Duration,
 };
@@ -10,9 +14,9 @@ use std::{
 use caps::CapSet;
 use nix::{
     libc,
-    sched::{unshare, CloneFlags},
-    sys::wait::{waitpid, WaitPidFlag, WaitStatus},
-    unistd::{chdir, execvpe, fork, pipe, setgid, setuid, ForkResult, Pid},
+    sched::{CloneFlags, unshare},
+    sys::wait::{WaitPidFlag, WaitStatus, waitpid},
+    unistd::{ForkResult, Pid, chdir, execvpe, fork, pipe, setgid, setuid},
 };
 
 use crate::{
@@ -191,13 +195,10 @@ impl Runtime {
         // Create task cgroup before fork
         let task_cgroup = cgroup.create_task_cgroup()?;
 
-        // Write files before fork (in parent's namespace context)
+        // Materialize files relative to the workspace without following links.
+        // This happens before privilege dropping, so path resolution must fail closed.
         for (file_path, file_content) in task.files.clone().unwrap_or_default() {
-            let file_path = PathBuf::from(file_path);
-            std::fs::write(file_path, file_content).map_err(|e| FaberError::WriteFile {
-                e,
-                details: "Failed to write file".to_string(),
-            })?;
+            Self::write_workspace_file(&file_path, file_content.as_bytes())?;
         }
 
         // Create pipes for stdout, stderr, stdin
@@ -385,6 +386,101 @@ impl Runtime {
         }
     }
 
+    fn write_workspace_file(file_path: &str, content: &[u8]) -> Result<()> {
+        let path = Path::new(file_path);
+        if file_path.is_empty()
+            || path.is_absolute()
+            || path
+                .components()
+                .any(|component| !matches!(component, Component::Normal(_)))
+        {
+            return Err(FaberError::InvalidTaskFilePath {
+                path: file_path.to_string(),
+                details: "paths must be normalized and relative to the workspace".to_string(),
+            });
+        }
+
+        let workspace = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_CLOEXEC)
+            .open(".")
+            .map_err(|e| FaberError::WriteFile {
+                e,
+                details: "Failed to open the task workspace".to_string(),
+            })?;
+        let path_cstr = CString::new(path.as_os_str().as_bytes()).map_err(|_| {
+            FaberError::InvalidTaskFilePath {
+                path: file_path.to_string(),
+                details: "paths cannot contain NUL bytes".to_string(),
+            }
+        })?;
+
+        #[repr(C)]
+        struct OpenHow {
+            flags: u64,
+            mode: u64,
+            resolve: u64,
+        }
+
+        // Linux openat2(2) resolve flags. Keep these local until libc exposes a
+        // stable open_how type across all supported build targets.
+        const RESOLVE_NO_XDEV: u64 = 0x01;
+        const RESOLVE_NO_MAGICLINKS: u64 = 0x02;
+        const RESOLVE_NO_SYMLINKS: u64 = 0x04;
+        const RESOLVE_BENEATH: u64 = 0x08;
+
+        let how = OpenHow {
+            flags: (libc::O_WRONLY
+                | libc::O_CREAT
+                | libc::O_TRUNC
+                | libc::O_CLOEXEC
+                | libc::O_NOFOLLOW
+                | libc::O_NONBLOCK) as u64,
+            mode: 0o644,
+            resolve: RESOLVE_NO_XDEV
+                | RESOLVE_NO_MAGICLINKS
+                | RESOLVE_NO_SYMLINKS
+                | RESOLVE_BENEATH,
+        };
+
+        let fd = unsafe {
+            libc::syscall(
+                libc::SYS_openat2,
+                workspace.as_raw_fd(),
+                path_cstr.as_ptr(),
+                &how,
+                std::mem::size_of::<OpenHow>(),
+            )
+        };
+        if fd < 0 {
+            return Err(FaberError::WriteFile {
+                e: std::io::Error::last_os_error(),
+                details: format!(
+                    "Refused to open task file '{file_path}' beneath the workspace without following links"
+                ),
+            });
+        }
+
+        let mut file = unsafe { std::fs::File::from_raw_fd(fd as i32) };
+        let metadata = file.metadata().map_err(|e| FaberError::WriteFile {
+            e,
+            details: format!("Failed to inspect task file '{file_path}'"),
+        })?;
+        if !metadata.is_file() {
+            return Err(FaberError::InvalidTaskFilePath {
+                path: file_path.to_string(),
+                details: "task file targets must be regular files".to_string(),
+            });
+        }
+
+        file.write_all(content).map_err(|e| FaberError::WriteFile {
+            e,
+            details: format!("Failed to write task file '{file_path}'"),
+        })?;
+
+        Ok(())
+    }
+
     /// Set up security restrictions in child process before exec
     fn child_setup_security() -> std::io::Result<()> {
         let unshare_flags = CloneFlags::CLONE_NEWNS;
@@ -415,7 +511,7 @@ impl Runtime {
     /// Mount proc filesystem in the child's PID namespace
     /// This MUST be called after the child enters the PID namespace
     fn mount_proc_in_pid_namespace() -> std::io::Result<()> {
-        use nix::mount::{mount, MsFlags};
+        use nix::mount::{MsFlags, mount};
 
         // Create /proc directory
         std::fs::create_dir_all("/proc").ok();
@@ -424,34 +520,21 @@ impl Runtime {
         // This will show only the processes in the current PID namespace
         // because we're calling this from the child that is PID 1 in the new namespace
         let proc_flags = MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC;
-        match mount(
+        mount(
             Some("proc"),
             "/proc",
             Some("proc"),
             proc_flags,
             None::<&str>,
-        ) {
-            Ok(_) => {}
-            Err(_) => {
-                // Fresh procfs mount may fail in rootless Docker (EPERM).
-                // Fallback: bind mount from oldroot (less secure but functional)
-                mount(
-                    Some("/oldroot/proc"),
-                    "/proc",
-                    None::<&str>,
-                    MsFlags::MS_BIND,
-                    None::<&str>,
-                )
-                .ok();
-            }
-        }
+        )
+        .map_err(|e| std::io::Error::other(format!("Failed to mount procfs: {e}")))?;
 
         Ok(())
     }
 
     /// Mount sysfs in the new mount namespace
     fn mount_sys() -> std::io::Result<()> {
-        use nix::mount::{mount, MsFlags};
+        use nix::mount::{MsFlags, mount};
 
         std::fs::create_dir_all("/sys").ok();
 

@@ -5,22 +5,26 @@ services:
       context: ../../
       dockerfile: docker/prod/Dockerfile
     ports:
-      - '3000:3000'
+      - '${FABER_BIND_ADDRESS:-127.0.0.1}:${FABER_PORT:-3000}:3000'
     environment:
       - PORT=3000
       - HOST=0.0.0.0
       - MAX_CONCURRENCY=50
+      - API_KEY=${API_KEY:?Set API_KEY before starting Faber}
+      - CACHE_ENABLED=${CACHE_ENABLED:-false}
     privileged: true
     cgroup: host
+    pids_limit: -1
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
     restart: unless-stopped
     healthcheck:
       test:
         [
           'CMD',
-          'wget',
-          '--no-verbose',
-          '--tries=1',
-          '--spider',
+          'curl',
+          '--fail',
+          '--silent',
           'http://localhost:3000/api/v1/health',
         ]
       interval: 30s

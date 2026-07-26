@@ -98,7 +98,7 @@ services:
       - "3000:3000"
     environment:
       - API_KEY=your-secret-api-key
-      - CACHE_ENABLED=true
+      - CACHE_ENABLED=false
       - RUST_LOG=info
     volumes:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw

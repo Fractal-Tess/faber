@@ -21,7 +21,8 @@ API_KEY=your-secret-api-key
 
 ### CACHE_ENABLED
 
-Enable request caching.
+Enable experimental whole-request result caching. Leave this disabled for
+nondeterministic or untrusted tasks; it is not artifact or layer caching.
 
 ```bash
 CACHE_ENABLED=true
@@ -60,7 +61,7 @@ Default: `3000`
 docker run --privileged --cgroupns=host \
   -p 3000:3000 \
   -e API_KEY=your-secret-key \
-  -e CACHE_ENABLED=true \
+  -e CACHE_ENABLED=false \
   -e RUST_LOG=debug \
   vgfractal/faber
 ```
@@ -73,7 +74,7 @@ services:
     image: vgfractal/faber
     environment:
       - API_KEY=${FABER_API_KEY}
-      - CACHE_ENABLED=true
+      - CACHE_ENABLED=false
       - RUST_LOG=info
       - PORT=3000
 ```

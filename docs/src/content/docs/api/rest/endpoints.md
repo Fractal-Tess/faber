@@ -82,7 +82,7 @@ Array of `ExecutionStep` objects. Each step can be:
 | `args` | string[] | No | Command arguments |
 | `env` | object | No | Environment variables |
 | `stdin` | string | No | Standard input content |
-| `files` | object | No | Files to create (path → content) |
+| `files` | object | No | Workspace-relative files to create (path → content); traversal and symlinks are rejected |
 | `working_dir` | string | No | Working directory |
 
 **Example Request:**

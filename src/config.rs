@@ -57,7 +57,7 @@ impl Config {
     fn load_cache_enabled() -> bool {
         env::var("CACHE_ENABLED")
             .map(|v| v.to_lowercase() == "true" || v == "1")
-            .unwrap_or(true)
+            .unwrap_or(false)
     }
 
     fn load_store_backend() -> StoreBackend {

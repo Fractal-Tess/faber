@@ -1,6 +1,7 @@
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
     curl \
     gcc \
     g++ \
@@ -9,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libssl-dev \
     procps \
+    iproute2 \
     lldb \
     gdb \
     build-essential \
@@ -25,4 +27,4 @@ RUN cargo install cargo-watch
 
 WORKDIR /faber
 
-ENTRYPOINT ["tail", "-f", "/dev/null"]
+CMD ["cargo", "watch", "--watch", "src", "--watch", "crates", "--exec", "run"]

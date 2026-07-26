@@ -5,10 +5,10 @@ use std::{
 };
 
 use nix::{
-    mount::{mount, umount2, MntFlags, MsFlags},
-    sched::unshare,
+    mount::{MntFlags, MsFlags, mount, umount2},
     sched::CloneFlags,
-    sys::stat::{makedev, mknod, Mode, SFlag},
+    sched::unshare,
+    sys::stat::{Mode, SFlag, makedev, mknod},
     unistd::sethostname,
 };
 
@@ -144,12 +144,28 @@ impl Container {
                 Some(*source),
                 target.as_os_str(),
                 None::<&str>,
-                MsFlags::MS_BIND | MsFlags::MS_RDONLY,
+                MsFlags::MS_BIND | MsFlags::MS_REC,
                 None::<&str>,
             )
             .map_err(|e| FaberError::Mount {
                 e,
                 details: format!("Failed to bind mount {} to {:?}", source, target),
+            })?;
+
+            mount(
+                None::<&str>,
+                target.as_os_str(),
+                None::<&str>,
+                MsFlags::MS_BIND
+                    | MsFlags::MS_REMOUNT
+                    | MsFlags::MS_RDONLY
+                    | MsFlags::MS_NOSUID
+                    | MsFlags::MS_NODEV,
+                None::<&str>,
+            )
+            .map_err(|e| FaberError::Mount {
+                e,
+                details: format!("Failed to remount {} read-only at {:?}", source, target),
             })?;
         }
         Ok(())
