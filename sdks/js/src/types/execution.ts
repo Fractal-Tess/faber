@@ -18,6 +18,8 @@ export type TaskOutcome =
 export type ExecutionStats = {
   memory_peak_bytes: number;
   cpu_usage_usec: number;
+  cpu_nr_throttled: number;
+  cpu_throttled_usec: number;
   pids_peak: number;
   execution_time_ms: number;
   stdout_truncated: boolean;

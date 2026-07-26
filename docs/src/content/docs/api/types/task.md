@@ -135,6 +135,8 @@ type TaskResult = {
   "stats": {
     "memory_peak_bytes": 1048576,
     "cpu_usage_usec": 12345,
+    "cpu_nr_throttled": 0,
+    "cpu_throttled_usec": 0,
     "pids_peak": 1,
     "execution_time_ms": 15,
     "stdout_truncated": false,
@@ -156,6 +158,8 @@ Resource usage statistics.
 type ExecutionStats = {
   memory_peak_bytes: number;
   cpu_usage_usec: number;
+  cpu_nr_throttled: number;
+  cpu_throttled_usec: number;
   pids_peak: number;
   execution_time_ms: number;
   stdout_truncated: boolean;
@@ -174,6 +178,8 @@ type ExecutionStats = {
 |-------|------|-------------|
 | `memory_peak_bytes` | `number` | Peak memory usage (bytes) |
 | `cpu_usage_usec` | `number` | CPU usage (microseconds) |
+| `cpu_nr_throttled` | `number` | Number of `cpu.max` throttling periods |
+| `cpu_throttled_usec` | `number` | Total throttled time from `cpu.stat` |
 | `pids_peak` | `number` | Peak process count |
 | `execution_time_ms` | `number` | Execution time (milliseconds) |
 | `stdout_truncated` | `boolean` | Whether stdout exceeded its configured byte limit |
@@ -311,6 +317,8 @@ The SDK automatically converts between snake_case (API) and camelCase (SDK).
           "properties": {
             "memory_peak_bytes": { "type": "integer" },
             "cpu_usage_usec": { "type": "integer" },
+            "cpu_nr_throttled": { "type": "integer" },
+            "cpu_throttled_usec": { "type": "integer" },
             "pids_peak": { "type": "integer" },
             "execution_time_ms": { "type": "integer" },
             "stdout_truncated": { "type": "boolean" },

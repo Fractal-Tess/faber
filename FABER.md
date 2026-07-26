@@ -121,6 +121,8 @@ curl -X POST http://localhost:3000/api/v1/execute \
     "stats": {
       "memory_peak_bytes": 512000,
       "cpu_usage_usec": 1500,
+      "cpu_nr_throttled": 0,
+      "cpu_throttled_usec": 0,
       "pids_peak": 1,
       "execution_time_ms": 10,
       "stdout_truncated": false,
@@ -143,6 +145,8 @@ curl -X POST http://localhost:3000/api/v1/execute \
     "stats": {
       "memory_peak_bytes": 0,
       "cpu_usage_usec": 0,
+      "cpu_nr_throttled": 0,
+      "cpu_throttled_usec": 0,
       "pids_peak": 0,
       "execution_time_ms": 0,
       "stdout_truncated": false,

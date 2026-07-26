@@ -451,6 +451,8 @@ impl Runtime {
                     execution_time_ms: start_time.elapsed().as_millis() as u64,
                     memory_peak_bytes: task_stats.memory_peak_bytes,
                     cpu_usage_usec: task_stats.cpu_usage_usec,
+                    cpu_nr_throttled: task_stats.cpu_nr_throttled,
+                    cpu_throttled_usec: task_stats.cpu_throttled_usec,
                     pids_peak: task_stats.pids_max,
                     stdout_truncated: collected.stdout_truncated,
                     stderr_truncated: collected.stderr_truncated,

@@ -69,6 +69,8 @@ pub struct Task {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TaskStats {
     pub cpu_usage_usec: u64,
+    pub cpu_nr_throttled: u64,
+    pub cpu_throttled_usec: u64,
     pub memory_peak_bytes: u64,
     pub pids_max: u64,
 }

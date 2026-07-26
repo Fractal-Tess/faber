@@ -179,6 +179,10 @@ pub enum TaskOutcome {
 pub struct TaskResultStats {
     pub memory_peak_bytes: u64,
     pub cpu_usage_usec: u64,
+    #[serde(default)]
+    pub cpu_nr_throttled: u64,
+    #[serde(default)]
+    pub cpu_throttled_usec: u64,
     pub pids_peak: u64,
     pub execution_time_ms: u64,
     pub stdout_truncated: bool,

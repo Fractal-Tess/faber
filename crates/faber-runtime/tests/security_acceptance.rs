@@ -1535,6 +1535,14 @@ fn file_descriptor_file_size_stack_core_and_cpu_rlimits_are_enforced() {
         stats.execution_time_ms < 2500,
         "wall timeout fired before RLIMIT_CPU: {stats:?}"
     );
+    assert!(
+        stats.cpu_nr_throttled > 0,
+        "cpu.max never throttled: {stats:?}"
+    );
+    assert!(
+        stats.cpu_throttled_usec > 0,
+        "cpu.stat reported no throttled time: {stats:?}"
+    );
 }
 
 #[test]

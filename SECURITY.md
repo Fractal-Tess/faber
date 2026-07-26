@@ -35,7 +35,7 @@ namespace flag is not sufficient evidence.
 | Syscalls | Every task installs a versioned seccomp policy before `exec`; violations terminate with `SIGSYS` | Probe verifies mode 2; the matrix test invokes every blocked syscall under each applicable profile and verifies `policy_violation` | Verified denylist baseline |
 | Memory | The complete task process tree cannot exceed `memory.max` | OOM acceptance test and reported `memory.events:oom_kill` evidence | Verified baseline |
 | Process count | The complete task process tree cannot exceed `pids.max` | PID acceptance test and reported `pids.events:max` evidence | Verified baseline |
-| CPU | CPU bandwidth and total CPU/wall time are independently bounded | `cpu.max`, independent wall timeout, and a shorter `RLIMIT_CPU` enforcement test; throttling counter evidence remains pending | Partial |
+| CPU | CPU bandwidth, CPU time, and wall time are independently bounded | Busy-loop test verifies `cpu.max` throttling counters and a shorter `RLIMIT_CPU` terminates before wall timeout | Verified baseline |
 | Rlimits | CPU time, file size, descriptors, stack, and core dumps have finite enforced policy limits | Probe verifies configured values; active tests hit `EMFILE`, `EFBIG`, stack/core signals, absent core files, and CPU kill | Verified baseline |
 | Output | stdin/stdout/stderr progress concurrently and each output stream is bounded | Flood and bidirectional-pipe tests report `output_limit` and truncation | Verified baseline |
 | Cleanup | No process, cgroup, mount, or workspace survives any completion path | Results report cgroup cleanup success; broader failure-mode and host-observer tests pending | Partial |

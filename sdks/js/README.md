@@ -531,6 +531,8 @@ type TaskResult = {
   stats?: {
     memory_peak_bytes: number;    // Peak memory usage
     cpu_usage_usec: number;       // CPU usage in microseconds
+    cpu_nr_throttled: number;     // Number of throttled periods
+    cpu_throttled_usec: number;   // Total throttled time
     pids_peak: number;            // Peak process count
     execution_time_ms: number;    // Execution time in milliseconds
     stdout_truncated: boolean;    // Stdout exceeded the configured limit

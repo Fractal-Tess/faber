@@ -73,6 +73,8 @@ impl TaskCgroup {
 
     pub fn measure_resources(&self) -> Result<TaskStats> {
         let mut cpu_usage_usec = 0u64;
+        let mut cpu_nr_throttled = 0u64;
+        let mut cpu_throttled_usec = 0u64;
         let mut memory_peak_bytes = 0u64;
         let mut pids_max = 0u64;
 
@@ -82,9 +84,13 @@ impl TaskCgroup {
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() == 2
                     && let Ok(value) = parts[1].parse::<u64>()
-                    && parts[0] == "usage_usec"
                 {
-                    cpu_usage_usec = value;
+                    match parts[0] {
+                        "usage_usec" => cpu_usage_usec = value,
+                        "nr_throttled" => cpu_nr_throttled = value,
+                        "throttled_usec" => cpu_throttled_usec = value,
+                        _ => {}
+                    }
                 }
             }
         }
@@ -105,6 +111,8 @@ impl TaskCgroup {
 
         Ok(TaskStats {
             cpu_usage_usec,
+            cpu_nr_throttled,
+            cpu_throttled_usec,
             memory_peak_bytes,
             pids_max,
         })
