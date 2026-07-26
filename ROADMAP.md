@@ -56,8 +56,8 @@ slice.
 
 - [x] Verification foundation: Docker workflow, threat model, invariant matrix,
   safe workspace files, and real memory/PID enforcement tests
-- [ ] Security-state probe: identity maps, groups, capabilities, `NoNewPrivs`,
-  seccomp, namespaces, mounts, routes, and cgroup membership
+- [x] Security-state probe: identity maps, groups, capabilities, `NoNewPrivs`,
+  seccomp, namespaces, mounts, routes, rlimits, and cgroup membership
 - [ ] Privilege cleanup: supplementary groups, ambient/bounding capabilities,
   and `NoNewPrivs`
 - [ ] Bounded process I/O: concurrent draining, stream limits, truncation, and

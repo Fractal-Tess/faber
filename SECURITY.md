@@ -28,10 +28,10 @@ namespace flag is not sufficient evidence.
 |---|---|---|---|
 | Workspace files | Submitted paths are normalized, relative to `/faber`, and cannot traverse symlinks or mount points | `security_acceptance::submitted_files_*`; `openat2` with `RESOLVE_BENEATH`, `RESOLVE_NO_SYMLINKS`, `RESOLVE_NO_MAGICLINKS`, and `RESOLVE_NO_XDEV` | Verified baseline |
 | Root filesystem | The old root is detached, outer-root files are hidden, and toolchain mounts cannot be modified | `filesystem_hides_outer_root_and_keeps_toolchains_read_only`; `test_toolchain_mounts_are_read_only` | Verified baseline |
-| PID/proc | Host processes are absent from procfs and all descendants are reaped and killed at teardown | `test_pid_namespace_isolation` covers visibility; descendant/reaper tests pending | Partial |
+| PID/proc | Host processes are absent from procfs and all descendants are reaped and killed at teardown | `test_pid_namespace_isolation` and the security-state probe cover visibility; descendant/reaper tests pending | Partial |
 | Network | Tasks have no host or external connectivity over IPv4 or IPv6 | Interface smoke test exists; route, DNS, socket, and cross-task tests pending | Partial |
-| User identity | Task IDs map to an unprivileged host UID/GID and supplementary groups are empty | User namespace and mapping tests pending | Not implemented |
-| Privileges | Effective, permitted, inheritable, ambient, and bounding capabilities are empty; `NoNewPrivs` is set | Complete capability probe pending | Partial |
+| User identity | Task IDs map to an unprivileged host UID/GID and supplementary groups are empty | Security-state probe records IDs, maps, and groups; user namespace and group cleanup pending | Not implemented |
+| Privileges | Effective, permitted, inheritable, ambient, and bounding capabilities are empty; `NoNewPrivs` is set | Security-state probe verifies effective/permitted/inheritable/ambient sets and records bounding/NNP state | Partial |
 | Syscalls | A versioned workload policy denies syscalls outside the declared profile | `apply_seccomp_filter()` remains a no-op | Not implemented |
 | Memory | The complete task process tree cannot exceed `memory.max` | `memory_cgroup_kills_a_process_that_exceeds_memory_max` | Verified baseline |
 | Process count | The complete task process tree cannot exceed `pids.max` | `pids_cgroup_enforces_the_process_limit` | Verified baseline |
@@ -42,6 +42,16 @@ namespace flag is not sufficient evidence.
 “Verified baseline” describes the behavior covered by the current test and is
 not a claim that the whole isolation area is complete. Tests must be expanded
 for races, concurrency, cancellation, and kernel-version differences.
+
+## Probe baseline
+
+`tests/fixtures/security_probe.c` records kernel state as JSON from inside the
+untrusted process after security setup. The initial privileged-Docker baseline
+confirmed the expected gaps: supplementary group 0 remained, `CapBnd` was
+nonzero, `NoNewPrivs` and seccomp mode were both 0, UID/GID maps still covered
+the initial user namespace, CPU/file/core limits were unlimited, and sysfs was
+writable inside the mount namespace. Later slices turn each applicable
+observation into a passing hardened invariant.
 
 ## Running verification
 

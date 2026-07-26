@@ -2,13 +2,43 @@ use faber_runtime::{
     CgroupConfigBuilder, ExecutionStep, ExecutionStepResult, RuntimeBuilder, RuntimeResult, Task,
     TaskResult,
 };
+use serde::Deserialize;
 use std::{
     collections::HashMap,
+    os::unix::fs::MetadataExt,
     path::PathBuf,
     sync::{Mutex, MutexGuard},
 };
 
 static SECURITY_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+const SECURITY_PROBE_SOURCE: &str = include_str!("fixtures/security_probe.c");
+
+#[derive(Debug, Deserialize)]
+struct RlimitState {
+    soft: u64,
+    hard: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct SecurityState {
+    pid: u32,
+    ppid: u32,
+    uid: u32,
+    euid: u32,
+    gid: u32,
+    egid: u32,
+    groups: Vec<u32>,
+    namespaces: HashMap<String, u64>,
+    uid_map: String,
+    gid_map: String,
+    status: String,
+    cgroup: String,
+    mountinfo: String,
+    route4: String,
+    route6: String,
+    rlimits: HashMap<String, RlimitState>,
+}
 
 const PID_PROBE_SOURCE: &str = r#"
 #include <errno.h>
@@ -148,6 +178,121 @@ fn single_result(result: &ExecutionStepResult) -> &TaskResult {
         panic!("expected a single task result");
     };
     result
+}
+
+fn status_field<'a>(status: &'a str, name: &str) -> &'a str {
+    status
+        .lines()
+        .find_map(|line| line.strip_prefix(name))
+        .map(str::trim)
+        .unwrap_or_else(|| panic!("missing {name} in /proc/self/status"))
+}
+
+fn namespace_inode(name: &str) -> u64 {
+    std::fs::metadata(format!("/proc/self/ns/{name}"))
+        .unwrap_or_else(|error| panic!("failed to inspect outer {name} namespace: {error}"))
+        .ino()
+}
+
+#[test]
+fn security_probe_records_identity_namespaces_mounts_and_limits() {
+    let _guard = lock_security_tests();
+    let results = execute(vec![
+        task_with_file(
+            "/usr/bin/gcc",
+            &["security_probe.c", "-o", "security_probe"],
+            "security_probe.c",
+            SECURITY_PROBE_SOURCE,
+        ),
+        task("./security_probe", &[]),
+    ]);
+
+    let TaskResult::Completed {
+        exit_code: compile_exit,
+        stderr: compile_stderr,
+        ..
+    } = single_result(&results[0])
+    else {
+        panic!("security probe compilation failed: {:?}", results[0]);
+    };
+    assert_eq!(
+        *compile_exit, 0,
+        "security probe did not compile: {compile_stderr}"
+    );
+
+    let TaskResult::Completed {
+        stdout,
+        stderr,
+        exit_code,
+        ..
+    } = single_result(&results[1])
+    else {
+        panic!("security probe did not complete: {:?}", results[1]);
+    };
+    assert_eq!(*exit_code, 0, "security probe failed: {stderr}");
+
+    let state: SecurityState =
+        serde_json::from_str(stdout).expect("security probe emitted invalid JSON");
+    assert!(
+        state.pid > 1,
+        "task replaced the namespace reaper: {state:?}"
+    );
+    assert!(state.ppid <= 1, "unexpected visible parent PID: {state:?}");
+    assert_eq!((state.uid, state.euid), (65534, 65534));
+    assert_eq!((state.gid, state.egid), (65534, 65534));
+
+    for capability_set in ["CapInh:", "CapPrm:", "CapEff:", "CapAmb:"] {
+        assert_eq!(
+            status_field(&state.status, capability_set),
+            "0000000000000000",
+            "{capability_set} was not cleared"
+        );
+    }
+    u64::from_str_radix(status_field(&state.status, "CapBnd:"), 16)
+        .expect("CapBnd was not hexadecimal");
+    status_field(&state.status, "NoNewPrivs:")
+        .parse::<u8>()
+        .expect("NoNewPrivs was not numeric");
+    status_field(&state.status, "Seccomp:")
+        .parse::<u8>()
+        .expect("Seccomp was not numeric");
+
+    for namespace in ["mnt", "pid", "net", "uts", "ipc"] {
+        let inner = state.namespaces[namespace];
+        assert_ne!(
+            inner,
+            namespace_inode(namespace),
+            "task did not enter a distinct {namespace} namespace"
+        );
+    }
+    for namespace in ["user", "cgroup"] {
+        assert!(
+            state.namespaces[namespace] > 0,
+            "missing {namespace} namespace evidence"
+        );
+    }
+
+    assert!(!state.uid_map.trim().is_empty(), "missing UID map evidence");
+    assert!(!state.gid_map.trim().is_empty(), "missing GID map evidence");
+    let _ = &state.groups;
+    assert!(
+        state.cgroup.contains("task-"),
+        "unexpected cgroup: {}",
+        state.cgroup
+    );
+    assert!(!state.mountinfo.contains("/oldroot"));
+    let _ = (&state.route4, &state.route6);
+
+    for resource in ["cpu", "fsize", "nofile", "nproc", "stack", "core"] {
+        let limit = state
+            .rlimits
+            .get(resource)
+            .unwrap_or_else(|| panic!("missing {resource} rlimit evidence"));
+        assert!(
+            limit.soft <= limit.hard,
+            "invalid {resource} rlimit: {limit:?}"
+        );
+    }
 }
 
 #[test]
