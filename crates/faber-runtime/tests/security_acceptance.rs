@@ -226,8 +226,7 @@ fn status_field<'a>(status: &'a str, name: &str) -> &'a str {
 fn mountinfo_line<'a>(mountinfo: &'a str, mountpoint: &str) -> &'a str {
     mountinfo
         .lines()
-        .filter(|line| line.split_whitespace().nth(4) == Some(mountpoint))
-        .next_back()
+        .rfind(|line| line.split_whitespace().nth(4) == Some(mountpoint))
         .unwrap_or_else(|| panic!("missing {mountpoint} in mountinfo"))
 }
 
@@ -260,7 +259,8 @@ fn security_probe_records_identity_namespaces_mounts_and_limits() {
     };
     assert_eq!(
         *compile_exit, 0,
-        "security probe did not compile: {compile_stderr}"
+        "security probe did not compile: {compile_stderr}; result: {:?}",
+        results[0]
     );
 
     let TaskResult::Completed {
@@ -296,7 +296,7 @@ fn security_probe_records_identity_namespaces_mounts_and_limits() {
         .parse::<u8>()
         .expect("Seccomp was not numeric");
 
-    for namespace in ["mnt", "pid", "net", "uts", "ipc"] {
+    for namespace in ["mnt", "pid", "net", "uts", "ipc", "user"] {
         let inner = state.namespaces[namespace];
         assert_ne!(
             inner,
@@ -304,15 +304,23 @@ fn security_probe_records_identity_namespaces_mounts_and_limits() {
             "task did not enter a distinct {namespace} namespace"
         );
     }
-    for namespace in ["user", "cgroup"] {
-        assert!(
-            state.namespaces[namespace] > 0,
-            "missing {namespace} namespace evidence"
-        );
-    }
+    assert!(
+        state.namespaces["cgroup"] > 0,
+        "missing cgroup namespace evidence"
+    );
 
-    assert!(!state.uid_map.trim().is_empty(), "missing UID map evidence");
-    assert!(!state.gid_map.trim().is_empty(), "missing GID map evidence");
+    let uid_map: Vec<&str> = state.uid_map.split_whitespace().collect();
+    let gid_map: Vec<&str> = state.gid_map.split_whitespace().collect();
+    assert_eq!(
+        uid_map,
+        ["65534", "65534", "1"],
+        "task UID map exposed an unexpected outer identity"
+    );
+    assert_eq!(
+        gid_map,
+        ["65534", "65534", "1"],
+        "task GID map exposed an unexpected outer identity"
+    );
     assert!(
         state.groups.is_empty(),
         "supplementary groups were not cleared: {:?}",

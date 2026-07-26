@@ -275,7 +275,7 @@ The container root is created via `pivot_root` with:
 
 ### Security Hardening
 
-1. **UID/GID drop**: Tasks run as `nobody` (65534:65534) with no supplementary groups
+1. **User namespace**: Each task maps only inner `nobody` (65534:65534) to outer 65534:65534 and has no supplementary groups
 2. **Capability drop**: Effective, permitted, inheritable, ambient, and bounding sets are cleared
 3. **Privilege lock**: `NoNewPrivs` prevents privilege gain across `execve`
 4. **Workspace paths**: Submitted files must use normalized workspace-relative paths and cannot traverse symlinks
@@ -506,9 +506,8 @@ let runtime = RuntimeBuilder::default()
 
 ## Known Limitations
 
-1. **No User Namespace**: Tasks run with host UID mapping (mitigated by dropping to nobody)
-2. **No Seccomp**: Syscall filtering is not yet implemented
-3. **No File Persistence**: Files don't persist between tasks in a task group
+1. **No Seccomp**: Syscall filtering is not yet implemented
+2. **No File Persistence**: Files don't persist between tasks in a task group
 4. **No Network**: Network namespace is completely isolated (no external access)
 5. **Linux Only**: Requires Linux kernel with namespace and cgroup support
 

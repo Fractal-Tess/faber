@@ -46,13 +46,9 @@ This ensures tasks run with minimal privileges.
 
 ### 4. Unprivileged User
 
-Tasks execute as UID/GID 65534 (nobody):
-
-```rust
-// Set user to nobody
-setuid(65534);
-setgid(65534);
-```
+Each task receives a fresh user namespace. Only inner UID/GID 65534 (`nobody`)
+is mapped to the executor's outer identity; supplementary groups and all
+capability sets are cleared before execution.
 
 ## Container Lifecycle
 

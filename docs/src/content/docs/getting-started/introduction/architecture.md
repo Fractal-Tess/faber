@@ -154,8 +154,9 @@ The client SDK provides:
 - Tasks run with minimal privileges
 
 ### 4. Unprivileged Execution
-- Tasks execute as UID 65534 (nobody)
-- No root access within containers
+- Each task has a fresh one-entry user namespace mapping
+- Tasks execute as inner and outer UID/GID 65534 (`nobody`)
+- Supplementary groups and capability sets are empty
 
 ## Data Flow
 

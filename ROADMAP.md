@@ -34,11 +34,9 @@ Implemented:
 
 Not production-ready:
 
-- seccomp is a no-op and no user namespace exists
-- supplementary groups, rlimits, output limits, and robust PID 1 reaping are
-  missing
-- task file paths are not constrained beneath the workspace
-- `/sys` has a host bind fallback and several mount errors are discarded
+- seccomp remains a no-op
+- API cancellation and disposable-VM race/concurrency stress remain incomplete
+- memory and PID ceilings are configurable rather than mandatory service policy
 - the in-memory execution cache has no TTL, bound, persistence, single-flight,
   tenant scope, or cacheability contract
 - resource enforcement, timeout, cleanup, and breakout behavior lack adversarial
@@ -69,7 +67,7 @@ slice.
 - [x] Rlimits: CPU/file/FD/core/stack limits with probe assertions
 - [x] Resource outcomes: explicit OOM, PID, timeout, signal, output, and cleanup
   outcomes backed by cgroup event files
-- [ ] User namespace: explicit UID/GID mappings with host-side evidence
+- [x] User namespace: explicit UID/GID mappings with controller-side evidence
 - [ ] Versioned seccomp profiles: compile/native policies and violation tests
 - [ ] Adversarial CI: ordinary quality gates plus disposable-VM isolation,
   lifecycle, and concurrency suites
@@ -141,9 +139,10 @@ Trace representative workloads, but treat traces as test input rather than proof
 that a policy is complete. Include architecture and policy version in every
 execution specification and cache key.
 
-Add a user namespace with explicit UID/GID maps after the existing mount flow is
-covered by tests. Do not combine this migration with the first seccomp patch;
-each boundary should have an independently reviewable regression suite.
+**User namespace complete:** every task enters a fresh user namespace mapping
+inner 65534:65534 to exactly outer 65534:65534. The controller-side
+probe verifies distinct namespace inodes, one-entry maps, empty supplementary
+groups, and empty capability sets. Seccomp remains an independent slice.
 
 ## Phase 3: resource and lifecycle correctness
 

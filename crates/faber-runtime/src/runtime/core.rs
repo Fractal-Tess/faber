@@ -246,6 +246,14 @@ impl Runtime {
             e: std::io::Error::from_raw_os_error(e as i32),
             details: "Failed to create stdin pipe".to_string(),
         })?;
+        let (user_ready_read, user_ready_write) = pipe().map_err(|e| FaberError::MkPipe {
+            e: std::io::Error::from_raw_os_error(e as i32),
+            details: "Failed to create user namespace ready pipe".to_string(),
+        })?;
+        let (user_continue_read, user_continue_write) = pipe().map_err(|e| FaberError::MkPipe {
+            e: std::io::Error::from_raw_os_error(e as i32),
+            details: "Failed to create user namespace continue pipe".to_string(),
+        })?;
 
         match unsafe { fork() } {
             Ok(ForkResult::Child) => {
@@ -257,10 +265,20 @@ impl Runtime {
                     exit(127);
                 }
 
+                let proc_pid = match std::fs::read_link("/proc/self")
+                    .ok()
+                    .and_then(|path| path.to_string_lossy().parse::<u32>().ok())
+                {
+                    Some(pid) => pid,
+                    None => exit(126),
+                };
+
                 // Close read ends of pipes in child
                 drop(stdout_read);
                 drop(stderr_read);
                 drop(stdin_write);
+                drop(user_ready_read);
+                drop(user_continue_write);
 
                 // Redirect stdout/stderr/stdin using libc dup2
                 unsafe {
@@ -275,7 +293,12 @@ impl Runtime {
                 drop(stdin_read);
 
                 // Apply security restrictions
-                if let Err(e) = Self::child_setup_security(timeout) {
+                if let Err(e) = Self::child_setup_security(
+                    timeout,
+                    user_ready_write.into(),
+                    user_continue_read.into(),
+                    proc_pid,
+                ) {
                     eprintln!("Security setup failed: {}", e);
                     exit(126);
                 }
@@ -354,6 +377,14 @@ impl Runtime {
                 drop(stdout_write);
                 drop(stderr_write);
                 drop(stdin_read);
+                drop(user_ready_write);
+                drop(user_continue_read);
+
+                Self::configure_child_user_namespace(
+                    child,
+                    user_ready_read.into(),
+                    user_continue_write.into(),
+                )?;
 
                 let collected = Self::wait_and_collect_output(
                     child,
@@ -518,7 +549,12 @@ impl Runtime {
     }
 
     /// Set up security restrictions in child process before exec
-    fn child_setup_security(timeout: Duration) -> std::io::Result<()> {
+    fn child_setup_security(
+        timeout: Duration,
+        user_ready: PipeWriter,
+        user_continue: PipeReader,
+        proc_pid: u32,
+    ) -> std::io::Result<()> {
         let unshare_flags = CloneFlags::CLONE_NEWNS;
 
         unshare(unshare_flags).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
@@ -537,14 +573,11 @@ impl Runtime {
         Self::apply_resource_limits(timeout)?;
 
         setgroups(&[]).map_err(std::io::Error::other)?;
+        Self::enter_user_namespace(user_ready, user_continue, proc_pid)?;
 
-        // Bounding capabilities require CAP_SETPCAP to remove, so clear the
-        // Linux-specific sets before dropping the setup process's UID/GID.
+        // Clear every capability set granted while establishing the new user
+        // namespace before executing submitted code.
         Self::clear_linux_capability_sets()?;
-
-        setgid(65534.into()).map_err(std::io::Error::other)?;
-        setuid(65534.into()).map_err(std::io::Error::other)?;
-
         Self::drop_posix_capabilities()?;
         Self::set_no_new_privileges()?;
         Self::apply_seccomp_filter()?;
@@ -803,6 +836,114 @@ impl Runtime {
             timed_out,
             output_terminated,
         })
+    }
+
+    fn configure_child_user_namespace(
+        child: Pid,
+        mut user_ready: PipeReader,
+        mut user_continue: PipeWriter,
+    ) -> Result<()> {
+        let mut ready = [0; std::mem::size_of::<u32>()];
+        if let Err(error) = user_ready.read_exact(&mut ready) {
+            let _ = nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL);
+            let _ = waitpid(child, None);
+            return Err(FaberError::Generic {
+                message: format!("Task failed before entering its user namespace: {error}"),
+            });
+        }
+        let proc_pid = u32::from_ne_bytes(ready);
+        if proc_pid == 0 {
+            let _ = nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL);
+            let _ = waitpid(child, None);
+            return Err(FaberError::Generic {
+                message: "Task reported an invalid user namespace handshake".to_string(),
+            });
+        }
+
+        let proc_path = Path::new("/proc").join(proc_pid.to_string());
+        let mapping_result = (|| -> std::io::Result<()> {
+            std::fs::write(proc_path.join("setgroups"), "deny").map_err(|error| {
+                std::io::Error::new(error.kind(), format!("setgroups: {error}"))
+            })?;
+            std::fs::write(proc_path.join("uid_map"), "65534 65534 1\n")
+                .map_err(|error| std::io::Error::new(error.kind(), format!("uid_map: {error}")))?;
+            std::fs::write(proc_path.join("gid_map"), "65534 65534 1\n")
+                .map_err(|error| std::io::Error::new(error.kind(), format!("gid_map: {error}")))?;
+            Ok(())
+        })();
+
+        let configured = u8::from(mapping_result.is_ok());
+        let _ = user_continue.write_all(&[configured]);
+        if let Err(error) = mapping_result {
+            let _ = nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL);
+            let _ = waitpid(child, None);
+            return Err(FaberError::Generic {
+                message: format!("Failed to configure task user namespace: {error}"),
+            });
+        }
+
+        let identity_result = (|| -> std::io::Result<()> {
+            let mut identity_ready = [0];
+            user_ready.read_exact(&mut identity_ready)?;
+            if identity_ready != [1] {
+                return Err(std::io::Error::other("invalid identity confirmation"));
+            }
+            let status = std::fs::read_to_string(proc_path.join("status"))?;
+            for field in ["Uid:", "Gid:"] {
+                let values = status
+                    .lines()
+                    .find(|line| line.starts_with(field))
+                    .ok_or_else(|| std::io::Error::other(format!("missing {field}")))?
+                    .split_whitespace()
+                    .skip(1)
+                    .map(str::parse::<u32>)
+                    .collect::<std::result::Result<Vec<_>, _>>()
+                    .map_err(std::io::Error::other)?;
+                if values != [65534, 65534, 65534, 65534] {
+                    return Err(std::io::Error::other(format!(
+                        "unexpected outer {field} values: {values:?}"
+                    )));
+                }
+            }
+            Ok(())
+        })();
+        if let Err(error) = identity_result {
+            let _ = nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL);
+            let _ = waitpid(child, None);
+            return Err(FaberError::Generic {
+                message: format!("Failed to verify task user namespace identity: {error}"),
+            });
+        }
+
+        Ok(())
+    }
+
+    fn enter_user_namespace(
+        mut user_ready: PipeWriter,
+        mut user_continue: PipeReader,
+        proc_pid: u32,
+    ) -> std::io::Result<()> {
+        const TASK_ID: u32 = 65534;
+
+        unshare(CloneFlags::CLONE_NEWUSER).map_err(std::io::Error::other)?;
+        user_ready.write_all(&proc_pid.to_ne_bytes())?;
+        let mut configured = [0];
+        user_continue.read_exact(&mut configured)?;
+        if configured != [1] {
+            return Err(std::io::Error::other("user namespace mapping failed"));
+        }
+
+        setgid(TASK_ID.into()).map_err(std::io::Error::other)?;
+        setuid(TASK_ID.into()).map_err(std::io::Error::other)?;
+
+        if unsafe { libc::getuid() } != TASK_ID || unsafe { libc::getgid() } != TASK_ID {
+            return Err(std::io::Error::other(
+                "task UID/GID do not match the configured user namespace maps",
+            ));
+        }
+        user_ready.write_all(&[1])?;
+
+        Ok(())
     }
 
     fn set_resource_limit(resource: libc::__rlimit_resource_t, value: u64) -> std::io::Result<()> {

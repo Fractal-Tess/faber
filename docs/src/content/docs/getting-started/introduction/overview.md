@@ -64,8 +64,8 @@ Faber is ideal for:
 ## Security Model
 
 ### Container Isolation
-- **Namespaces**: PID, mount, network, UTS, IPC
-- **User**: Unprivileged (UID/GID 65534 - nobody)
+- **Namespaces**: PID, mount, network, UTS, IPC, and per-task user namespaces
+- **User**: Inner and outer UID/GID 65534 (`nobody`) with one-entry maps
 - **Capabilities**: All dropped via `capset`
 - **Filesystem**: pivot_root to minimal rootfs
 

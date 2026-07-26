@@ -40,7 +40,8 @@ impl TaskCgroup {
     pub fn new(config: CgroupConfig) -> Result<Self> {
         let faber_cgroup_path = super::core::Cgroup::get_faber_cgroup_path()?;
         let task_id = generate_random_string(16);
-        let task_cgroup_path = faber_cgroup_path.join(format!("task-{task_id}"));
+        let task_cgroup_path =
+            faber_cgroup_path.join(format!("task-{}-{task_id}", std::process::id()));
 
         create_dir_all(&task_cgroup_path).map_err(|e| FaberError::CreateDir {
             e,
