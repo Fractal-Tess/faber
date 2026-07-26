@@ -72,6 +72,22 @@ slice.
 - [x] Adversarial CI: ordinary quality gates plus disposable-VM isolation,
   lifecycle, and concurrency suites
 
+## Adversarial verification campaign
+
+Safe hostile-code probes run only through rootful Docker locally and on disposable
+CI VMs. Kernel exploits, deliberate host crashes, speculative-execution attacks,
+and attacks requiring direct host access are excluded from the namespace backend
+suite because privileged Docker shares the host kernel.
+
+- [ ] Filesystem object types, magic links, hard links, and symlink-swap races
+- [ ] Identity, capability-regain, procfs, PID 1, and inherited-FD escape probes
+- [x] Every blocked syscall in `compile_v1` and `native_v1`
+- [ ] IPv4, IPv6, route, DNS, socket, and cross-runtime network isolation
+- [ ] Runtime enforcement of file-size, descriptor, CPU, stack, and core limits
+- [ ] Cancellation and setup-failure cleanup paths
+- [ ] Repeated parallel/OOM/PID/output/lifecycle stress on disposable VMs
+- [ ] Hardware/kernel evidence report and explicit untestable-risk register
+
 ## Phase 0: reproducible development
 
 Status: Docker workflow and pull-request CI complete.

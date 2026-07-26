@@ -32,7 +32,7 @@ namespace flag is not sufficient evidence.
 | Network | Tasks have no host or external connectivity over IPv4 or IPv6 | Interface smoke test exists; route, DNS, socket, and cross-task tests pending | Partial |
 | User identity | Each task has a fresh user namespace mapping only inner 65534:65534 to outer 65534:65534; supplementary groups are empty | Controller compares namespace inodes and verifies exact one-entry UID/GID maps from the probe | Verified baseline |
 | Privileges | Effective, permitted, inheritable, ambient, and bounding capabilities are empty; `NoNewPrivs` is set | Security-state probe verifies all five capability sets and `NoNewPrivs: 1` | Verified baseline |
-| Syscalls | Every task installs a versioned seccomp policy before `exec`; violations terminate with `SIGSYS` | Probe verifies seccomp mode 2; native-profile violation test verifies `policy_violation` reporting | Verified denylist baseline |
+| Syscalls | Every task installs a versioned seccomp policy before `exec`; violations terminate with `SIGSYS` | Probe verifies mode 2; the matrix test invokes every blocked syscall under each applicable profile and verifies `policy_violation` | Verified denylist baseline |
 | Memory | The complete task process tree cannot exceed `memory.max` | OOM acceptance test and reported `memory.events:oom_kill` evidence | Verified baseline |
 | Process count | The complete task process tree cannot exceed `pids.max` | PID acceptance test and reported `pids.events:max` evidence | Verified baseline |
 | CPU | CPU bandwidth and total CPU/wall time are independently bounded | `cpu.max`, wall timeout, and per-process `RLIMIT_CPU`; throttling counter test pending | Partial |

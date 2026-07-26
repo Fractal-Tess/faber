@@ -116,12 +116,63 @@ int main(void) {
 "#;
 
 const SECCOMP_PROBE_SOURCE: &str = r#"
+#include <stdio.h>
+#include <string.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
-int main(void) {
-    syscall(SYS_fork);
-    return 0;
+struct syscall_entry {
+    const char *name;
+    long number;
+};
+
+int main(int argc, char **argv) {
+    if (argc != 2) {
+        return 64;
+    }
+    const struct syscall_entry entries[] = {
+        {"acct", SYS_acct},
+        {"add_key", SYS_add_key},
+        {"bpf", SYS_bpf},
+        {"clone", SYS_clone},
+        {"clone3", SYS_clone3},
+        {"delete_module", SYS_delete_module},
+        {"fanotify_init", SYS_fanotify_init},
+        {"finit_module", SYS_finit_module},
+        {"fork", SYS_fork},
+        {"init_module", SYS_init_module},
+        {"io_uring_setup", SYS_io_uring_setup},
+        {"kcmp", SYS_kcmp},
+        {"kexec_load", SYS_kexec_load},
+        {"keyctl", SYS_keyctl},
+        {"mount", SYS_mount},
+        {"open_by_handle_at", SYS_open_by_handle_at},
+        {"perf_event_open", SYS_perf_event_open},
+        {"pivot_root", SYS_pivot_root},
+        {"process_vm_readv", SYS_process_vm_readv},
+        {"process_vm_writev", SYS_process_vm_writev},
+        {"ptrace", SYS_ptrace},
+        {"quotactl", SYS_quotactl},
+        {"reboot", SYS_reboot},
+        {"request_key", SYS_request_key},
+        {"setns", SYS_setns},
+        {"socket", SYS_socket},
+        {"socketpair", SYS_socketpair},
+        {"swapoff", SYS_swapoff},
+        {"swapon", SYS_swapon},
+        {"umount2", SYS_umount2},
+        {"unshare", SYS_unshare},
+        {"userfaultfd", SYS_userfaultfd},
+        {"vfork", SYS_vfork},
+    };
+    for (size_t index = 0; index < sizeof(entries) / sizeof(entries[0]); index++) {
+        if (strcmp(argv[1], entries[index].name) == 0) {
+            syscall(entries[index].number, 0, 0, 0, 0, 0, 0);
+            return 2;
+        }
+    }
+    fprintf(stderr, "unknown syscall: %s\n", argv[1]);
+    return 65;
 }
 "#;
 
@@ -646,30 +697,90 @@ fn namespace_init_reaps_orphaned_task_descendants() {
 }
 
 #[test]
-fn native_seccomp_profile_reports_policy_violations() {
+fn every_seccomp_profile_rule_reports_a_policy_violation() {
     let _guard = lock_security_tests();
-    let mut restricted_task = task("./seccomp_probe", &[]);
-    restricted_task.sandbox_profile = Some(SandboxProfile::NativeV1);
-    let results = execute(vec![
-        task_with_file(
-            "/usr/bin/gcc",
-            &["seccomp_probe.c", "-o", "seccomp_probe"],
-            "seccomp_probe.c",
-            SECCOMP_PROBE_SOURCE,
-        ),
-        restricted_task,
-    ]);
+    const COMMON_BLOCKED: &[&str] = &[
+        "acct",
+        "add_key",
+        "bpf",
+        "delete_module",
+        "fanotify_init",
+        "finit_module",
+        "init_module",
+        "io_uring_setup",
+        "kcmp",
+        "kexec_load",
+        "keyctl",
+        "mount",
+        "open_by_handle_at",
+        "perf_event_open",
+        "pivot_root",
+        "process_vm_readv",
+        "process_vm_writev",
+        "ptrace",
+        "quotactl",
+        "reboot",
+        "request_key",
+        "setns",
+        "swapoff",
+        "swapon",
+        "umount2",
+        "unshare",
+        "userfaultfd",
+    ];
+    const NATIVE_ONLY_BLOCKED: &[&str] =
+        &["clone", "clone3", "fork", "socket", "socketpair", "vfork"];
 
+    let mut tasks = vec![task_with_file(
+        "/usr/bin/gcc",
+        &["seccomp_probe.c", "-o", "seccomp_probe"],
+        "seccomp_probe.c",
+        SECCOMP_PROBE_SOURCE,
+    )];
+    let mut expected = Vec::new();
+    for (profile, syscall) in COMMON_BLOCKED
+        .iter()
+        .map(|syscall| (SandboxProfile::CompileV1, *syscall))
+        .chain(
+            COMMON_BLOCKED
+                .iter()
+                .chain(NATIVE_ONLY_BLOCKED)
+                .map(|syscall| (SandboxProfile::NativeV1, *syscall)),
+        )
+    {
+        let mut probe = task("./seccomp_probe", &[syscall]);
+        probe.sandbox_profile = Some(profile);
+        tasks.push(probe);
+        expected.push((profile, syscall));
+    }
+
+    let results = execute(tasks);
     let TaskResult::Completed {
-        exit_code, stats, ..
-    } = single_result(&results[1])
+        exit_code: compile_exit,
+        stderr: compile_stderr,
+        ..
+    } = single_result(&results[0])
     else {
-        panic!("seccomp violation produced no result: {:?}", results[1]);
+        panic!("seccomp probe compilation failed: {:?}", results[0]);
     };
-    assert_eq!(*exit_code, 128 + libc::SIGSYS);
-    assert_eq!(stats.outcome, TaskOutcome::PolicyViolation);
-    assert_eq!(stats.termination_signal, Some(libc::SIGSYS));
-    assert!(stats.cleanup_succeeded);
+    assert_eq!(*compile_exit, 0, "seccomp probe: {compile_stderr}");
+
+    for (result, (profile, syscall)) in results.iter().skip(1).zip(expected) {
+        let TaskResult::Completed {
+            exit_code, stats, ..
+        } = single_result(result)
+        else {
+            panic!("{profile:?} {syscall} produced no result: {result:?}");
+        };
+        assert_eq!(*exit_code, 128 + libc::SIGSYS, "{profile:?} {syscall}");
+        assert_eq!(
+            stats.outcome,
+            TaskOutcome::PolicyViolation,
+            "{profile:?} {syscall}"
+        );
+        assert_eq!(stats.termination_signal, Some(libc::SIGSYS));
+        assert!(stats.cleanup_succeeded);
+    }
 }
 
 #[test]
