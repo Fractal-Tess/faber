@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use super::config::CgroupConfig;
 use crate::prelude::*;
-use crate::task::TaskStats;
+use crate::task::{TaskCgroupEvents, TaskStats};
 use crate::utils::generate_random_string;
 
 pub struct TaskCgroup {
@@ -109,6 +109,13 @@ impl TaskCgroup {
         })
     }
 
+    pub fn measure_events(&self) -> TaskCgroupEvents {
+        TaskCgroupEvents {
+            oom_kill_count: self.event_value("memory.events", "oom_kill"),
+            pids_limit_hit_count: self.event_value("pids.events", "max"),
+        }
+    }
+
     pub fn cleanup(mut self) -> Result<()> {
         self.cleaned = true;
         self.kill_all_processes()?;
@@ -164,6 +171,20 @@ impl TaskCgroup {
         }
 
         Ok(())
+    }
+
+    fn event_value(&self, file_name: &str, key: &str) -> u64 {
+        read_to_string(self.task_cgroup_path.join(file_name))
+            .ok()
+            .and_then(|contents| {
+                contents.lines().find_map(|line| {
+                    let mut fields = line.split_whitespace();
+                    (fields.next() == Some(key))
+                        .then(|| fields.next()?.parse::<u64>().ok())
+                        .flatten()
+                })
+            })
+            .unwrap_or(0)
     }
 
     fn setup_cgroup_files(&self) -> Result<()> {

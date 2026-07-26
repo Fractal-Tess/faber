@@ -23,7 +23,7 @@ use crate::{
     cgroup::{Cgroup, task::TaskCgroup},
     container::Container,
     prelude::*,
-    result::{ExecutionStepResult, RuntimeResult, TaskResult, TaskResultStats},
+    result::{ExecutionStepResult, RuntimeResult, TaskOutcome, TaskResult, TaskResultStats},
     task::{ExecutionStep, Task, TaskGroup},
     utils::{close_fd, mk_pipe},
 };
@@ -42,6 +42,9 @@ struct CollectedOutput {
     exit_code: i32,
     stdout_truncated: bool,
     stderr_truncated: bool,
+    termination_signal: Option<i32>,
+    timed_out: bool,
+    output_terminated: bool,
 }
 
 impl Runtime {
@@ -372,10 +375,27 @@ impl Runtime {
                     }
                 };
 
-                // Cleanup cgroup
-                if let Err(e) = task_cgroup.cleanup() {
-                    eprintln!("Warning: Failed to cleanup task cgroup: {}", e);
-                }
+                let events = task_cgroup.measure_events();
+                let cleanup_succeeded = match task_cgroup.cleanup() {
+                    Ok(()) => true,
+                    Err(e) => {
+                        eprintln!("Warning: Failed to cleanup task cgroup: {}", e);
+                        false
+                    }
+                };
+                let outcome = if collected.timed_out {
+                    TaskOutcome::TimedOut
+                } else if collected.output_terminated {
+                    TaskOutcome::OutputLimit
+                } else if events.oom_kill_count > 0 {
+                    TaskOutcome::OutOfMemory
+                } else if events.pids_limit_hit_count > 0 {
+                    TaskOutcome::PidsLimit
+                } else if collected.termination_signal.is_some() {
+                    TaskOutcome::Signaled
+                } else {
+                    TaskOutcome::Exited
+                };
 
                 let stats = TaskResultStats {
                     execution_time_ms: start_time.elapsed().as_millis() as u64,
@@ -384,6 +404,11 @@ impl Runtime {
                     pids_peak: task_stats.pids_max,
                     stdout_truncated: collected.stdout_truncated,
                     stderr_truncated: collected.stderr_truncated,
+                    outcome,
+                    termination_signal: collected.termination_signal,
+                    oom_kill_count: events.oom_kill_count,
+                    pids_limit_hit_count: events.pids_limit_hit_count,
+                    cleanup_succeeded,
                 };
 
                 Ok(TaskResult::Completed {
@@ -611,10 +636,10 @@ impl Runtime {
         }
     }
 
-    fn wait_status_exit_code(status: WaitStatus) -> Option<i32> {
+    fn wait_status_result(status: WaitStatus) -> Option<(i32, Option<i32>)> {
         match status {
-            WaitStatus::Exited(_, code) => Some(code),
-            WaitStatus::Signaled(_, signal, _) => Some(128 + signal as i32),
+            WaitStatus::Exited(_, code) => Some((code, None)),
+            WaitStatus::Signaled(_, signal, _) => Some((128 + signal as i32, Some(signal as i32))),
             _ => None,
         }
     }
@@ -653,6 +678,8 @@ impl Runtime {
         let mut stdout_truncated = false;
         let mut stderr_truncated = false;
         let mut output_terminated = false;
+        let mut timed_out = false;
+        let mut termination_signal = None;
 
         loop {
             if stdin_offset == stdin.len() {
@@ -744,7 +771,12 @@ impl Runtime {
             if exit_code.is_none() {
                 match waitpid(child, Some(WaitPidFlag::WNOHANG)) {
                     Ok(WaitStatus::StillAlive) => {}
-                    Ok(status) => exit_code = Self::wait_status_exit_code(status),
+                    Ok(status) => {
+                        if let Some((code, signal)) = Self::wait_status_result(status) {
+                            exit_code = Some(code);
+                            termination_signal = signal;
+                        }
+                    }
                     Err(nix::errno::Errno::ECHILD) => exit_code = Some(-1),
                     Err(error) => return Err(FaberError::WaitPid { e: error }),
                 }
@@ -754,16 +786,10 @@ impl Runtime {
                 break;
             }
 
-            if start_time.elapsed() > timeout {
+            if !timed_out && start_time.elapsed() > timeout {
                 task_cgroup.kill_all_processes()?;
-                let _ = waitpid(child, None);
-                return Err(FaberError::TaskTimeout {
-                    timeout_duration: timeout,
-                    details: format!(
-                        "Task process tree exceeded timeout of {} seconds",
-                        timeout.as_secs()
-                    ),
-                });
+                stdin_writer = None;
+                timed_out = true;
             }
         }
 
@@ -773,6 +799,9 @@ impl Runtime {
             exit_code: exit_code.unwrap_or(-1),
             stdout_truncated,
             stderr_truncated,
+            termination_signal,
+            timed_out,
+            output_terminated,
         })
     }
 

@@ -161,6 +161,19 @@ impl<'de> serde::Deserialize<'de> for TaskResult {
     }
 }
 
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskOutcome {
+    Exited,
+    Signaled,
+    TimedOut,
+    OutOfMemory,
+    PidsLimit,
+    OutputLimit,
+    #[default]
+    InfrastructureFailure,
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct TaskResultStats {
     pub memory_peak_bytes: u64,
@@ -169,4 +182,14 @@ pub struct TaskResultStats {
     pub execution_time_ms: u64,
     pub stdout_truncated: bool,
     pub stderr_truncated: bool,
+    #[serde(default)]
+    pub outcome: TaskOutcome,
+    #[serde(default)]
+    pub termination_signal: Option<i32>,
+    #[serde(default)]
+    pub oom_kill_count: u64,
+    #[serde(default)]
+    pub pids_limit_hit_count: u64,
+    #[serde(default)]
+    pub cleanup_succeeded: bool,
 }

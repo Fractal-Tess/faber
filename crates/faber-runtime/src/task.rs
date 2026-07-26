@@ -62,3 +62,9 @@ pub struct TaskStats {
     pub memory_peak_bytes: u64,
     pub pids_max: u64,
 }
+
+#[derive(Debug, Clone, Default)]
+pub struct TaskCgroupEvents {
+    pub oom_kill_count: u64,
+    pub pids_limit_hit_count: u64,
+}

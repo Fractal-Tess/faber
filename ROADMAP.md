@@ -67,7 +67,7 @@ slice.
 - [x] Mount/sys hardening: private propagation, read-only sysfs, removal of
   host fallbacks, and fail-closed tests
 - [x] Rlimits: CPU/file/FD/core/stack limits with probe assertions
-- [ ] Resource outcomes: explicit OOM, PID, timeout, signal, output, and cleanup
+- [x] Resource outcomes: explicit OOM, PID, timeout, signal, output, and cleanup
   outcomes backed by cgroup event files
 - [ ] User namespace: explicit UID/GID mappings with host-side evidence
 - [ ] Versioned seccomp profiles: compile/native policies and violation tests
@@ -112,8 +112,10 @@ Complete these before accepting hostile workloads:
 6. **Complete:** mount propagation is private, task sysfs is read-only, fresh
    sysfs/cgroup mounts have no old-root bind fallback, and setup retains mount
    errors instead of silently continuing.
-7. Add explicit execution outcomes: exited, signaled, timed out, OOM-killed,
-   PID-limited, output-limited, setup-failed, and policy-violated.
+7. **Complete for runtime outcomes:** exited, signaled, timed-out, OOM-killed,
+   PID-limited, and output-limited results include wait/cgroup evidence and
+   cleanup status. Setup failures remain explicit `Failed` results with an
+   `infrastructure_failure` outcome; policy violations are part of seccomp.
 
 Acceptance tests must include path traversal and symlink races, output floods,
 fork bombs, OOM, CPU and wall time limits, leaked descendants, read-only mounts,

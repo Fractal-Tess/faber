@@ -5,6 +5,15 @@
 /**
  * Execution statistics from task execution
  */
+export type TaskOutcome =
+  | 'exited'
+  | 'signaled'
+  | 'timed_out'
+  | 'out_of_memory'
+  | 'pids_limit'
+  | 'output_limit'
+  | 'infrastructure_failure';
+
 export type ExecutionStats = {
   memory_peak_bytes: number;
   cpu_usage_usec: number;
@@ -12,6 +21,11 @@ export type ExecutionStats = {
   execution_time_ms: number;
   stdout_truncated: boolean;
   stderr_truncated: boolean;
+  outcome: TaskOutcome;
+  termination_signal: number | null;
+  oom_kill_count: number;
+  pids_limit_hit_count: number;
+  cleanup_succeeded: boolean;
 };
 
 /**

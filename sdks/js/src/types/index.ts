@@ -5,6 +5,7 @@
 export type { FaberConfig, HealthResponse } from './config';
 export type {
   ExecutionStats,
+  TaskOutcome,
   TaskResult,
   ExecutionResult,
   TaskGroupResult,

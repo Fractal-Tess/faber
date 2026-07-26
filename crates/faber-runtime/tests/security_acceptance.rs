@@ -1,6 +1,6 @@
 use faber_runtime::{
     CgroupConfigBuilder, ExecutionStep, ExecutionStepResult, RuntimeBuilder, RuntimeResult, Task,
-    TaskResult,
+    TaskOutcome, TaskResult,
 };
 use serde::Deserialize;
 use std::{
@@ -227,7 +227,7 @@ fn mountinfo_line<'a>(mountinfo: &'a str, mountpoint: &str) -> &'a str {
     mountinfo
         .lines()
         .filter(|line| line.split_whitespace().nth(4) == Some(mountpoint))
-        .last()
+        .next_back()
         .unwrap_or_else(|| panic!("missing {mountpoint} in mountinfo"))
 }
 
@@ -408,9 +408,10 @@ fn submitted_files_reject_absolute_and_parent_paths() {
     ]);
 
     for result in results {
-        let TaskResult::Failed { error, .. } = single_result(&result) else {
+        let TaskResult::Failed { error, stats } = single_result(&result) else {
             panic!("unsafe task file path was accepted: {result:?}");
         };
+        assert_eq!(stats.outcome, TaskOutcome::InfrastructureFailure);
         assert!(
             error.contains("paths must be normalized and relative"),
             "unexpected path rejection: {error}"
@@ -476,6 +477,9 @@ fn output_streams_are_drained_bounded_and_report_truncation() {
         assert!(stderr.len() <= OUTPUT_LIMIT);
         assert_eq!(stats.stdout_truncated, stdout_should_truncate);
         assert_eq!(stats.stderr_truncated, !stdout_should_truncate);
+        assert_eq!(stats.outcome, TaskOutcome::OutputLimit);
+        assert_eq!(stats.termination_signal, Some(9));
+        assert!(stats.cleanup_succeeded);
     }
 }
 
@@ -584,6 +588,26 @@ fn namespace_init_reaps_orphaned_task_descendants() {
 }
 
 #[test]
+fn signal_termination_is_reported_explicitly() {
+    let _guard = lock_security_tests();
+    let results = execute(vec![task("/bin/sh", &["-c", "kill -TERM $$"])]);
+
+    let TaskResult::Completed {
+        exit_code, stats, ..
+    } = single_result(&results[0])
+    else {
+        panic!(
+            "signal-terminated task produced no result: {:?}",
+            results[0]
+        );
+    };
+    assert_eq!(*exit_code, 143);
+    assert_eq!(stats.outcome, TaskOutcome::Signaled);
+    assert_eq!(stats.termination_signal, Some(15));
+    assert!(stats.cleanup_succeeded);
+}
+
+#[test]
 fn timeout_kills_the_complete_task_process_tree() {
     let _guard = lock_security_tests();
     let started = std::time::Instant::now();
@@ -601,16 +625,19 @@ fn timeout_kills_the_complete_task_process_tree() {
     };
     assert_no_task_cgroups();
 
-    let TaskResult::Failed { error, .. } = single_result(&results[0]) else {
+    let TaskResult::Completed {
+        exit_code, stats, ..
+    } = single_result(&results[0])
+    else {
         panic!(
-            "timed-out process tree was reported as completed: {:?}",
+            "timed-out process tree produced no result: {:?}",
             results[0]
         );
     };
-    assert!(
-        error.contains("timeout"),
-        "unexpected timeout error: {error}"
-    );
+    assert_eq!(*exit_code, 137);
+    assert_eq!(stats.outcome, TaskOutcome::TimedOut);
+    assert_eq!(stats.termination_signal, Some(9));
+    assert!(stats.cleanup_succeeded);
     assert!(
         started.elapsed() < std::time::Duration::from_secs(2),
         "task process tree was not terminated promptly"
@@ -680,6 +707,9 @@ fn pids_cgroup_enforces_the_process_limit() {
         stats.pids_peak, 8,
         "the configured PID ceiling was not reached"
     );
+    assert_eq!(stats.outcome, TaskOutcome::PidsLimit);
+    assert!(stats.pids_limit_hit_count > 0);
+    assert!(stats.cleanup_succeeded);
 }
 
 #[test]
@@ -734,6 +764,10 @@ fn memory_cgroup_kills_a_process_that_exceeds_memory_max() {
         *exit_code, 137,
         "expected the kernel OOM kill signal, got stats: {stats:?}"
     );
+    assert_eq!(stats.outcome, TaskOutcome::OutOfMemory);
+    assert_eq!(stats.termination_signal, Some(9));
+    assert!(stats.oom_kill_count > 0);
+    assert!(stats.cleanup_succeeded);
     assert!(
         stats.memory_peak_bytes >= MEMORY_LIMIT / 2,
         "memory limit was not approached: {:?}",

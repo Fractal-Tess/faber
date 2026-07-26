@@ -135,7 +135,12 @@ type TaskResult = {
     "pids_peak": 1,
     "execution_time_ms": 15,
     "stdout_truncated": false,
-    "stderr_truncated": false
+    "stderr_truncated": false,
+    "outcome": "exited",
+    "termination_signal": null,
+    "oom_kill_count": 0,
+    "pids_limit_hit_count": 0,
+    "cleanup_succeeded": true
   }
 }
 ```
@@ -152,6 +157,11 @@ type ExecutionStats = {
   execution_time_ms: number;
   stdout_truncated: boolean;
   stderr_truncated: boolean;
+  outcome: "exited" | "signaled" | "timed_out" | "out_of_memory" | "pids_limit" | "output_limit" | "infrastructure_failure";
+  termination_signal: number | null;
+  oom_kill_count: number;
+  pids_limit_hit_count: number;
+  cleanup_succeeded: boolean;
 };
 ```
 
@@ -165,6 +175,11 @@ type ExecutionStats = {
 | `execution_time_ms` | `number` | Execution time (milliseconds) |
 | `stdout_truncated` | `boolean` | Whether stdout exceeded its configured byte limit |
 | `stderr_truncated` | `boolean` | Whether stderr exceeded its configured byte limit |
+| `outcome` | `string` | Explicit terminal outcome derived from wait status and cgroup events |
+| `termination_signal` | `number \| null` | Signal number when the task was killed by a signal |
+| `oom_kill_count` | `number` | `memory.events` OOM-kill count for this task cgroup |
+| `pids_limit_hit_count` | `number` | `pids.events` maximum-hit count for this task cgroup |
+| `cleanup_succeeded` | `boolean` | Whether process-tree termination and cgroup removal succeeded |
 
 ## TaskGroupResult
 
@@ -295,7 +310,12 @@ The SDK automatically converts between snake_case (API) and camelCase (SDK).
             "pids_peak": { "type": "integer" },
             "execution_time_ms": { "type": "integer" },
             "stdout_truncated": { "type": "boolean" },
-            "stderr_truncated": { "type": "boolean" }
+            "stderr_truncated": { "type": "boolean" },
+            "outcome": { "type": "string" },
+            "termination_signal": { "type": ["integer", "null"] },
+            "oom_kill_count": { "type": "integer" },
+            "pids_limit_hit_count": { "type": "integer" },
+            "cleanup_succeeded": { "type": "boolean" }
           }
         }
       }

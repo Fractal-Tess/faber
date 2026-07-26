@@ -124,7 +124,12 @@ curl -X POST http://localhost:3000/api/v1/execute \
       "pids_peak": 1,
       "execution_time_ms": 10,
       "stdout_truncated": false,
-      "stderr_truncated": false
+      "stderr_truncated": false,
+      "outcome": "exited",
+      "termination_signal": null,
+      "oom_kill_count": 0,
+      "pids_limit_hit_count": 0,
+      "cleanup_succeeded": true
     }
   }
 ]
@@ -141,7 +146,12 @@ curl -X POST http://localhost:3000/api/v1/execute \
       "pids_peak": 0,
       "execution_time_ms": 0,
       "stdout_truncated": false,
-      "stderr_truncated": false
+      "stderr_truncated": false,
+      "outcome": "infrastructure_failure",
+      "termination_signal": null,
+      "oom_kill_count": 0,
+      "pids_limit_hit_count": 0,
+      "cleanup_succeeded": false
     }
   }
 ]

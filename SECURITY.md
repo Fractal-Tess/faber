@@ -33,12 +33,12 @@ namespace flag is not sufficient evidence.
 | User identity | Task IDs map to an unprivileged host UID/GID and supplementary groups are empty | Security-state probe verifies 65534:65534 and an empty supplementary-group list; user namespace pending | Partial |
 | Privileges | Effective, permitted, inheritable, ambient, and bounding capabilities are empty; `NoNewPrivs` is set | Security-state probe verifies all five capability sets and `NoNewPrivs: 1` | Verified baseline |
 | Syscalls | A versioned workload policy denies syscalls outside the declared profile | `apply_seccomp_filter()` remains a no-op | Not implemented |
-| Memory | The complete task process tree cannot exceed `memory.max` | `memory_cgroup_kills_a_process_that_exceeds_memory_max` | Verified baseline |
-| Process count | The complete task process tree cannot exceed `pids.max` | `pids_cgroup_enforces_the_process_limit` | Verified baseline |
+| Memory | The complete task process tree cannot exceed `memory.max` | OOM acceptance test and reported `memory.events:oom_kill` evidence | Verified baseline |
+| Process count | The complete task process tree cannot exceed `pids.max` | PID acceptance test and reported `pids.events:max` evidence | Verified baseline |
 | CPU | CPU bandwidth and total CPU/wall time are independently bounded | `cpu.max`, wall timeout, and per-process `RLIMIT_CPU`; throttling counter test pending | Partial |
 | Rlimits | CPU time, file size, descriptors, stack, and core dumps have finite policy limits | Security-state probe verifies effective soft/hard values | Verified baseline |
-| Output | stdin/stdout/stderr progress concurrently and each output stream is bounded | Flood and bidirectional-pipe acceptance tests verify cgroup termination and truncation reporting | Verified baseline |
-| Cleanup | No process, cgroup, mount, or workspace survives any completion path | Failure-mode and host-observer tests pending | Partial |
+| Output | stdin/stdout/stderr progress concurrently and each output stream is bounded | Flood and bidirectional-pipe tests report `output_limit` and truncation | Verified baseline |
+| Cleanup | No process, cgroup, mount, or workspace survives any completion path | Results report cgroup cleanup success; broader failure-mode and host-observer tests pending | Partial |
 
 “Verified baseline” describes the behavior covered by the current test and is
 not a claim that the whole isolation area is complete. Tests must be expanded

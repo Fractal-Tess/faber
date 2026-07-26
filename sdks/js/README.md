@@ -51,7 +51,7 @@ const result = await client.executeSingle({
 
 console.log(result.stdout); // "Hello, World!\n"
 console.log(result.exitCode); // 0
-console.log(result.stats); // { memory_peak_bytes, cpu_usage_usec, pids_peak, execution_time_ms, stdout_truncated, stderr_truncated }
+console.log(result.stats); // Resource usage, terminal outcome, cgroup events, and cleanup status
 ```
 
 ## API Reference
@@ -534,6 +534,11 @@ type TaskResult = {
     execution_time_ms: number;    // Execution time in milliseconds
     stdout_truncated: boolean;    // Stdout exceeded the configured limit
     stderr_truncated: boolean;    // Stderr exceeded the configured limit
+    outcome: TaskOutcome;         // Explicit terminal outcome
+    termination_signal: number | null;
+    oom_kill_count: number;       // memory.events evidence
+    pids_limit_hit_count: number; // pids.events evidence
+    cleanup_succeeded: boolean;
   };
 };
 ```
