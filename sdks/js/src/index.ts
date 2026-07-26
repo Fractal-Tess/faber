@@ -36,7 +36,7 @@ export type { TaskWithTests } from './builders';
 
 // Models
 export { TaskGroup } from './models';
-export type { Task, ExecutionStep } from './models';
+export type { Task, ExecutionStep, SandboxProfile } from './models';
 
 // Types
 export type {

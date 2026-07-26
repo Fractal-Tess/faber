@@ -32,7 +32,7 @@ namespace flag is not sufficient evidence.
 | Network | Tasks have no host or external connectivity over IPv4 or IPv6 | Interface smoke test exists; route, DNS, socket, and cross-task tests pending | Partial |
 | User identity | Each task has a fresh user namespace mapping only inner 65534:65534 to outer 65534:65534; supplementary groups are empty | Controller compares namespace inodes and verifies exact one-entry UID/GID maps from the probe | Verified baseline |
 | Privileges | Effective, permitted, inheritable, ambient, and bounding capabilities are empty; `NoNewPrivs` is set | Security-state probe verifies all five capability sets and `NoNewPrivs: 1` | Verified baseline |
-| Syscalls | A versioned workload policy denies syscalls outside the declared profile | `apply_seccomp_filter()` remains a no-op | Not implemented |
+| Syscalls | Every task installs a versioned seccomp policy before `exec`; violations terminate with `SIGSYS` | Probe verifies seccomp mode 2; native-profile violation test verifies `policy_violation` reporting | Verified denylist baseline |
 | Memory | The complete task process tree cannot exceed `memory.max` | OOM acceptance test and reported `memory.events:oom_kill` evidence | Verified baseline |
 | Process count | The complete task process tree cannot exceed `pids.max` | PID acceptance test and reported `pids.events:max` evidence | Verified baseline |
 | CPU | CPU bandwidth and total CPU/wall time are independently bounded | `cpu.max`, wall timeout, and per-process `RLIMIT_CPU`; throttling counter test pending | Partial |
@@ -55,8 +55,9 @@ writable inside the mount namespace. Privilege cleanup now produces empty
 supplementary and capability sets with `NoNewPrivs: 1`; mount hardening now
 provides private propagation and read-only sysfs without the cgroup mount;
 rlimits bound CPU/file/FD/stack/core resources; and each task now receives an
-explicit one-identity user namespace. Seccomp remains the primary missing
-containment boundary.
+explicit one-identity user namespace. Versioned compile/native seccomp
+denylists now trap known high-risk interfaces; exhaustive allowlists remain
+future hardening.
 
 ## Running verification
 

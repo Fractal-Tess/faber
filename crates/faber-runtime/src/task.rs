@@ -46,6 +46,14 @@ impl<'de> serde::Deserialize<'de> for ExecutionStep {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxProfile {
+    #[default]
+    CompileV1,
+    NativeV1,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
     pub cmd: String,
@@ -54,6 +62,8 @@ pub struct Task {
     pub stdin: Option<String>,
     pub files: Option<HashMap<String, String>>,
     pub working_dir: Option<String>,
+    #[serde(default)]
+    pub sandbox_profile: Option<SandboxProfile>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

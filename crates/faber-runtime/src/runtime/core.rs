@@ -19,12 +19,17 @@ use nix::{
     unistd::{ForkResult, Pid, chdir, execvpe, fork, pipe, setgid, setgroups, setuid},
 };
 
+#[cfg(target_env = "gnu")]
+type RlimitResource = libc::__rlimit_resource_t;
+#[cfg(target_env = "musl")]
+type RlimitResource = libc::c_int;
+
 use crate::{
     cgroup::{Cgroup, task::TaskCgroup},
     container::Container,
     prelude::*,
     result::{ExecutionStepResult, RuntimeResult, TaskOutcome, TaskResult, TaskResultStats},
-    task::{ExecutionStep, Task, TaskGroup},
+    task::{ExecutionStep, SandboxProfile, Task, TaskGroup},
     utils::{close_fd, mk_pipe},
 };
 
@@ -257,6 +262,8 @@ impl Runtime {
 
         match unsafe { fork() } {
             Ok(ForkResult::Child) => {
+                let sandbox_profile = task.sandbox_profile.unwrap_or_default();
+
                 // FIRST: Add self to cgroup BEFORE any other work
                 // This ensures resource limits apply from the start
                 let my_pid = std::process::id();
@@ -298,6 +305,7 @@ impl Runtime {
                     user_ready_write.into(),
                     user_continue_read.into(),
                     proc_pid,
+                    sandbox_profile,
                 ) {
                     eprintln!("Security setup failed: {}", e);
                     exit(126);
@@ -422,6 +430,8 @@ impl Runtime {
                     TaskOutcome::OutOfMemory
                 } else if events.pids_limit_hit_count > 0 {
                     TaskOutcome::PidsLimit
+                } else if collected.termination_signal == Some(libc::SIGSYS) {
+                    TaskOutcome::PolicyViolation
                 } else if collected.termination_signal.is_some() {
                     TaskOutcome::Signaled
                 } else {
@@ -554,6 +564,7 @@ impl Runtime {
         user_ready: PipeWriter,
         user_continue: PipeReader,
         proc_pid: u32,
+        sandbox_profile: SandboxProfile,
     ) -> std::io::Result<()> {
         let unshare_flags = CloneFlags::CLONE_NEWNS;
 
@@ -580,7 +591,7 @@ impl Runtime {
         Self::clear_linux_capability_sets()?;
         Self::drop_posix_capabilities()?;
         Self::set_no_new_privileges()?;
-        Self::apply_seccomp_filter()?;
+        Self::apply_seccomp_filter(sandbox_profile)?;
 
         Ok(())
     }
@@ -946,7 +957,7 @@ impl Runtime {
         Ok(())
     }
 
-    fn set_resource_limit(resource: libc::__rlimit_resource_t, value: u64) -> std::io::Result<()> {
+    fn set_resource_limit(resource: RlimitResource, value: u64) -> std::io::Result<()> {
         let limit = libc::rlimit {
             rlim_cur: value,
             rlim_max: value,
@@ -1000,7 +1011,71 @@ impl Runtime {
         }
     }
 
-    fn apply_seccomp_filter() -> std::io::Result<()> {
-        Ok(())
+    fn apply_seccomp_filter(profile: SandboxProfile) -> std::io::Result<()> {
+        use seccompiler::{BpfProgram, SeccompAction, SeccompFilter, SeccompRule};
+        use std::collections::BTreeMap;
+
+        let mut blocked_syscalls = vec![
+            libc::SYS_acct,
+            libc::SYS_add_key,
+            libc::SYS_bpf,
+            libc::SYS_delete_module,
+            libc::SYS_finit_module,
+            libc::SYS_fanotify_init,
+            libc::SYS_init_module,
+            libc::SYS_io_uring_setup,
+            libc::SYS_kcmp,
+            libc::SYS_kexec_load,
+            libc::SYS_keyctl,
+            libc::SYS_mount,
+            libc::SYS_open_by_handle_at,
+            libc::SYS_perf_event_open,
+            libc::SYS_pivot_root,
+            libc::SYS_process_vm_readv,
+            libc::SYS_process_vm_writev,
+            libc::SYS_ptrace,
+            libc::SYS_quotactl,
+            libc::SYS_reboot,
+            libc::SYS_request_key,
+            libc::SYS_setns,
+            libc::SYS_swapoff,
+            libc::SYS_swapon,
+            libc::SYS_umount2,
+            libc::SYS_unshare,
+            libc::SYS_userfaultfd,
+        ];
+        if profile == SandboxProfile::NativeV1 {
+            blocked_syscalls.extend([
+                libc::SYS_clone,
+                libc::SYS_clone3,
+                libc::SYS_socket,
+                libc::SYS_socketpair,
+            ]);
+            #[cfg(target_arch = "x86_64")]
+            blocked_syscalls.extend([libc::SYS_fork, libc::SYS_vfork]);
+        }
+
+        let rules: BTreeMap<i64, Vec<SeccompRule>> = blocked_syscalls
+            .into_iter()
+            .map(|syscall| (syscall, Vec::new()))
+            .collect();
+        let architecture = std::env::consts::ARCH.try_into().map_err(|error| {
+            std::io::Error::other(format!("unsupported seccomp architecture: {error}"))
+        })?;
+        let filter = SeccompFilter::new(
+            rules,
+            SeccompAction::Allow,
+            SeccompAction::Trap,
+            architecture,
+        )
+        .map_err(|error| {
+            std::io::Error::other(format!("failed to compile seccomp profile: {error}"))
+        })?;
+        let program: BpfProgram = filter.try_into().map_err(|error| {
+            std::io::Error::other(format!("failed to compile seccomp BPF: {error}"))
+        })?;
+        seccompiler::apply_filter(&program).map_err(|error| {
+            std::io::Error::other(format!("failed to apply seccomp profile: {error}"))
+        })
     }
 }

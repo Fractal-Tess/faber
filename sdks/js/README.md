@@ -517,6 +517,7 @@ type Task = {
   stdin?: string;                 // Standard input
   files?: Record<string, string>; // Files to create
   working_dir?: string;           // Working directory
+  sandbox_profile?: 'compile_v1' | 'native_v1'; // Seccomp policy
 };
 ```
 

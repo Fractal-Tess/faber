@@ -1,7 +1,8 @@
 use faber_runtime::{
-    CgroupConfigBuilder, ExecutionStep, ExecutionStepResult, RuntimeBuilder, RuntimeResult, Task,
-    TaskOutcome, TaskResult,
+    CgroupConfigBuilder, ExecutionStep, ExecutionStepResult, RuntimeBuilder, RuntimeResult,
+    SandboxProfile, Task, TaskOutcome, TaskResult,
 };
+use nix::libc;
 use serde::Deserialize;
 use std::{
     collections::HashMap,
@@ -114,6 +115,16 @@ int main(void) {
 }
 "#;
 
+const SECCOMP_PROBE_SOURCE: &str = r#"
+#include <sys/syscall.h>
+#include <unistd.h>
+
+int main(void) {
+    syscall(SYS_fork);
+    return 0;
+}
+"#;
+
 const MEMORY_PROBE_SOURCE: &str = r#"
 #include <stdlib.h>
 #include <unistd.h>
@@ -180,6 +191,7 @@ fn task(cmd: &str, args: &[&str]) -> Task {
         stdin: None,
         files: None,
         working_dir: None,
+        sandbox_profile: None,
     }
 }
 
@@ -292,9 +304,7 @@ fn security_probe_records_identity_namespaces_mounts_and_limits() {
         );
     }
     assert_eq!(status_field(&state.status, "NoNewPrivs:"), "1");
-    status_field(&state.status, "Seccomp:")
-        .parse::<u8>()
-        .expect("Seccomp was not numeric");
+    assert_eq!(status_field(&state.status, "Seccomp:"), "2");
 
     for namespace in ["mnt", "pid", "net", "uts", "ipc", "user"] {
         let inner = state.namespaces[namespace];
@@ -593,6 +603,33 @@ fn namespace_init_reaps_orphaned_task_descendants() {
         };
         assert_eq!(*exit_code, 0, "orphan lifecycle step {index}: {stderr}");
     }
+}
+
+#[test]
+fn native_seccomp_profile_reports_policy_violations() {
+    let _guard = lock_security_tests();
+    let mut restricted_task = task("./seccomp_probe", &[]);
+    restricted_task.sandbox_profile = Some(SandboxProfile::NativeV1);
+    let results = execute(vec![
+        task_with_file(
+            "/usr/bin/gcc",
+            &["seccomp_probe.c", "-o", "seccomp_probe"],
+            "seccomp_probe.c",
+            SECCOMP_PROBE_SOURCE,
+        ),
+        restricted_task,
+    ]);
+
+    let TaskResult::Completed {
+        exit_code, stats, ..
+    } = single_result(&results[1])
+    else {
+        panic!("seccomp violation produced no result: {:?}", results[1]);
+    };
+    assert_eq!(*exit_code, 128 + libc::SIGSYS);
+    assert_eq!(stats.outcome, TaskOutcome::PolicyViolation);
+    assert_eq!(stats.termination_signal, Some(libc::SIGSYS));
+    assert!(stats.cleanup_succeeded);
 }
 
 #[test]

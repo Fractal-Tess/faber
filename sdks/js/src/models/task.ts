@@ -4,10 +4,12 @@
 
 import type { TestFunction } from '../types';
 
+export type SandboxProfile = 'compile_v1' | 'native_v1';
+
 /**
  * Represents a single executable task configuration.
  */
-export interface Task {
+export type Task = {
   /** Command to execute */
   cmd: string;
   /** Command arguments */
@@ -20,9 +22,11 @@ export interface Task {
   files?: Record<string, string>;
   /** Working directory for command execution */
   working_dir?: string;
+  /** Versioned seccomp workload policy (defaults to compile_v1) */
+  sandbox_profile?: SandboxProfile;
   /** Optional test function to validate the task's result */
   test?: TestFunction;
-}
+};
 
 /**
  * ExecutionStep is a single task or a list of tasks to be executed in parallel.

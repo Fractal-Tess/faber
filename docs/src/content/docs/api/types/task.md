@@ -19,6 +19,7 @@ type Task = {
   stdin?: string;
   files?: Record<string, string>;
   working_dir?: string;
+  sandbox_profile?: "compile_v1" | "native_v1";
 };
 ```
 
@@ -32,6 +33,7 @@ type Task = {
 | `stdin` | `string` | No | Standard input content |
 | `files` | `Record<string, string>` | No | Workspace-relative files to create; absolute paths, `..`, symlinks, and mount traversal are rejected |
 | `working_dir` | `string` | No | Working directory |
+| `sandbox_profile` | `compile_v1 \| native_v1` | No | Versioned seccomp policy; defaults to `compile_v1` |
 
 ### Example
 
@@ -43,7 +45,8 @@ type Task = {
   "files": {
     "hello.c": "#include <stdio.h>\nint main() { printf(\"Hello!\\n\"); return 0; }"
   },
-  "working_dir": "/tmp"
+  "working_dir": "/tmp",
+  "sandbox_profile": "compile_v1"
 }
 ```
 
@@ -157,7 +160,7 @@ type ExecutionStats = {
   execution_time_ms: number;
   stdout_truncated: boolean;
   stderr_truncated: boolean;
-  outcome: "exited" | "signaled" | "timed_out" | "out_of_memory" | "pids_limit" | "output_limit" | "infrastructure_failure";
+  outcome: "exited" | "signaled" | "timed_out" | "out_of_memory" | "pids_limit" | "output_limit" | "policy_violation" | "infrastructure_failure";
   termination_signal: number | null;
   oom_kill_count: number;
   pids_limit_hit_count: number;
@@ -292,7 +295,8 @@ The SDK automatically converts between snake_case (API) and camelCase (SDK).
         "env": { "type": "object", "additionalProperties": { "type": "string" } },
         "stdin": { "type": "string" },
         "files": { "type": "object", "additionalProperties": { "type": "string" } },
-        "working_dir": { "type": "string" }
+        "working_dir": { "type": "string" },
+        "sandbox_profile": { "enum": ["compile_v1", "native_v1"] }
       }
     },
     "TaskResult": {

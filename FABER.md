@@ -171,6 +171,7 @@ interface Task {
   stdin?: string;                   // Optional: Data to write to stdin
   files?: Record<string, string>;   // Optional: Files to create before execution
   working_dir?: string;             // Optional: Working directory (default: /faber)
+  sandbox_profile?: "compile_v1" | "native_v1"; // Optional seccomp profile
 }
 ```
 
@@ -279,7 +280,7 @@ The container root is created via `pivot_root` with:
 2. **Capability drop**: Effective, permitted, inheritable, ambient, and bounding sets are cleared
 3. **Privilege lock**: `NoNewPrivs` prevents privilege gain across `execve`
 4. **Workspace paths**: Submitted files must use normalized workspace-relative paths and cannot traverse symlinks
-5. **Seccomp**: Placeholder for syscall filtering (not yet implemented)
+5. **Seccomp**: Versioned `compile_v1` and `native_v1` denylists trap policy violations with `SIGSYS`
 
 ---
 
@@ -456,6 +457,7 @@ let task = Task {
     stdin: None,
     files: None,
     working_dir: None,
+    sandbox_profile: None,
 };
 
 let runtime = RuntimeBuilder::default()
@@ -506,9 +508,9 @@ let runtime = RuntimeBuilder::default()
 
 ## Known Limitations
 
-1. **No Seccomp**: Syscall filtering is not yet implemented
+1. **Denylist Seccomp**: Current profiles block high-risk interfaces but are not exhaustive syscall allowlists
 2. **No File Persistence**: Files don't persist between tasks in a task group
-4. **No Network**: Network namespace is completely isolated (no external access)
+3. **No Network**: Network namespace is completely isolated (no external access)
 5. **Linux Only**: Requires Linux kernel with namespace and cgroup support
 
 ---

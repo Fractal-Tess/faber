@@ -3,5 +3,5 @@
  */
 
 export { TaskGroup } from './task-group';
-export type { Task, ExecutionStep } from './task';
+export type { Task, ExecutionStep, SandboxProfile } from './task';
 

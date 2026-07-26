@@ -34,7 +34,7 @@ Implemented:
 
 Not production-ready:
 
-- seccomp remains a no-op
+- seccomp profiles are denylist-based rather than exhaustive syscall allowlists
 - API cancellation and disposable-VM race/concurrency stress remain incomplete
 - memory and PID ceilings are configurable rather than mandatory service policy
 - the in-memory execution cache has no TTL, bound, persistence, single-flight,
@@ -68,7 +68,7 @@ slice.
 - [x] Resource outcomes: explicit OOM, PID, timeout, signal, output, and cleanup
   outcomes backed by cgroup event files
 - [x] User namespace: explicit UID/GID mappings with controller-side evidence
-- [ ] Versioned seccomp profiles: compile/native policies and violation tests
+- [x] Versioned seccomp profiles: compile/native policies and violation tests
 - [ ] Adversarial CI: ordinary quality gates plus disposable-VM isolation,
   lifecycle, and concurrency suites
 
@@ -121,11 +121,8 @@ capability state, host process visibility, and cleanup after every failure path.
 
 ## Phase 2: syscall policy and privilege model
 
-Use the existing `seccompiler` dependency rather than maintaining a BPF
-compiler. `seccompiler::apply_filter` sets `PR_SET_NO_NEW_PRIVS` while installing
-the filter.
-
-Create versioned execution profiles instead of one universal allowlist:
+The runtime now uses `seccompiler` and installs a fail-closed filter before
+`exec`. Versioned profiles are selected in each task's `sandbox_profile`:
 
 - `compile`: process creation and filesystem operations needed by pinned
   compilers, with no network access
@@ -133,11 +130,12 @@ Create versioned execution profiles instead of one universal allowlist:
 - language-specific runtime profiles for JVM, Node, Python, and other supported
   toolchains
 
-Unknown syscalls should initially return a policy error in development so
-coverage can be measured, then use a terminating action in hardened profiles.
-Trace representative workloads, but treat traces as test input rather than proof
-that a policy is complete. Include architecture and policy version in every
-execution specification and cache key.
+Both profiles trap policy violations with `SIGSYS`, which results report as
+`policy_violation`. `compile_v1` denies namespace, mount, kernel-module,
+introspection, keyring, and high-risk kernel interfaces while retaining process
+creation. `native_v1` additionally denies process creation and sockets. These
+are versioned denylists, not exhaustive syscall allowlists; representative
+workload tracing and tighter language-specific profiles remain future work.
 
 **User namespace complete:** every task enters a fresh user namespace mapping
 inner 65534:65534 to exactly outer 65534:65534. The controller-side

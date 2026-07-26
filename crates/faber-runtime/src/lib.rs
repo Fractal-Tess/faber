@@ -14,4 +14,4 @@ pub use result::{
     ExecutionStepResult, RuntimeResult, TaskGroupResult, TaskOutcome, TaskResult, TaskResultStats,
 };
 pub use runtime::{Runtime, RuntimeBuilder};
-pub use task::{ExecutionStep, Task, TaskGroup};
+pub use task::{ExecutionStep, SandboxProfile, Task, TaskGroup};

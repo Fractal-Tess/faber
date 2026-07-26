@@ -9,6 +9,7 @@ fn create_test_task(cmd: &str, args: Vec<&str>) -> Task {
         stdin: None,
         files: None,
         working_dir: None,
+        sandbox_profile: None,
     }
 }
 
@@ -64,6 +65,7 @@ fn test_pid_namespace_isolation() {
         stdin: None,
         files: None,
         working_dir: None,
+        sandbox_profile: None,
     };
 
     let task_group: TaskGroup = vec![faber_runtime::ExecutionStep::Single(task)];
@@ -167,6 +169,7 @@ fn test_hostname_isolation() {
         stdin: None,
         files: None,
         working_dir: None,
+        sandbox_profile: None,
     };
 
     let task_group: TaskGroup = vec![faber_runtime::ExecutionStep::Single(task)];
@@ -304,6 +307,7 @@ fn test_file_operations() {
         stdin: None,
         files: Some(files),
         working_dir: None,
+        sandbox_profile: None,
     };
 
     let task_group: TaskGroup = vec![faber_runtime::ExecutionStep::Single(task)];
@@ -346,6 +350,7 @@ fn test_network_isolation() {
         stdin: None,
         files: None,
         working_dir: None,
+        sandbox_profile: None,
     };
 
     let task_group: TaskGroup = vec![faber_runtime::ExecutionStep::Single(task)];
@@ -399,6 +404,7 @@ fn test_resource_limits() {
         stdin: None,
         files: None,
         working_dir: None,
+        sandbox_profile: None,
     };
 
     let task_group: TaskGroup = vec![faber_runtime::ExecutionStep::Single(task)];

@@ -12,6 +12,7 @@ export type TaskOutcome =
   | 'out_of_memory'
   | 'pids_limit'
   | 'output_limit'
+  | 'policy_violation'
   | 'infrastructure_failure';
 
 export type ExecutionStats = {

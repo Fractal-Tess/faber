@@ -170,6 +170,7 @@ pub enum TaskOutcome {
     OutOfMemory,
     PidsLimit,
     OutputLimit,
+    PolicyViolation,
     #[default]
     InfrastructureFailure,
 }
