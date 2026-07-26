@@ -38,6 +38,7 @@ pub struct Runtime {
     pub(crate) container: Container,
     pub(crate) cgroup: Cgroup,
     pub(crate) timeout: Duration,
+    pub(crate) cpu_time_limit: Duration,
     pub(crate) output_limit: usize,
 }
 
@@ -144,7 +145,13 @@ impl Runtime {
     }
 
     fn execute_single(&self, task: Task) -> ExecutionStepResult {
-        match Self::execute_single_task(task, &self.cgroup, self.timeout, self.output_limit) {
+        match Self::execute_single_task(
+            task,
+            &self.cgroup,
+            self.timeout,
+            self.cpu_time_limit,
+            self.output_limit,
+        ) {
             Ok(task_result) => ExecutionStepResult::Single(task_result),
             Err(e) => ExecutionStepResult::Single(TaskResult::Failed {
                 error: format!("Task execution failed: {}", e),
@@ -178,6 +185,7 @@ impl Runtime {
                         task,
                         &self.cgroup,
                         self.timeout,
+                        self.cpu_time_limit,
                         self.output_limit,
                     ) {
                         Ok(task_result) => task_result,
@@ -223,6 +231,7 @@ impl Runtime {
         task: Task,
         cgroup: &Cgroup,
         timeout: std::time::Duration,
+        cpu_time_limit: std::time::Duration,
         output_limit: usize,
     ) -> Result<TaskResult> {
         use std::time::Instant;
@@ -301,7 +310,7 @@ impl Runtime {
 
                 // Apply security restrictions
                 if let Err(e) = Self::child_setup_security(
-                    timeout,
+                    cpu_time_limit,
                     user_ready_write.into(),
                     user_continue_read.into(),
                     proc_pid,
@@ -560,7 +569,7 @@ impl Runtime {
 
     /// Set up security restrictions in child process before exec
     fn child_setup_security(
-        timeout: Duration,
+        cpu_time_limit: Duration,
         user_ready: PipeWriter,
         user_continue: PipeReader,
         proc_pid: u32,
@@ -581,7 +590,7 @@ impl Runtime {
 
         // Mount sys from oldroot (sysfs doesn't have PID-specific info)
         Self::mount_sys()?;
-        Self::apply_resource_limits(timeout)?;
+        Self::apply_resource_limits(cpu_time_limit)?;
 
         setgroups(&[]).map_err(std::io::Error::other)?;
         Self::enter_user_namespace(user_ready, user_continue, proc_pid)?;
@@ -969,12 +978,12 @@ impl Runtime {
         }
     }
 
-    fn apply_resource_limits(timeout: Duration) -> std::io::Result<()> {
+    fn apply_resource_limits(cpu_time_limit: Duration) -> std::io::Result<()> {
         const FILE_SIZE_LIMIT: u64 = 64 * 1024 * 1024;
         const OPEN_FILE_LIMIT: u64 = 256;
         const STACK_LIMIT: u64 = 8 * 1024 * 1024;
 
-        let cpu_seconds = timeout.as_secs().max(1);
+        let cpu_seconds = cpu_time_limit.as_secs().max(1);
         Self::set_resource_limit(libc::RLIMIT_CPU, cpu_seconds)?;
         Self::set_resource_limit(libc::RLIMIT_FSIZE, FILE_SIZE_LIMIT)?;
         Self::set_resource_limit(libc::RLIMIT_NOFILE, OPEN_FILE_LIMIT)?;

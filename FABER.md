@@ -371,7 +371,8 @@ pids_max: 64
 // Runtime defaults (RuntimeBuilder)
 timeout: 5 seconds
 output_limit: 1 MiB per stdout/stderr stream
-rlimits: CPU=timeout, file=64 MiB, FDs=256, stack=8 MiB, core=0
+rlimits: CPU=5 seconds, file=64 MiB, FDs=256, stack=8 MiB, core=0
+// with_cpu_time_limit can set CPU time independently of wall timeout
 ```
 
 ---
@@ -463,6 +464,7 @@ let task = Task {
 let runtime = RuntimeBuilder::default()
     .with_task_group(vec![ExecutionStep::Single(task)])
     .with_timeout(Duration::from_secs(10))
+    .with_cpu_time_limit(Duration::from_secs(5))
     .build();
 
 let result = runtime.execute()?;

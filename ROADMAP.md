@@ -83,7 +83,7 @@ suite because privileged Docker shares the host kernel.
 - [x] Identity, capability-regain, procfs, PID 1, and inherited-FD escape probes
 - [x] Every blocked syscall in `compile_v1` and `native_v1`
 - [x] IPv4, IPv6, route, DNS, socket, and cross-runtime network isolation
-- [ ] Runtime enforcement of file-size, descriptor, CPU, stack, and core limits
+- [x] Runtime enforcement of file-size, descriptor, CPU, stack, and core limits
 - [ ] Cancellation and setup-failure cleanup paths
 - [ ] Repeated parallel/OOM/PID/output/lifecycle stress on disposable VMs
 - [ ] Hardware/kernel evidence report and explicit untestable-risk register

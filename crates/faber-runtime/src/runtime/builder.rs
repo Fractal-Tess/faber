@@ -12,6 +12,7 @@ pub struct RuntimeBuilder {
     container: Container,
     cgroup: Cgroup,
     timeout: Duration,
+    cpu_time_limit: Duration,
     output_limit: usize,
 }
 
@@ -22,6 +23,7 @@ impl Default for RuntimeBuilder {
             container: Container::default(),
             cgroup: Cgroup::default(),
             timeout: Duration::from_secs(5),
+            cpu_time_limit: Duration::from_secs(5),
             output_limit: 1024 * 1024,
         }
     }
@@ -48,6 +50,11 @@ impl RuntimeBuilder {
         self
     }
 
+    pub fn with_cpu_time_limit(mut self, cpu_time_limit: Duration) -> Self {
+        self.cpu_time_limit = cpu_time_limit;
+        self
+    }
+
     pub fn with_output_limit(mut self, output_limit: usize) -> Self {
         self.output_limit = output_limit;
         self
@@ -59,6 +66,7 @@ impl RuntimeBuilder {
             container: self.container,
             cgroup: self.cgroup,
             timeout: self.timeout,
+            cpu_time_limit: self.cpu_time_limit,
             output_limit: self.output_limit,
         }
     }

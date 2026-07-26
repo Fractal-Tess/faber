@@ -468,6 +468,100 @@ int main(void) {
 }
 "#;
 
+const RLIMIT_ENFORCEMENT_PROBE_SOURCE: &str = r#"
+#include <errno.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+static int test_nofile(void) {
+    int descriptors[512];
+    int count = 0;
+    while (count < 512) {
+        int fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+        if (fd < 0) {
+            break;
+        }
+        descriptors[count++] = fd;
+    }
+    int open_error = errno;
+    for (int index = 0; index < count; index++) {
+        close(descriptors[index]);
+    }
+    if (open_error != EMFILE || count < 200 || count > 253) {
+        fprintf(stderr, "nofile count=%d errno=%d\n", count, open_error);
+        return 1;
+    }
+    return 0;
+}
+
+static int test_fsize(void) {
+    signal(SIGXFSZ, SIG_IGN);
+    int fd = open("large-output", O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    if (fd < 0) {
+        return 2;
+    }
+    static unsigned char chunk[1024 * 1024];
+    unsigned long long written = 0;
+    int write_error = 0;
+    while (written < 80ULL * 1024ULL * 1024ULL) {
+        ssize_t result = write(fd, chunk, sizeof(chunk));
+        if (result < 0) {
+            write_error = errno;
+            break;
+        }
+        written += (unsigned long long)result;
+    }
+    close(fd);
+    struct stat metadata;
+    if (stat("large-output", &metadata) != 0 || write_error != EFBIG ||
+        written != 64ULL * 1024ULL * 1024ULL ||
+        (unsigned long long)metadata.st_size != written) {
+        fprintf(stderr, "fsize written=%llu size=%llu errno=%d\n", written,
+                (unsigned long long)metadata.st_size, write_error);
+        return 3;
+    }
+    return 0;
+}
+
+__attribute__((noinline)) static void consume_stack(unsigned int depth) {
+    volatile unsigned char frame[65536];
+    memset((void *)frame, (int)depth, sizeof(frame));
+    consume_stack(depth + 1);
+    if (frame[depth % sizeof(frame)] == 255) {
+        _exit(99);
+    }
+}
+
+int main(int argc, char **argv) {
+    if (argc != 2) {
+        return 64;
+    }
+    if (strcmp(argv[1], "nofile") == 0) {
+        return test_nofile();
+    }
+    if (strcmp(argv[1], "fsize") == 0) {
+        return test_fsize();
+    }
+    if (strcmp(argv[1], "stack") == 0) {
+        consume_stack(1);
+    }
+    if (strcmp(argv[1], "core") == 0) {
+        abort();
+    }
+    if (strcmp(argv[1], "cpu") == 0) {
+        for (;;) {
+            __asm__ volatile("" ::: "memory");
+        }
+    }
+    return 65;
+}
+"#;
+
 const MEMORY_PROBE_SOURCE: &str = r#"
 #include <stdlib.h>
 #include <unistd.h>
@@ -1376,6 +1470,70 @@ fn timeout_kills_the_complete_task_process_tree() {
     assert!(
         started.elapsed() < std::time::Duration::from_secs(2),
         "task process tree was not terminated promptly"
+    );
+}
+
+#[test]
+fn file_descriptor_file_size_stack_core_and_cpu_rlimits_are_enforced() {
+    let _guard = lock_security_tests();
+    let result = RuntimeBuilder::default()
+        .with_task_group(vec![
+            ExecutionStep::Single(task_with_file(
+                "/usr/bin/gcc",
+                &["-O0", "rlimit_probe.c", "-o", "rlimit_probe"],
+                "rlimit_probe.c",
+                RLIMIT_ENFORCEMENT_PROBE_SOURCE,
+            )),
+            ExecutionStep::Single(task("./rlimit_probe", &["nofile"])),
+            ExecutionStep::Single(task("./rlimit_probe", &["fsize"])),
+            ExecutionStep::Single(task("./rlimit_probe", &["stack"])),
+            ExecutionStep::Single(task("./rlimit_probe", &["core"])),
+            ExecutionStep::Single(task(
+                "/bin/sh",
+                &[
+                    "-c",
+                    "test ! -e core; set -- core.*; test \"$1\" = 'core.*'",
+                ],
+            )),
+            ExecutionStep::Single(task("./rlimit_probe", &["cpu"])),
+        ])
+        .with_timeout(std::time::Duration::from_millis(2500))
+        .with_cpu_time_limit(std::time::Duration::from_secs(1))
+        .build()
+        .execute()
+        .expect("runtime execution failed");
+    let RuntimeResult::Success(results) = result else {
+        panic!("container setup failed: {result:?}");
+    };
+    assert_no_task_cgroups();
+
+    for index in [0, 1, 2, 5] {
+        let TaskResult::Completed {
+            exit_code, stderr, ..
+        } = single_result(&results[index])
+        else {
+            panic!("rlimit step {index} failed: {:?}", results[index]);
+        };
+        assert_eq!(*exit_code, 0, "rlimit step {index}: {stderr}");
+    }
+    for (index, signal) in [(3, libc::SIGSEGV), (4, libc::SIGABRT), (6, libc::SIGKILL)] {
+        let TaskResult::Completed {
+            exit_code, stats, ..
+        } = single_result(&results[index])
+        else {
+            panic!("rlimit signal step {index} failed: {:?}", results[index]);
+        };
+        assert_eq!(*exit_code, 128 + signal, "rlimit step {index}");
+        assert_eq!(stats.outcome, TaskOutcome::Signaled, "rlimit step {index}");
+        assert_eq!(stats.termination_signal, Some(signal));
+        assert!(stats.cleanup_succeeded);
+    }
+    let TaskResult::Completed { stats, .. } = single_result(&results[6]) else {
+        unreachable!();
+    };
+    assert!(
+        stats.execution_time_ms < 2500,
+        "wall timeout fired before RLIMIT_CPU: {stats:?}"
     );
 }
 
