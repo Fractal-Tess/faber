@@ -556,21 +556,20 @@ impl Runtime {
 
         std::fs::create_dir_all("/sys").ok();
 
-        // Try to mount new sysfs first
-        let sys_flags = MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC;
-        if mount(None::<&str>, "/sys", Some("sysfs"), sys_flags, None::<&str>).is_ok() {
-            return Ok(());
-        }
-
-        // Fallback: bind mount from oldroot
+        let sys_flags =
+            MsFlags::MS_RDONLY | MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC;
+        mount(None::<&str>, "/sys", Some("sysfs"), sys_flags, None::<&str>)
+            .map_err(|error| std::io::Error::other(format!("Failed to mount sysfs: {error}")))?;
         mount(
-            Some("/oldroot/sys"),
+            None::<&str>,
             "/sys",
             None::<&str>,
-            MsFlags::MS_BIND,
+            sys_flags | MsFlags::MS_REMOUNT,
             None::<&str>,
         )
-        .ok();
+        .map_err(|error| {
+            std::io::Error::other(format!("Failed to remount sysfs read-only: {error}"))
+        })?;
 
         Ok(())
     }

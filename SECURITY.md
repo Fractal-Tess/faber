@@ -27,7 +27,7 @@ namespace flag is not sufficient evidence.
 | Area | Required invariant | Evidence | Status |
 |---|---|---|---|
 | Workspace files | Submitted paths are normalized, relative to `/faber`, and cannot traverse symlinks or mount points | `security_acceptance::submitted_files_*`; `openat2` with `RESOLVE_BENEATH`, `RESOLVE_NO_SYMLINKS`, `RESOLVE_NO_MAGICLINKS`, and `RESOLVE_NO_XDEV` | Verified baseline |
-| Root filesystem | The old root is detached, outer-root files are hidden, and toolchain mounts cannot be modified | `filesystem_hides_outer_root_and_keeps_toolchains_read_only`; `test_toolchain_mounts_are_read_only` | Verified baseline |
+| Root filesystem | The old root is detached, propagation is private, toolchains are read-only, and task sysfs exposes no cgroup mount | Filesystem boundary tests plus security-state mountinfo assertions | Verified baseline |
 | PID/proc | Host processes are absent from procfs and all descendants are reaped and killed at teardown | Namespace visibility, orphan reaping, full-cgroup timeout termination, and cleanup tests | Verified baseline |
 | Network | Tasks have no host or external connectivity over IPv4 or IPv6 | Interface smoke test exists; route, DNS, socket, and cross-task tests pending | Partial |
 | User identity | Task IDs map to an unprivileged host UID/GID and supplementary groups are empty | Security-state probe verifies 65534:65534 and an empty supplementary-group list; user namespace pending | Partial |
@@ -51,8 +51,9 @@ confirmed the expected gaps: supplementary group 0 remained, `CapBnd` was
 nonzero, `NoNewPrivs` and seccomp mode were both 0, UID/GID maps still covered
 the initial user namespace, CPU/file/core limits were unlimited, and sysfs was
 writable inside the mount namespace. Privilege cleanup now produces empty
-supplementary and capability sets with `NoNewPrivs: 1`; later slices address the
-remaining observations.
+supplementary and capability sets with `NoNewPrivs: 1`; mount hardening now
+provides private propagation and read-only sysfs without the cgroup mount.
+Later slices address the remaining observations.
 
 ## Running verification
 

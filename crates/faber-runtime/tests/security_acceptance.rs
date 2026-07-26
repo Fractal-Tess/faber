@@ -223,6 +223,14 @@ fn status_field<'a>(status: &'a str, name: &str) -> &'a str {
         .unwrap_or_else(|| panic!("missing {name} in /proc/self/status"))
 }
 
+fn mountinfo_line<'a>(mountinfo: &'a str, mountpoint: &str) -> &'a str {
+    mountinfo
+        .lines()
+        .filter(|line| line.split_whitespace().nth(4) == Some(mountpoint))
+        .last()
+        .unwrap_or_else(|| panic!("missing {mountpoint} in mountinfo"))
+}
+
 fn namespace_inode(name: &str) -> u64 {
     std::fs::metadata(format!("/proc/self/ns/{name}"))
         .unwrap_or_else(|error| panic!("failed to inspect outer {name} namespace: {error}"))
@@ -316,6 +324,32 @@ fn security_probe_records_identity_namespaces_mounts_and_limits() {
         state.cgroup
     );
     assert!(!state.mountinfo.contains("/oldroot"));
+
+    let root_mount = mountinfo_line(&state.mountinfo, "/");
+    let root_optional_fields = root_mount
+        .split(" - ")
+        .next()
+        .expect("root mountinfo lacked a separator");
+    assert!(!root_optional_fields.contains("shared:"));
+    assert!(!root_optional_fields.contains("master:"));
+
+    let sys_mount = mountinfo_line(&state.mountinfo, "/sys");
+    let sys_options = sys_mount
+        .split_whitespace()
+        .nth(5)
+        .expect("sysfs mount options were missing");
+    assert!(
+        sys_options.split(',').any(|option| option == "ro"),
+        "sysfs was not read-only: {sys_mount}"
+    );
+    assert!(
+        state
+            .mountinfo
+            .lines()
+            .all(|line| line.split_whitespace().nth(4) != Some("/sys/fs/cgroup")),
+        "task unexpectedly retained a cgroup filesystem mount"
+    );
+
     let _ = (&state.route4, &state.route6);
 
     for resource in ["cpu", "fsize", "nofile", "nproc", "stack", "core"] {

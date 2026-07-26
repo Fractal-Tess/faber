@@ -35,6 +35,18 @@ impl Container {
 
         unshare(unshare_flags).map_err(|e| FaberError::Unshare { e })?;
 
+        mount(
+            None::<&str>,
+            "/",
+            None::<&str>,
+            MsFlags::MS_REC | MsFlags::MS_PRIVATE,
+            None::<&str>,
+        )
+        .map_err(|e| FaberError::Mount {
+            e,
+            details: "Failed to make the container mount namespace private".to_string(),
+        })?;
+
         self.rebind_new_root()?;
         self.bind_mounts()?;
         self.bind_dev_devices()?;
@@ -416,31 +428,17 @@ impl Container {
             details: "Failed to create sys directory".to_string(),
         })?;
 
-        // Try to mount new sysfs first
         let sys_flags = MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC;
-        if mount(
+        mount(
             None::<&str>,
             sys_target,
             Some("sysfs"),
             sys_flags,
             None::<&str>,
         )
-        .is_ok()
-        {
-            return Ok(());
-        }
-
-        // Fallback: bind mount from oldroot/sys
-        mount(
-            Some("/oldroot/sys"),
-            sys_target,
-            None::<&str>,
-            MsFlags::MS_BIND,
-            None::<&str>,
-        )
         .map_err(|e| FaberError::Mount {
             e,
-            details: "Failed to bind mount sys from oldroot".to_string(),
+            details: "Failed to mount a fresh sysfs".to_string(),
         })?;
 
         Ok(())
@@ -454,32 +452,18 @@ impl Container {
             details: "Failed to create cgroup directory".to_string(),
         })?;
 
-        // Try to mount new cgroup2 filesystem first
         let cgroup_flags =
             MsFlags::MS_RELATIME | MsFlags::MS_NOSUID | MsFlags::MS_NODEV | MsFlags::MS_NOEXEC;
-        if mount(
+        mount(
             None::<&str>,
             cgroup_path,
             Some("cgroup2"),
             cgroup_flags,
             None::<&str>,
         )
-        .is_ok()
-        {
-            return Ok(());
-        }
-
-        // Fallback: bind mount from oldroot/sys/fs/cgroup
-        mount(
-            Some("/oldroot/sys/fs/cgroup"),
-            cgroup_path,
-            None::<&str>,
-            MsFlags::MS_BIND,
-            None::<&str>,
-        )
         .map_err(|e| FaberError::Mount {
             e,
-            details: "Failed to bind mount cgroup from oldroot".to_string(),
+            details: "Failed to mount a fresh cgroup v2 filesystem".to_string(),
         })?;
 
         Ok(())

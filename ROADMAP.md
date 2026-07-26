@@ -64,8 +64,8 @@ slice.
   output-limit tests
 - [x] Process lifecycle: PID 1 reaping, process-tree termination, timeout, and
   zombie tests (API cancellation remains part of explicit execution outcomes)
-- [ ] Mount/sys hardening: private propagation, minimal read-only sysfs, removal
-  of host fallbacks, and fail-closed tests
+- [x] Mount/sys hardening: private propagation, read-only sysfs, removal of
+  host fallbacks, and fail-closed tests
 - [ ] Rlimits and resource outcomes: CPU/file/FD/core/stack limits and explicit
   OOM, PID, timeout, signal, and cleanup outcomes
 - [ ] User namespace: explicit UID/GID mappings with host-side evidence
@@ -107,8 +107,9 @@ Complete these before accepting hostile workloads:
 5. **Complete for execution and timeout:** PID 1 continuously reaps orphaned
    descendants and timeout/output enforcement kills the full task cgroup.
    API-level cancellation remains pending with explicit outcomes.
-6. Remove host `/sys` fallbacks or expose only a minimal read-only subset. All
-   security setup must fail closed and retain the original error.
+6. **Complete:** mount propagation is private, task sysfs is read-only, fresh
+   sysfs/cgroup mounts have no old-root bind fallback, and setup retains mount
+   errors instead of silently continuing.
 7. Add explicit execution outcomes: exited, signaled, timed out, OOM-killed,
    PID-limited, output-limited, setup-failed, and policy-violated.
 
