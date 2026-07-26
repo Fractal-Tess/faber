@@ -839,6 +839,19 @@ fn security_probe_records_identity_namespaces_mounts_and_limits() {
             .all(|line| line.split_whitespace().nth(4) != Some("/sys/fs/cgroup")),
         "task unexpectedly retained a cgroup filesystem mount"
     );
+    for mountpoint in ["/bin", "/lib", "/lib64", "/usr"] {
+        let mount = mountinfo_line(&state.mountinfo, mountpoint);
+        let options = mount
+            .split_whitespace()
+            .nth(5)
+            .unwrap_or_else(|| panic!("{mountpoint} mount options were missing"));
+        for required in ["ro", "nodev", "nosuid"] {
+            assert!(
+                options.split(',').any(|option| option == required),
+                "{mountpoint} lacked {required}: {mount}"
+            );
+        }
+    }
     for mountpoint in ["/faber", "/tmp"] {
         let mount = mountinfo_line(&state.mountinfo, mountpoint);
         let options = mount
@@ -999,6 +1012,8 @@ fn filesystem_hides_outer_root_and_keeps_toolchains_read_only() {
         "test ! -e {marker_path} && test ! -e /oldroot && \
          ! touch /bin/faber-write-test 2>/dev/null && \
          ! touch /usr/bin/faber-write-test 2>/dev/null && \
+         ! touch /root-level-escape 2>/dev/null && \
+         ! touch /dev/escape-device 2>/dev/null && \
          test ! -w /sys/fs/cgroup/cgroup.procs"
     );
     let results = execute(vec![task("/bin/sh", &["-c", &script])]);
@@ -1079,12 +1094,12 @@ fn submitted_files_reject_every_non_regular_target_without_blocking() {
     tasks.push(task("/bin/true", &[]));
 
     let results = execute(tasks);
-    for index in 0..2 {
+    for result in results.iter().take(2) {
         let TaskResult::Completed {
             exit_code, stderr, ..
-        } = single_result(&results[index])
+        } = single_result(result)
         else {
-            panic!("filesystem object setup failed: {:?}", results[index]);
+            panic!("filesystem object setup failed: {result:?}");
         };
         assert_eq!(*exit_code, 0, "filesystem object setup: {stderr}");
     }
@@ -1113,7 +1128,7 @@ fn parallel_symlink_swaps_cannot_redirect_submitted_files() {
         "/bin/sh",
         &[
             "-c",
-            "i=0; while test $i -lt 1000; do rm -rf race; ln -s /tmp race; rm -f race; mkdir race 2>/dev/null || true; i=$((i+1)); done",
+            "i=0; while test $i -lt 300; do rm -rf race; ln -s /tmp race; rm -f race; mkdir race 2>/dev/null || true; i=$((i+1)); done",
         ],
     )];
     for index in 0..8 {

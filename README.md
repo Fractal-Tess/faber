@@ -12,7 +12,7 @@
 
 ---
 
-Faber is an experimental task execution runtime that runs commands in Linux namespaces with cgroup v2 resource controls. The namespace backend is under active hardening and is not yet suitable for public hostile workloads; see [`SECURITY.md`](SECURITY.md) and [`ROADMAP.md`](ROADMAP.md).
+Faber is an experimental task execution runtime that runs commands in Linux namespaces with cgroup v2 resource controls. The namespace backend is under active hardening and is not yet suitable for public hostile workloads; see [`SECURITY.md`](SECURITY.md), [`SECURITY_TEST_MATRIX.md`](SECURITY_TEST_MATRIX.md), and [`ROADMAP.md`](ROADMAP.md).
 
 ## ✨ Features
 

@@ -80,6 +80,8 @@ jobs:
           ! docker info --format '{{json .SecurityOptions}}' | grep -q 'name=rootless'
       - name: Run isolation, lifecycle, resource, and concurrency suites
         run: ./scripts/dev.sh test
+      - name: Repeat adversarial escape and cleanup probes
+        run: STRESS_ROUNDS=5 ./scripts/dev.sh test-stress
       - name: Verify and clean runtime state
         if: always()
         run: |

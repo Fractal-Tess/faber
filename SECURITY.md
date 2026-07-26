@@ -1,5 +1,8 @@
 # Faber security model and verification
 
+The tested hardware, attack families, and explicit exclusions are recorded in
+[`SECURITY_TEST_MATRIX.md`](SECURITY_TEST_MATRIX.md).
+
 Faber's namespace backend runs untrusted processes in Linux namespaces and
 cgroup v2. It shares the outer host kernel, so it is not equivalent to a
 microVM and cannot contain a host-kernel vulnerability. Faber is not yet ready

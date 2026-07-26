@@ -72,11 +72,17 @@ host:
 ./scripts/dev.sh test
 ```
 
-Run only the sandbox isolation and cgroup enforcement acceptance tests while
+Run only the sandbox isolation, cancellation, and cgroup acceptance tests while
 working on the jailer:
 
 ```bash
 ./scripts/dev.sh test-security
+```
+
+Repeat the complete hostile-code suite locally (three rounds by default):
+
+```bash
+STRESS_ROUNDS=3 ./scripts/dev.sh test-stress
 ```
 
 Both commands use a single test thread. This avoids overlapping global cgroup

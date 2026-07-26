@@ -99,6 +99,7 @@ Commands:
   check         Run Rust formatting and Clippy checks in the dev container
   test          Run the Rust test suite in a fresh privileged dev container
   test-security Run focused sandbox isolation and cgroup acceptance tests
+  test-stress   Repeat the complete adversarial suite (STRESS_ROUNDS, default 3)
   status        Show Compose service status
 EOF
 }
@@ -147,6 +148,12 @@ case "${1:-}" in
         compose build faber
         compose run --rm --no-TTY faber bash -lc \
             'cargo test -p faber-runtime --test security_acceptance -- --test-threads=1 && cargo test -p faber-api --test cancellation -- --test-threads=1'
+        ;;
+    test-stress)
+        setup_cgroups
+        compose build faber
+        compose run --rm --no-TTY -e STRESS_ROUNDS="${STRESS_ROUNDS:-3}" faber bash -lc \
+            'set -Eeuo pipefail; for round in $(seq 1 "$STRESS_ROUNDS"); do echo "=== adversarial round $round/$STRESS_ROUNDS ==="; cargo test -p faber-runtime --test security_acceptance -- --test-threads=1; cargo test -p faber-api --test cancellation -- --test-threads=1; done'
         ;;
     status)
         compose ps

@@ -85,8 +85,8 @@ suite because privileged Docker shares the host kernel.
 - [x] IPv4, IPv6, route, DNS, socket, and cross-runtime network isolation
 - [x] Runtime enforcement of file-size, descriptor, CPU, stack, and core limits
 - [x] API cancellation and container setup-failure cleanup paths
-- [ ] Repeated parallel/OOM/PID/output/lifecycle stress on disposable VMs
-- [ ] Hardware/kernel evidence report and explicit untestable-risk register
+- [x] Repeated parallel/OOM/PID/output/lifecycle stress on local Docker and disposable CI VMs
+- [x] Hardware/kernel evidence report and explicit untestable-risk register
 
 ## Phase 0: reproducible development
 
