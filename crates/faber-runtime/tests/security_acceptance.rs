@@ -176,6 +176,149 @@ int main(int argc, char **argv) {
 }
 "#;
 
+const PRIVILEGE_ESCAPE_PROBE_SOURCE: &str = r#"
+#include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <grp.h>
+#include <linux/capability.h>
+#include <linux/limits.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/prctl.h>
+#include <sys/stat.h>
+#include <sys/syscall.h>
+#include <sys/sysmacros.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+static int failures = 0;
+
+static void failed(const char *operation) {
+    fprintf(stderr, "%s unexpectedly succeeded or exposed privileged state (errno=%d)\n", operation, errno);
+    failures++;
+}
+
+static void require_failure(const char *operation, long result) {
+    if (result != -1) {
+        failed(operation);
+    }
+}
+
+static void require_map_write_failure(const char *path) {
+    int fd = open(path, O_WRONLY | O_CLOEXEC);
+    if (fd < 0) {
+        return;
+    }
+    errno = 0;
+    if (write(fd, "0 0 1\n", 6) >= 0) {
+        failed(path);
+    }
+    close(fd);
+}
+
+static void verify_file_descriptors(void) {
+    DIR *directory = opendir("/proc/self/fd");
+    if (directory == NULL) {
+        failed("opendir(/proc/self/fd)");
+        return;
+    }
+    int directory_fd = dirfd(directory);
+    struct dirent *entry;
+    while ((entry = readdir(directory)) != NULL) {
+        char *end = NULL;
+        long fd = strtol(entry->d_name, &end, 10);
+        if (*entry->d_name != '\0' && end != NULL && *end == '\0' &&
+            fd > STDERR_FILENO && fd != directory_fd) {
+            fprintf(stderr, "inherited descriptor %ld\n", fd);
+            failures++;
+        }
+    }
+    closedir(directory);
+}
+
+static void verify_visible_processes(void) {
+    DIR *directory = opendir("/proc");
+    if (directory == NULL) {
+        failed("opendir(/proc)");
+        return;
+    }
+    int process_count = 0;
+    struct dirent *entry;
+    while ((entry = readdir(directory)) != NULL) {
+        char *end = NULL;
+        strtol(entry->d_name, &end, 10);
+        if (*entry->d_name != '\0' && end != NULL && *end == '\0') {
+            process_count++;
+        }
+    }
+    closedir(directory);
+    if (process_count > 2) {
+        fprintf(stderr, "procfs exposed %d processes\n", process_count);
+        failures++;
+    }
+}
+
+int main(void) {
+    gid_t root_group = 0;
+    require_failure("setuid(0)", setuid(0));
+    require_failure("seteuid(0)", seteuid(0));
+    require_failure("setgid(0)", setgid(0));
+    require_failure("setegid(0)", setegid(0));
+    require_failure("setgroups(root)", setgroups(1, &root_group));
+    require_failure("chroot", chroot("/"));
+    require_failure("sethostname", sethostname("escaped", 7));
+    if (mknod("escape-device", S_IFCHR | 0600, makedev(1, 3)) == 0) {
+        int device_fd = open("escape-device", O_RDWR | O_CLOEXEC);
+        if (device_fd >= 0) {
+            close(device_fd);
+            failed("open attacker-created device node");
+        }
+        unlink("escape-device");
+    }
+    require_failure("kill namespace init", kill(1, SIGKILL));
+    require_failure("unset no_new_privs", prctl(PR_SET_NO_NEW_PRIVS, 0, 0, 0, 0));
+    require_failure(
+        "raise ambient CAP_SYS_ADMIN",
+        prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_RAISE, CAP_SYS_ADMIN, 0, 0)
+    );
+
+    struct __user_cap_header_struct header = {
+        .version = _LINUX_CAPABILITY_VERSION_3,
+        .pid = 0,
+    };
+    struct __user_cap_data_struct capabilities[2] = {0};
+    capabilities[CAP_TO_INDEX(CAP_SYS_ADMIN)].effective = CAP_TO_MASK(CAP_SYS_ADMIN);
+    capabilities[CAP_TO_INDEX(CAP_SYS_ADMIN)].permitted = CAP_TO_MASK(CAP_SYS_ADMIN);
+    require_failure("capset CAP_SYS_ADMIN", syscall(SYS_capset, &header, capabilities));
+
+    require_map_write_failure("/proc/self/uid_map");
+    require_map_write_failure("/proc/self/gid_map");
+    require_map_write_failure("/proc/self/setgroups");
+
+    int root_fd = open("/proc/1/root/bin/sh", O_RDONLY | O_CLOEXEC);
+    if (root_fd >= 0) {
+        close(root_fd);
+        failed("open(/proc/1/root/bin/sh)");
+    }
+    char root_target[PATH_MAX];
+    require_failure("readlink(/proc/1/root)", readlink("/proc/1/root", root_target, sizeof(root_target)));
+
+    if (access("/sys/fs/cgroup/cgroup.procs", F_OK) == 0) {
+        failed("visible cgroup control filesystem");
+    }
+    if (getuid() != 65534 || geteuid() != 65534 || getgid() != 65534 || getegid() != 65534) {
+        failed("effective nobody identity");
+    }
+
+    verify_file_descriptors();
+    verify_visible_processes();
+    return failures == 0 ? 0 : 1;
+}
+"#;
+
 const MEMORY_PROBE_SOURCE: &str = r#"
 #include <stdlib.h>
 #include <unistd.h>
@@ -418,6 +561,21 @@ fn security_probe_records_identity_namespaces_mounts_and_limits() {
             .all(|line| line.split_whitespace().nth(4) != Some("/sys/fs/cgroup")),
         "task unexpectedly retained a cgroup filesystem mount"
     );
+    for mountpoint in ["/faber", "/tmp"] {
+        let mount = mountinfo_line(&state.mountinfo, mountpoint);
+        let options = mount
+            .split_whitespace()
+            .nth(5)
+            .unwrap_or_else(|| panic!("{mountpoint} mount options were missing"));
+        assert!(
+            options.split(',').any(|option| option == "nodev"),
+            "{mountpoint} allowed device access: {mount}"
+        );
+        assert!(
+            options.split(',').any(|option| option == "nosuid"),
+            "{mountpoint} allowed set-ID execution: {mount}"
+        );
+    }
 
     let _ = (&state.route4, &state.route6);
 
@@ -441,6 +599,53 @@ fn security_probe_records_identity_namespaces_mounts_and_limits() {
         let limit = &state.rlimits[resource];
         assert_eq!((limit.soft, limit.hard), (expected, expected));
     }
+}
+
+#[test]
+fn identity_procfs_and_descriptor_escape_attempts_fail() {
+    let _guard = lock_security_tests();
+    let results = execute(vec![
+        task_with_file(
+            "/usr/bin/gcc",
+            &["privilege_escape_probe.c", "-o", "privilege_escape_probe"],
+            "privilege_escape_probe.c",
+            PRIVILEGE_ESCAPE_PROBE_SOURCE,
+        ),
+        task("./privilege_escape_probe", &[]),
+        task("/bin/kill", &["-0", "1"]),
+    ]);
+
+    let TaskResult::Completed {
+        exit_code: compile_exit,
+        stderr: compile_stderr,
+        ..
+    } = single_result(&results[0])
+    else {
+        panic!("privilege probe compilation failed: {:?}", results[0]);
+    };
+    assert_eq!(*compile_exit, 0, "privilege probe: {compile_stderr}");
+
+    let TaskResult::Completed {
+        exit_code,
+        stderr,
+        stats,
+        ..
+    } = single_result(&results[1])
+    else {
+        panic!("privilege probe produced no result: {:?}", results[1]);
+    };
+    assert_eq!(*exit_code, 0, "privilege escape succeeded: {stderr}");
+    assert_eq!(stats.outcome, TaskOutcome::Exited);
+    assert!(stats.cleanup_succeeded);
+
+    let TaskResult::Completed {
+        exit_code: init_exit,
+        ..
+    } = single_result(&results[2])
+    else {
+        panic!("namespace init liveness probe failed: {:?}", results[2]);
+    };
+    assert_eq!(*init_exit, 1, "task could signal namespace PID 1");
 }
 
 #[test]

@@ -366,7 +366,7 @@ impl Container {
             Some("tmpfs"),
             workdir_str,
             Some("tmpfs"),
-            MsFlags::empty(),
+            MsFlags::MS_NODEV | MsFlags::MS_NOSUID,
             Some(mount_options.as_str()),
         )
         .map_err(|e| FaberError::Mount {
@@ -595,7 +595,7 @@ impl Container {
             Some("tmpfs"),
             target_str,
             Some("tmpfs"),
-            MsFlags::empty(),
+            MsFlags::MS_NODEV | MsFlags::MS_NOSUID,
             Some(mount_options.as_str()),
         )
         .map_err(|e| FaberError::Mount {
