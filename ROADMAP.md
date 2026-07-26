@@ -79,7 +79,7 @@ CI VMs. Kernel exploits, deliberate host crashes, speculative-execution attacks,
 and attacks requiring direct host access are excluded from the namespace backend
 suite because privileged Docker shares the host kernel.
 
-- [ ] Filesystem object types, magic links, hard links, and symlink-swap races
+- [x] Filesystem object types, magic links, hard links, and symlink-swap races
 - [x] Identity, capability-regain, procfs, PID 1, and inherited-FD escape probes
 - [x] Every blocked syscall in `compile_v1` and `native_v1`
 - [ ] IPv4, IPv6, route, DNS, socket, and cross-runtime network isolation

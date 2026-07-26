@@ -26,7 +26,7 @@ namespace flag is not sufficient evidence.
 
 | Area | Required invariant | Evidence | Status |
 |---|---|---|---|
-| Workspace files | Submitted paths are normalized, relative to `/faber`, and cannot traverse symlinks or mount points | `security_acceptance::submitted_files_*`; `openat2` with `RESOLVE_BENEATH`, `RESOLVE_NO_SYMLINKS`, `RESOLVE_NO_MAGICLINKS`, and `RESOLVE_NO_XDEV` | Verified baseline |
+| Workspace files | Submitted paths are normalized regular files beneath `/faber`; symlinks, magic links, cross-mount hard links, directories, FIFOs, sockets, devices, and swap races cannot redirect writes | `openat2` resolution plus object-type, nonblocking FIFO, and parallel symlink-swap tests | Verified baseline |
 | Root filesystem | The old root is detached, propagation is private, toolchains are read-only, writable tmpfs mounts are `nodev,nosuid`, and task sysfs exposes no cgroup mount | Filesystem boundary, device-node, and mountinfo assertions | Verified baseline |
 | PID/proc | Host processes are absent, PID 1 cannot be signaled or traversed through `/proc/1/root`, and descendants are reaped | Privilege/proc probe, orphan reaping, full-cgroup timeout termination, and cleanup tests | Verified baseline |
 | Network | Tasks have no host or external connectivity over IPv4 or IPv6 | Interface smoke test exists; route, DNS, socket, and cross-task tests pending | Partial |

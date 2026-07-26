@@ -270,14 +270,7 @@ int main(void) {
     require_failure("setgroups(root)", setgroups(1, &root_group));
     require_failure("chroot", chroot("/"));
     require_failure("sethostname", sethostname("escaped", 7));
-    if (mknod("escape-device", S_IFCHR | 0600, makedev(1, 3)) == 0) {
-        int device_fd = open("escape-device", O_RDWR | O_CLOEXEC);
-        if (device_fd >= 0) {
-            close(device_fd);
-            failed("open attacker-created device node");
-        }
-        unlink("escape-device");
-    }
+    require_failure("mknod device", mknod("escape-device", S_IFCHR | 0600, makedev(1, 3)));
     require_failure("kill namespace init", kill(1, SIGKILL));
     require_failure("unset no_new_privs", prctl(PR_SET_NO_NEW_PRIVS, 0, 0, 0, 0));
     require_failure(
@@ -316,6 +309,46 @@ int main(void) {
     verify_file_descriptors();
     verify_visible_processes();
     return failures == 0 ? 0 : 1;
+}
+"#;
+
+const FILESYSTEM_OBJECT_PROBE_SOURCE: &str = r#"
+#include <errno.h>
+#include <fcntl.h>
+#include <stddef.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/sysmacros.h>
+#include <sys/un.h>
+#include <unistd.h>
+
+int main(void) {
+    if (mkdir("object-directory", 0700) != 0 || mkfifo("object-fifo", 0600) != 0) {
+        return 1;
+    }
+
+    int socket_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (socket_fd < 0) {
+        return 2;
+    }
+    struct sockaddr_un address = { .sun_family = AF_UNIX };
+    const char socket_path[] = "object-socket";
+    for (size_t index = 0; index < sizeof(socket_path); index++) {
+        address.sun_path[index] = socket_path[index];
+    }
+    if (bind(socket_fd, (struct sockaddr *)&address, sizeof(address)) != 0) {
+        return 3;
+    }
+    close(socket_fd);
+
+    if (symlink("/proc/self/fd/1", "object-magic-link") != 0) {
+        return 4;
+    }
+    errno = 0;
+    if (link("/bin/sh", "object-hard-link") == 0) {
+        return 5;
+    }
+    return 0;
 }
 "#;
 
@@ -712,6 +745,129 @@ fn submitted_files_do_not_follow_workspace_symlinks() {
     assert!(
         error.contains("without following links"),
         "unexpected symlink rejection: {error}"
+    );
+}
+
+#[test]
+fn submitted_files_reject_every_non_regular_target_without_blocking() {
+    let _guard = lock_security_tests();
+    let started = std::time::Instant::now();
+    let mut tasks = vec![
+        task_with_file(
+            "/usr/bin/gcc",
+            &["filesystem_object_probe.c", "-o", "filesystem_object_probe"],
+            "filesystem_object_probe.c",
+            FILESYSTEM_OBJECT_PROBE_SOURCE,
+        ),
+        task("./filesystem_object_probe", &[]),
+    ];
+    for target in [
+        "object-directory",
+        "object-fifo",
+        "object-socket",
+        "object-magic-link",
+    ] {
+        tasks.push(task_with_file("/bin/true", &[], target, "blocked"));
+    }
+    tasks.push(task("/bin/true", &[]));
+
+    let results = execute(tasks);
+    for index in 0..2 {
+        let TaskResult::Completed {
+            exit_code, stderr, ..
+        } = single_result(&results[index])
+        else {
+            panic!("filesystem object setup failed: {:?}", results[index]);
+        };
+        assert_eq!(*exit_code, 0, "filesystem object setup: {stderr}");
+    }
+    for result in &results[2..6] {
+        let TaskResult::Failed { .. } = single_result(result) else {
+            panic!("non-regular task file target was accepted: {result:?}");
+        };
+    }
+    let TaskResult::Completed { exit_code, .. } = single_result(&results[6]) else {
+        panic!(
+            "runtime did not recover after object rejection: {:?}",
+            results[6]
+        );
+    };
+    assert_eq!(*exit_code, 0);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(3),
+        "FIFO target blocked task materialization"
+    );
+}
+
+#[test]
+fn parallel_symlink_swaps_cannot_redirect_submitted_files() {
+    let _guard = lock_security_tests();
+    let mut parallel_tasks = vec![task(
+        "/bin/sh",
+        &[
+            "-c",
+            "i=0; while test $i -lt 1000; do rm -rf race; ln -s /tmp race; rm -f race; mkdir race 2>/dev/null || true; i=$((i+1)); done",
+        ],
+    )];
+    for index in 0..8 {
+        parallel_tasks.push(task_with_file(
+            "/bin/true",
+            &[],
+            &format!("race/payload-{index}"),
+            &"x".repeat(1024 * 1024),
+        ));
+    }
+
+    let result = RuntimeBuilder::default()
+        .with_task_group(vec![
+            ExecutionStep::Single(task("/bin/mkdir", &["race"])),
+            ExecutionStep::Parallel(parallel_tasks),
+            ExecutionStep::Single(task(
+                "/bin/sh",
+                &[
+                    "-c",
+                    "set -- /tmp/payload-*; test \"$1\" = '/tmp/payload-*'",
+                ],
+            )),
+        ])
+        .with_timeout(std::time::Duration::from_secs(5))
+        .build()
+        .execute()
+        .expect("runtime execution failed");
+    let RuntimeResult::Success(results) = result else {
+        panic!("container setup failed: {result:?}");
+    };
+    assert_no_task_cgroups();
+
+    let TaskResult::Completed { exit_code, .. } = single_result(&results[0]) else {
+        panic!("race directory setup failed: {:?}", results[0]);
+    };
+    assert_eq!(*exit_code, 0);
+    let ExecutionStepResult::Parallel(parallel_results) = &results[1] else {
+        panic!("expected parallel race results");
+    };
+    assert_eq!(parallel_results.len(), 9);
+    for result in parallel_results {
+        match result {
+            TaskResult::Completed { exit_code, .. } => assert_eq!(*exit_code, 0),
+            TaskResult::Failed { error, .. } => assert!(
+                error.contains("without following links")
+                    || error.contains("Failed to write task file"),
+                "unexpected race rejection: {error}"
+            ),
+        }
+    }
+    let TaskResult::Completed {
+        exit_code: escape_check,
+        stderr,
+        ..
+    } = single_result(&results[2])
+    else {
+        panic!("race escape check failed: {:?}", results[2]);
+    };
+    assert_eq!(
+        *escape_check, 0,
+        "submitted file escaped into /tmp: {stderr}"
     );
 }
 
