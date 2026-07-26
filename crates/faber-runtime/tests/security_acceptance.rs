@@ -352,6 +352,122 @@ int main(void) {
 }
 "#;
 
+const NETWORK_ESCAPE_PROBE_SOURCE: &str = r#"
+#include <arpa/inet.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <poll.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+static int failures = 0;
+
+static void connect_must_fail(int family, const void *address, socklen_t length) {
+    int fd = socket(family, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+    if (fd < 0) {
+        return;
+    }
+    int result = connect(fd, address, length);
+    if (result == 0) {
+        fprintf(stderr, "external connect succeeded for family %d\n", family);
+        failures++;
+        close(fd);
+        return;
+    }
+    if (errno == EINPROGRESS) {
+        struct pollfd poll_fd = { .fd = fd, .events = POLLOUT };
+        if (poll(&poll_fd, 1, 100) > 0) {
+            int socket_error = 0;
+            socklen_t error_length = sizeof(socket_error);
+            if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &socket_error, &error_length) == 0 && socket_error == 0) {
+                fprintf(stderr, "external async connect succeeded for family %d\n", family);
+                failures++;
+            }
+        }
+    }
+    close(fd);
+}
+
+static void verify_no_default_routes(void) {
+    FILE *routes = fopen("/proc/net/route", "r");
+    if (routes == NULL) {
+        failures++;
+        return;
+    }
+    char line[512];
+    fgets(line, sizeof(line), routes);
+    while (fgets(line, sizeof(line), routes) != NULL) {
+        char interface[64];
+        char destination[64];
+        if (sscanf(line, "%63s %63s", interface, destination) == 2 &&
+            strcmp(destination, "00000000") == 0) {
+            fprintf(stderr, "IPv4 default route visible: %s", line);
+            failures++;
+        }
+    }
+    fclose(routes);
+
+    routes = fopen("/proc/net/ipv6_route", "r");
+    if (routes == NULL) {
+        failures++;
+        return;
+    }
+    while (fgets(line, sizeof(line), routes) != NULL) {
+        char destination[65];
+        char source[65];
+        char next_hop[65];
+        char interface[64];
+        unsigned int prefix = 1;
+        unsigned int source_prefix = 1;
+        unsigned int metric, reference_count, use_count, flags;
+        if (sscanf(
+                line,
+                "%64s %x %64s %x %64s %x %x %x %x %63s",
+                destination,
+                &prefix,
+                source,
+                &source_prefix,
+                next_hop,
+                &metric,
+                &reference_count,
+                &use_count,
+                &flags,
+                interface
+            ) == 10 && prefix == 0 && strcmp(interface, "lo") != 0) {
+            fprintf(stderr, "external IPv6 default route visible: %s", line);
+            failures++;
+        }
+    }
+    fclose(routes);
+}
+
+int main(void) {
+    struct sockaddr_in ipv4 = {
+        .sin_family = AF_INET,
+        .sin_port = htons(53),
+    };
+    inet_pton(AF_INET, "1.1.1.1", &ipv4.sin_addr);
+    connect_must_fail(AF_INET, &ipv4, sizeof(ipv4));
+
+    struct sockaddr_in6 ipv6 = {
+        .sin6_family = AF_INET6,
+        .sin6_port = htons(53),
+    };
+    inet_pton(AF_INET6, "2606:4700:4700::1111", &ipv6.sin6_addr);
+    connect_must_fail(AF_INET6, &ipv6, sizeof(ipv6));
+
+    verify_no_default_routes();
+    if (access("/etc/resolv.conf", F_OK) == 0) {
+        fprintf(stderr, "resolver configuration visible\n");
+        failures++;
+    }
+    return failures == 0 ? 0 : 1;
+}
+"#;
+
 const MEMORY_PROBE_SOURCE: &str = r#"
 #include <stdlib.h>
 #include <unistd.h>
@@ -632,6 +748,68 @@ fn security_probe_records_identity_namespaces_mounts_and_limits() {
         let limit = &state.rlimits[resource];
         assert_eq!((limit.soft, limit.hard), (expected, expected));
     }
+}
+
+#[test]
+fn network_routes_dns_and_external_sockets_are_isolated() {
+    let _guard = lock_security_tests();
+    let results = execute(vec![
+        task_with_file(
+            "/usr/bin/gcc",
+            &["network_escape_probe.c", "-o", "network_escape_probe"],
+            "network_escape_probe.c",
+            NETWORK_ESCAPE_PROBE_SOURCE,
+        ),
+        task("./network_escape_probe", &[]),
+        task("/usr/bin/readlink", &["/proc/self/ns/net"]),
+    ]);
+
+    let TaskResult::Completed {
+        exit_code: compile_exit,
+        stderr: compile_stderr,
+        ..
+    } = single_result(&results[0])
+    else {
+        panic!("network probe compilation failed: {:?}", results[0]);
+    };
+    assert_eq!(*compile_exit, 0, "network probe: {compile_stderr}");
+    let TaskResult::Completed {
+        exit_code,
+        stderr,
+        stats,
+        ..
+    } = single_result(&results[1])
+    else {
+        panic!("network probe produced no result: {:?}", results[1]);
+    };
+    assert_eq!(*exit_code, 0, "network escape succeeded: {stderr}");
+    assert_eq!(stats.outcome, TaskOutcome::Exited);
+
+    let TaskResult::Completed {
+        stdout: first_namespace,
+        ..
+    } = single_result(&results[2])
+    else {
+        panic!("network namespace probe failed: {:?}", results[2]);
+    };
+    let second_results = execute(vec![task("/usr/bin/readlink", &["/proc/self/ns/net"])]);
+    let TaskResult::Completed {
+        stdout: second_namespace,
+        exit_code: second_exit,
+        ..
+    } = single_result(&second_results[0])
+    else {
+        panic!(
+            "second network namespace probe failed: {:?}",
+            second_results[0]
+        );
+    };
+    assert_eq!(*second_exit, 0);
+    assert_ne!(
+        first_namespace.trim(),
+        second_namespace.trim(),
+        "independent runtimes reused a network namespace"
+    );
 }
 
 #[test]
