@@ -360,6 +360,7 @@ pids_max: 64
 // Runtime defaults (RuntimeBuilder)
 timeout: 5 seconds
 output_limit: 1 MiB per stdout/stderr stream
+rlimits: CPU=timeout, file=64 MiB, FDs=256, stack=8 MiB, core=0
 ```
 
 ---

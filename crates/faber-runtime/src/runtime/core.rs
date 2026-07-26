@@ -272,7 +272,7 @@ impl Runtime {
                 drop(stdin_read);
 
                 // Apply security restrictions
-                if let Err(e) = Self::child_setup_security() {
+                if let Err(e) = Self::child_setup_security(timeout) {
                     eprintln!("Security setup failed: {}", e);
                     exit(126);
                 }
@@ -493,7 +493,7 @@ impl Runtime {
     }
 
     /// Set up security restrictions in child process before exec
-    fn child_setup_security() -> std::io::Result<()> {
+    fn child_setup_security(timeout: Duration) -> std::io::Result<()> {
         let unshare_flags = CloneFlags::CLONE_NEWNS;
 
         unshare(unshare_flags).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
@@ -509,6 +509,7 @@ impl Runtime {
 
         // Mount sys from oldroot (sysfs doesn't have PID-specific info)
         Self::mount_sys()?;
+        Self::apply_resource_limits(timeout)?;
 
         setgroups(&[]).map_err(std::io::Error::other)?;
 
@@ -773,6 +774,31 @@ impl Runtime {
             stdout_truncated,
             stderr_truncated,
         })
+    }
+
+    fn set_resource_limit(resource: libc::__rlimit_resource_t, value: u64) -> std::io::Result<()> {
+        let limit = libc::rlimit {
+            rlim_cur: value,
+            rlim_max: value,
+        };
+        if unsafe { libc::setrlimit(resource, &limit) } == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
+
+    fn apply_resource_limits(timeout: Duration) -> std::io::Result<()> {
+        const FILE_SIZE_LIMIT: u64 = 64 * 1024 * 1024;
+        const OPEN_FILE_LIMIT: u64 = 256;
+        const STACK_LIMIT: u64 = 8 * 1024 * 1024;
+
+        let cpu_seconds = timeout.as_secs().max(1);
+        Self::set_resource_limit(libc::RLIMIT_CPU, cpu_seconds)?;
+        Self::set_resource_limit(libc::RLIMIT_FSIZE, FILE_SIZE_LIMIT)?;
+        Self::set_resource_limit(libc::RLIMIT_NOFILE, OPEN_FILE_LIMIT)?;
+        Self::set_resource_limit(libc::RLIMIT_STACK, STACK_LIMIT)?;
+        Self::set_resource_limit(libc::RLIMIT_CORE, 0)
     }
 
     fn clear_capability_set(capability_set: CapSet, name: &str) -> std::io::Result<()> {

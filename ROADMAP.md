@@ -66,8 +66,9 @@ slice.
   zombie tests (API cancellation remains part of explicit execution outcomes)
 - [x] Mount/sys hardening: private propagation, read-only sysfs, removal of
   host fallbacks, and fail-closed tests
-- [ ] Rlimits and resource outcomes: CPU/file/FD/core/stack limits and explicit
-  OOM, PID, timeout, signal, and cleanup outcomes
+- [x] Rlimits: CPU/file/FD/core/stack limits with probe assertions
+- [ ] Resource outcomes: explicit OOM, PID, timeout, signal, output, and cleanup
+  outcomes backed by cgroup event files
 - [ ] User namespace: explicit UID/GID mappings with host-side evidence
 - [ ] Versioned seccomp profiles: compile/native policies and violation tests
 - [ ] Adversarial CI: ordinary quality gates plus disposable-VM isolation,
@@ -99,8 +100,9 @@ Complete these before accepting hostile workloads:
    cap each output stream, report truncation, and kill the full task cgroup when
    either budget is exceeded. Flood and bidirectional pipe tests cover the
    former wait-before-read deadlock.
-3. Add rlimits for file size, descriptors, core dumps, stack, and CPU time.
-   Keep cgroups as the authoritative aggregate process-tree limits.
+3. **Complete:** apply fail-closed rlimits for CPU time, file size, open file
+   descriptors, stack, and core dumps. Cgroups remain the authoritative
+   aggregate process-tree limits.
 4. **Complete:** clear supplementary groups and ambient/bounding capabilities,
    then set `NoNewPrivs` before execution. The security-state probe verifies
    every resulting kernel field.

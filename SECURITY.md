@@ -35,7 +35,8 @@ namespace flag is not sufficient evidence.
 | Syscalls | A versioned workload policy denies syscalls outside the declared profile | `apply_seccomp_filter()` remains a no-op | Not implemented |
 | Memory | The complete task process tree cannot exceed `memory.max` | `memory_cgroup_kills_a_process_that_exceeds_memory_max` | Verified baseline |
 | Process count | The complete task process tree cannot exceed `pids.max` | `pids_cgroup_enforces_the_process_limit` | Verified baseline |
-| CPU | CPU bandwidth and total CPU/wall time are independently bounded | Throttling counter and CPU-time tests pending | Partial |
+| CPU | CPU bandwidth and total CPU/wall time are independently bounded | `cpu.max`, wall timeout, and per-process `RLIMIT_CPU`; throttling counter test pending | Partial |
+| Rlimits | CPU time, file size, descriptors, stack, and core dumps have finite policy limits | Security-state probe verifies effective soft/hard values | Verified baseline |
 | Output | stdin/stdout/stderr progress concurrently and each output stream is bounded | Flood and bidirectional-pipe acceptance tests verify cgroup termination and truncation reporting | Verified baseline |
 | Cleanup | No process, cgroup, mount, or workspace survives any completion path | Failure-mode and host-observer tests pending | Partial |
 
@@ -52,8 +53,9 @@ nonzero, `NoNewPrivs` and seccomp mode were both 0, UID/GID maps still covered
 the initial user namespace, CPU/file/core limits were unlimited, and sysfs was
 writable inside the mount namespace. Privilege cleanup now produces empty
 supplementary and capability sets with `NoNewPrivs: 1`; mount hardening now
-provides private propagation and read-only sysfs without the cgroup mount.
-Later slices address the remaining observations.
+provides private propagation and read-only sysfs without the cgroup mount, and
+rlimits now bound CPU/file/FD/stack/core resources. Later slices address the
+remaining observations.
 
 ## Running verification
 
