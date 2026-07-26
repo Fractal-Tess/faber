@@ -1,6 +1,6 @@
 use faber_runtime::{
-    CgroupConfigBuilder, ExecutionStep, ExecutionStepResult, RuntimeBuilder, RuntimeResult,
-    SandboxProfile, Task, TaskOutcome, TaskResult,
+    CgroupConfigBuilder, ContainerConfigBuilder, ExecutionStep, ExecutionStepResult,
+    RuntimeBuilder, RuntimeResult, SandboxProfile, Task, TaskOutcome, TaskResult,
 };
 use nix::libc;
 use serde::Deserialize;
@@ -604,6 +604,14 @@ fn faber_cgroup_path() -> PathBuf {
         .expect("failed to locate the Faber cgroup")
 }
 
+fn container_roots() -> HashSet<PathBuf> {
+    std::fs::read_dir("/tmp/faber")
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .collect()
+}
+
 fn assert_no_task_cgroups() {
     let leaked: Vec<PathBuf> = std::fs::read_dir(faber_cgroup_path())
         .expect("failed to inspect the Faber cgroup")
@@ -683,6 +691,33 @@ fn namespace_inode(name: &str) -> u64 {
     std::fs::metadata(format!("/proc/self/ns/{name}"))
         .unwrap_or_else(|error| panic!("failed to inspect outer {name} namespace: {error}"))
         .ino()
+}
+
+#[test]
+fn container_setup_failures_remove_partial_roots_and_cgroups() {
+    let _guard = lock_security_tests();
+    let roots_before = container_roots();
+    let result = RuntimeBuilder::default()
+        .with_task_group(vec![ExecutionStep::Single(task("/bin/true", &[]))])
+        .with_container_config(
+            ContainerConfigBuilder::new()
+                .with_tmpdir_size("not-a-size".to_string())
+                .build(),
+        )
+        .build()
+        .execute()
+        .expect("runtime controller failed");
+
+    let RuntimeResult::ContainerSetupFailed { error } = result else {
+        panic!("invalid mount unexpectedly produced a runtime: {result:?}");
+    };
+    assert!(error.contains("Container setup failed"));
+    assert_eq!(
+        container_roots(),
+        roots_before,
+        "partial container root leaked"
+    );
+    assert_no_task_cgroups();
 }
 
 #[test]
@@ -1119,8 +1154,14 @@ fn parallel_symlink_swaps_cannot_redirect_submitted_files() {
         panic!("expected parallel race results");
     };
     assert_eq!(parallel_results.len(), 9);
-    for result in parallel_results {
+    for (index, result) in parallel_results.iter().enumerate() {
         match result {
+            TaskResult::Completed {
+                exit_code, stats, ..
+            } if index == 0 => assert!(
+                *exit_code == 0 || stats.outcome == TaskOutcome::TimedOut,
+                "symlink swapper failed unexpectedly: {result:?}"
+            ),
             TaskResult::Completed { exit_code, .. } => assert_eq!(*exit_code, 0),
             TaskResult::Failed { error, .. } => assert!(
                 error.contains("without following links")

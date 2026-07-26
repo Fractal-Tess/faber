@@ -1,5 +1,5 @@
 mod cache;
-mod handlers;
+pub mod handlers;
 mod middleware;
 mod router;
 mod serve;

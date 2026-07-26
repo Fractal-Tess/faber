@@ -16,3 +16,6 @@ sha2 = "0.10"
 dashmap = "6.0"
 bytes = "1.5"
 tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1.47", features = ["macros", "rt", "time"] }

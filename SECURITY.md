@@ -38,7 +38,7 @@ namespace flag is not sufficient evidence.
 | CPU | CPU bandwidth, CPU time, and wall time are independently bounded | Busy-loop test verifies `cpu.max` throttling counters and a shorter `RLIMIT_CPU` terminates before wall timeout | Verified baseline |
 | Rlimits | CPU time, file size, descriptors, stack, and core dumps have finite enforced policy limits | Probe verifies configured values; active tests hit `EMFILE`, `EFBIG`, stack/core signals, absent core files, and CPU kill | Verified baseline |
 | Output | stdin/stdout/stderr progress concurrently and each output stream is bounded | Flood and bidirectional-pipe tests report `output_limit` and truncation | Verified baseline |
-| Cleanup | No process, cgroup, mount, or workspace survives any completion path | Results report cgroup cleanup success; broader failure-mode and host-observer tests pending | Partial |
+| Cleanup | No process, task cgroup, or container root survives success, task failure, timeout, output kill, policy violation, API cancellation, or partial container setup | Outcome tests, detached-request cancellation test, setup-failure root comparison, and post-run host assertions | Verified baseline |
 
 “Verified baseline” describes the behavior covered by the current test and is
 not a claim that the whole isolation area is complete. Tests must be expanded

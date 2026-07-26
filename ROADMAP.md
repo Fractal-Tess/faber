@@ -84,7 +84,7 @@ suite because privileged Docker shares the host kernel.
 - [x] Every blocked syscall in `compile_v1` and `native_v1`
 - [x] IPv4, IPv6, route, DNS, socket, and cross-runtime network isolation
 - [x] Runtime enforcement of file-size, descriptor, CPU, stack, and core limits
-- [ ] Cancellation and setup-failure cleanup paths
+- [x] API cancellation and container setup-failure cleanup paths
 - [ ] Repeated parallel/OOM/PID/output/lifecycle stress on disposable VMs
 - [ ] Hardware/kernel evidence report and explicit untestable-risk register
 

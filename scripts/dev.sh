@@ -145,7 +145,8 @@ case "${1:-}" in
     test-security)
         setup_cgroups
         compose build faber
-        compose run --rm --no-TTY faber cargo test -p faber-runtime --test security_acceptance -- --test-threads=1
+        compose run --rm --no-TTY faber bash -lc \
+            'cargo test -p faber-runtime --test security_acceptance -- --test-threads=1 && cargo test -p faber-api --test cancellation -- --test-threads=1'
         ;;
     status)
         compose ps
