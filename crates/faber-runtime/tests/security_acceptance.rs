@@ -241,18 +241,14 @@ fn security_probe_records_identity_namespaces_mounts_and_limits() {
     assert_eq!((state.uid, state.euid), (65534, 65534));
     assert_eq!((state.gid, state.egid), (65534, 65534));
 
-    for capability_set in ["CapInh:", "CapPrm:", "CapEff:", "CapAmb:"] {
+    for capability_set in ["CapInh:", "CapPrm:", "CapEff:", "CapBnd:", "CapAmb:"] {
         assert_eq!(
             status_field(&state.status, capability_set),
             "0000000000000000",
             "{capability_set} was not cleared"
         );
     }
-    u64::from_str_radix(status_field(&state.status, "CapBnd:"), 16)
-        .expect("CapBnd was not hexadecimal");
-    status_field(&state.status, "NoNewPrivs:")
-        .parse::<u8>()
-        .expect("NoNewPrivs was not numeric");
+    assert_eq!(status_field(&state.status, "NoNewPrivs:"), "1");
     status_field(&state.status, "Seccomp:")
         .parse::<u8>()
         .expect("Seccomp was not numeric");
@@ -274,7 +270,11 @@ fn security_probe_records_identity_namespaces_mounts_and_limits() {
 
     assert!(!state.uid_map.trim().is_empty(), "missing UID map evidence");
     assert!(!state.gid_map.trim().is_empty(), "missing GID map evidence");
-    let _ = &state.groups;
+    assert!(
+        state.groups.is_empty(),
+        "supplementary groups were not cleared: {:?}",
+        state.groups
+    );
     assert!(
         state.cgroup.contains("task-"),
         "unexpected cgroup: {}",

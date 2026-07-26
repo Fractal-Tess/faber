@@ -30,8 +30,8 @@ namespace flag is not sufficient evidence.
 | Root filesystem | The old root is detached, outer-root files are hidden, and toolchain mounts cannot be modified | `filesystem_hides_outer_root_and_keeps_toolchains_read_only`; `test_toolchain_mounts_are_read_only` | Verified baseline |
 | PID/proc | Host processes are absent from procfs and all descendants are reaped and killed at teardown | `test_pid_namespace_isolation` and the security-state probe cover visibility; descendant/reaper tests pending | Partial |
 | Network | Tasks have no host or external connectivity over IPv4 or IPv6 | Interface smoke test exists; route, DNS, socket, and cross-task tests pending | Partial |
-| User identity | Task IDs map to an unprivileged host UID/GID and supplementary groups are empty | Security-state probe records IDs, maps, and groups; user namespace and group cleanup pending | Not implemented |
-| Privileges | Effective, permitted, inheritable, ambient, and bounding capabilities are empty; `NoNewPrivs` is set | Security-state probe verifies effective/permitted/inheritable/ambient sets and records bounding/NNP state | Partial |
+| User identity | Task IDs map to an unprivileged host UID/GID and supplementary groups are empty | Security-state probe verifies 65534:65534 and an empty supplementary-group list; user namespace pending | Partial |
+| Privileges | Effective, permitted, inheritable, ambient, and bounding capabilities are empty; `NoNewPrivs` is set | Security-state probe verifies all five capability sets and `NoNewPrivs: 1` | Verified baseline |
 | Syscalls | A versioned workload policy denies syscalls outside the declared profile | `apply_seccomp_filter()` remains a no-op | Not implemented |
 | Memory | The complete task process tree cannot exceed `memory.max` | `memory_cgroup_kills_a_process_that_exceeds_memory_max` | Verified baseline |
 | Process count | The complete task process tree cannot exceed `pids.max` | `pids_cgroup_enforces_the_process_limit` | Verified baseline |
@@ -50,8 +50,9 @@ untrusted process after security setup. The initial privileged-Docker baseline
 confirmed the expected gaps: supplementary group 0 remained, `CapBnd` was
 nonzero, `NoNewPrivs` and seccomp mode were both 0, UID/GID maps still covered
 the initial user namespace, CPU/file/core limits were unlimited, and sysfs was
-writable inside the mount namespace. Later slices turn each applicable
-observation into a passing hardened invariant.
+writable inside the mount namespace. Privilege cleanup now produces empty
+supplementary and capability sets with `NoNewPrivs: 1`; later slices address the
+remaining observations.
 
 ## Running verification
 

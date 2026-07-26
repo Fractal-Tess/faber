@@ -16,7 +16,7 @@ use nix::{
     libc,
     sched::{CloneFlags, unshare},
     sys::wait::{WaitPidFlag, WaitStatus, waitpid},
-    unistd::{ForkResult, Pid, chdir, execvpe, fork, pipe, setgid, setuid},
+    unistd::{ForkResult, Pid, chdir, execvpe, fork, pipe, setgid, setgroups, setuid},
 };
 
 use crate::{
@@ -499,10 +499,17 @@ impl Runtime {
         // Mount sys from oldroot (sysfs doesn't have PID-specific info)
         Self::mount_sys()?;
 
-        setgid(65534.into()).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-        setuid(65534.into()).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        setgroups(&[]).map_err(std::io::Error::other)?;
 
-        Self::drop_capabilities()?;
+        // Bounding capabilities require CAP_SETPCAP to remove, so clear the
+        // Linux-specific sets before dropping the setup process's UID/GID.
+        Self::clear_linux_capability_sets()?;
+
+        setgid(65534.into()).map_err(std::io::Error::other)?;
+        setuid(65534.into()).map_err(std::io::Error::other)?;
+
+        Self::drop_posix_capabilities()?;
+        Self::set_no_new_privileges()?;
         Self::apply_seccomp_filter()?;
 
         Ok(())
@@ -604,29 +611,33 @@ impl Runtime {
         }
     }
 
-    fn drop_capabilities() -> std::io::Result<()> {
-        caps::clear(None, CapSet::Effective).map_err(|e| {
+    fn clear_capability_set(capability_set: CapSet, name: &str) -> std::io::Result<()> {
+        caps::clear(None, capability_set).map_err(|error| {
             std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
-                format!("Failed to clear effective capabilities: {}", e),
+                format!("Failed to clear {name} capabilities: {error}"),
             )
-        })?;
+        })
+    }
 
-        caps::clear(None, CapSet::Permitted).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                format!("Failed to clear permitted capabilities: {}", e),
-            )
-        })?;
+    fn clear_linux_capability_sets() -> std::io::Result<()> {
+        Self::clear_capability_set(CapSet::Ambient, "ambient")?;
+        Self::clear_capability_set(CapSet::Bounding, "bounding")
+    }
 
-        caps::clear(None, CapSet::Inheritable).map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                format!("Failed to clear inheritable capabilities: {}", e),
-            )
-        })?;
+    fn drop_posix_capabilities() -> std::io::Result<()> {
+        Self::clear_capability_set(CapSet::Effective, "effective")?;
+        Self::clear_capability_set(CapSet::Permitted, "permitted")?;
+        Self::clear_capability_set(CapSet::Inheritable, "inheritable")
+    }
 
-        Ok(())
+    fn set_no_new_privileges() -> std::io::Result<()> {
+        let result = unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
     }
 
     fn apply_seccomp_filter() -> std::io::Result<()> {

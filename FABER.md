@@ -261,10 +261,11 @@ The container root is created via `pivot_root` with:
 
 ### Security Hardening
 
-1. **UID/GID drop**: Tasks run as `nobody` (65534:65534)
-2. **Capability drop**: Effective, permitted, and inheritable capabilities are cleared
-3. **Workspace paths**: Submitted files must use normalized workspace-relative paths and cannot traverse symlinks
-4. **Seccomp**: Placeholder for syscall filtering (not yet implemented)
+1. **UID/GID drop**: Tasks run as `nobody` (65534:65534) with no supplementary groups
+2. **Capability drop**: Effective, permitted, inheritable, ambient, and bounding sets are cleared
+3. **Privilege lock**: `NoNewPrivs` prevents privilege gain across `execve`
+4. **Workspace paths**: Submitted files must use normalized workspace-relative paths and cannot traverse symlinks
+5. **Seccomp**: Placeholder for syscall filtering (not yet implemented)
 
 ---
 

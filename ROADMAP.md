@@ -58,7 +58,7 @@ slice.
   safe workspace files, and real memory/PID enforcement tests
 - [x] Security-state probe: identity maps, groups, capabilities, `NoNewPrivs`,
   seccomp, namespaces, mounts, routes, rlimits, and cgroup membership
-- [ ] Privilege cleanup: supplementary groups, ambient/bounding capabilities,
+- [x] Privilege cleanup: supplementary groups, ambient/bounding capabilities,
   and `NoNewPrivs`
 - [ ] Bounded process I/O: concurrent draining, stream limits, truncation, and
   output-limit tests
@@ -100,8 +100,9 @@ Complete these before accepting hostile workloads:
    The current wait-before-read flow can deadlock when a pipe fills.
 3. Add rlimits for file size, descriptors, core dumps, stack, and CPU time.
    Keep cgroups as the authoritative aggregate process-tree limits.
-4. Clear supplementary groups, ambient capabilities, and the capability
-   bounding set before execution.
+4. **Complete:** clear supplementary groups and ambient/bounding capabilities,
+   then set `NoNewPrivs` before execution. The security-state probe verifies
+   every resulting kernel field.
 5. Replace the sleeping namespace init with a signal-aware PID 1 that reaps all
    descendants and terminates the full task cgroup on timeout or cancellation.
 6. Remove host `/sys` fallbacks or expose only a minimal read-only subset. All
