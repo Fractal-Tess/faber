@@ -69,12 +69,12 @@ slice.
   outcomes backed by cgroup event files
 - [x] User namespace: explicit UID/GID mappings with controller-side evidence
 - [x] Versioned seccomp profiles: compile/native policies and violation tests
-- [ ] Adversarial CI: ordinary quality gates plus disposable-VM isolation,
+- [x] Adversarial CI: ordinary quality gates plus disposable-VM isolation,
   lifecycle, and concurrency suites
 
 ## Phase 0: reproducible development
 
-Status: local Docker workflow complete; CI expansion remains planned.
+Status: Docker workflow and pull-request CI complete.
 
 - Use rootful Docker; reject rootless Docker because nested mount operations do
   not receive the required capabilities.
@@ -82,8 +82,8 @@ Status: local Docker workflow complete; CI expansion remains planned.
 - Keep Cargo target, registry, and git data in named volumes.
 - Run the same privileged/cgroup configuration in development and integration
   tests.
-- Planned: add Rust format, Clippy, unit, container integration, SDK, and docs
-  checks to pull-request CI.
+- GitHub Actions gates containerized Rust format/Clippy, SDK type-check/tests,
+  docs builds, and the full sandbox suite on a disposable rootful-Docker VM.
 
 ## Phase 1: close immediate containment gaps
 

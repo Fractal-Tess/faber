@@ -2,7 +2,7 @@ use crate::config::StoreConfig;
 use crate::error::{StoreError, StoreResult};
 use crate::lru::LruCache;
 use crate::store::FileStore;
-use crate::types::{compute_file_id, FileInfo, FileId, FileMetadata, StoredFile, UploadResult};
+use crate::types::{FileId, FileInfo, FileMetadata, StoredFile, UploadResult, compute_file_id};
 use async_trait::async_trait;
 use bytes::Bytes;
 use dashmap::DashMap;
@@ -62,7 +62,12 @@ impl HybridStore {
         Ok(())
     }
 
-    async fn store_to_disk(&self, id: &FileId, content: &[u8], metadata: &FileMetadata) -> StoreResult<()> {
+    async fn store_to_disk(
+        &self,
+        id: &FileId,
+        content: &[u8],
+        metadata: &FileMetadata,
+    ) -> StoreResult<()> {
         self.ensure_prefix_dirs(id).await?;
 
         let file_path = self.get_file_path(id);

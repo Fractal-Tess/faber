@@ -96,17 +96,11 @@ async fn test_filesystem_list() {
     let content2 = Bytes::from("File 2");
 
     let result1 = store
-        .put(
-            content1,
-            FileMetadata::new(6).with_filename("file1.txt"),
-        )
+        .put(content1, FileMetadata::new(6).with_filename("file1.txt"))
         .await
         .unwrap();
     let result2 = store
-        .put(
-            content2,
-            FileMetadata::new(6).with_filename("file2.txt"),
-        )
+        .put(content2, FileMetadata::new(6).with_filename("file2.txt"))
         .await
         .unwrap();
 

@@ -10,11 +10,11 @@ use axum::{
 fn constant_time_eq(a: &str, b: &str) -> bool {
     let a_bytes = a.as_bytes();
     let b_bytes = b.as_bytes();
-    
+
     if a_bytes.len() != b_bytes.len() {
         return false;
     }
-    
+
     let mut result: u8 = 0;
     for i in 0..a_bytes.len() {
         result |= a_bytes[i] ^ b_bytes[i];

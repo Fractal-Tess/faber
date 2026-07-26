@@ -6,10 +6,10 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "bunx astro dev",
-    "start": "bunx astro dev",
-    "build": "bunx astro build",
-    "preview": "bunx astro preview"
+    "dev": "node node_modules/astro/astro.js dev",
+    "start": "node node_modules/astro/astro.js dev",
+    "build": "node node_modules/astro/astro.js build",
+    "preview": "node node_modules/astro/astro.js preview"
   },
   "dependencies": {
     "@astrojs/starlight": "^0.37.0",

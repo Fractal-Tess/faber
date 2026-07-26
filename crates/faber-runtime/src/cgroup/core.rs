@@ -1,7 +1,7 @@
 use std::fs::{create_dir_all, read_dir, read_to_string, remove_dir, write};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::{debug, warn};
 
 use super::{config::CgroupConfig, task::TaskCgroup};

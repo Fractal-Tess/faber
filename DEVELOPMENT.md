@@ -59,6 +59,12 @@ Stop the service with:
 
 ## Tests and debugging
 
+Run formatting and Clippy checks in the development container:
+
+```bash
+./scripts/dev.sh check
+```
+
 Run Rust tests in a fresh privileged development container rather than on the
 host:
 
@@ -77,7 +83,9 @@ Both commands use a single test thread. This avoids overlapping global cgroup
 fixtures and makes lifecycle evidence deterministic; explicit concurrency
 stress tests will exercise parallel execution separately. See
 [`SECURITY.md`](SECURITY.md) for the threat model, invariant matrix, and the
-boundary between local tests and destructive disposable-VM tests.
+boundary between local tests and destructive disposable-VM tests. GitHub's
+`quality-and-security.yml` runs the complete acceptance suite on a fresh hosted
+VM and separately gates Rust, SDK, and documentation quality.
 
 Open a shell or attach GDB to the running debug process:
 

@@ -1,4 +1,4 @@
-use axum::{middleware, routing::get, routing::post, Router};
+use axum::{Router, middleware, routing::get, routing::post};
 use faber_store::FileStore;
 use std::sync::Arc;
 

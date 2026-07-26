@@ -9,7 +9,7 @@ pub use config::{BackendConfig, StoreConfig, StoreConfigBuilder};
 pub use error::{StoreError, StoreResult};
 pub use lru::LruCache;
 pub use store::FileStore;
-pub use types::{compute_file_id, FileInfo, FileId, FileMetadata, StoredFile, UploadResult};
+pub use types::{FileId, FileInfo, FileMetadata, StoredFile, UploadResult, compute_file_id};
 
 #[cfg(feature = "memory")]
 pub use backends::MemoryStore;
@@ -43,14 +43,16 @@ pub fn create_store(config: StoreConfig) -> std::sync::Arc<dyn FileStore> {
         }
 
         #[cfg(all(feature = "memory", feature = "filesystem"))]
-        config::BackendConfig::Hybrid { path, max_memory_entries, max_memory_size } => {
-            Arc::new(backends::HybridStore::new(
-                path.clone(),
-                *max_memory_entries,
-                *max_memory_size,
-                config,
-            ))
-        }
+        config::BackendConfig::Hybrid {
+            path,
+            max_memory_entries,
+            max_memory_size,
+        } => Arc::new(backends::HybridStore::new(
+            path.clone(),
+            *max_memory_entries,
+            *max_memory_size,
+            config,
+        )),
 
         #[cfg(not(all(feature = "memory", feature = "filesystem")))]
         config::BackendConfig::Hybrid { .. } => {

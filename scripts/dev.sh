@@ -96,6 +96,7 @@ Commands:
   logs          Follow service logs
   shell         Open a shell in the running dev container
   debug         Start gdb against the debug binary in the dev container
+  check         Run Rust formatting and Clippy checks in the dev container
   test          Run the Rust test suite in a fresh privileged dev container
   test-security Run focused sandbox isolation and cgroup acceptance tests
   status        Show Compose service status
@@ -122,6 +123,19 @@ case "${1:-}" in
         ;;
     debug)
         compose exec faber bash -lc 'pid="$(pgrep -n -x faber)"; exec gdb -p "$pid"'
+        ;;
+    check)
+        compose build faber
+        compose run --rm --no-TTY faber cargo fmt --all -- --check
+        compose run --rm --no-TTY faber cargo clippy --workspace --all-targets -- \
+            -D warnings \
+            -A dead-code \
+            -A clippy::collapsible-if \
+            -A clippy::io-other-error \
+            -A clippy::len-without-is-empty \
+            -A clippy::ptr-arg \
+            -A clippy::suspicious-open-options \
+            -A clippy::trim-split-whitespace
         ;;
     test)
         setup_cgroups

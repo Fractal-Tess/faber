@@ -1,5 +1,5 @@
 use faber_api::axum;
-use faber_api::{build_router, serve, ServeConfig};
+use faber_api::{ServeConfig, build_router, serve};
 use faber_store::StoreConfig;
 
 mod config;

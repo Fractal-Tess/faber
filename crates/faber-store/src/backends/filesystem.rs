@@ -1,7 +1,7 @@
 use crate::config::StoreConfig;
 use crate::error::{StoreError, StoreResult};
 use crate::store::FileStore;
-use crate::types::{compute_file_id, FileInfo, FileId, FileMetadata, StoredFile, UploadResult};
+use crate::types::{FileId, FileInfo, FileMetadata, StoredFile, UploadResult, compute_file_id};
 use async_trait::async_trait;
 use bytes::Bytes;
 use std::io::Write;
@@ -33,7 +33,10 @@ impl FilesystemStore {
     fn get_metadata_path(&self, id: &FileId) -> PathBuf {
         let hash = id.as_str();
         let prefix = &hash[..4];
-        self.base_path.join("metadata").join(prefix).join(format!("{}.json", hash))
+        self.base_path
+            .join("metadata")
+            .join(prefix)
+            .join(format!("{}.json", hash))
     }
 
     async fn ensure_prefix_dirs(&self, id: &FileId) -> StoreResult<()> {
@@ -161,7 +164,7 @@ impl FileStore for FilesystemStore {
 
     async fn list(&self) -> StoreResult<Vec<FileInfo>> {
         let files_path = self.base_path.join("files");
-        
+
         if !files_path.exists() {
             return Ok(Vec::new());
         }

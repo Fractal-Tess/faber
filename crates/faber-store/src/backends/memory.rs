@@ -1,7 +1,7 @@
 use crate::config::StoreConfig;
 use crate::error::{StoreError, StoreResult};
 use crate::store::FileStore;
-use crate::types::{compute_file_id, FileInfo, FileId, FileMetadata, StoredFile, UploadResult};
+use crate::types::{FileId, FileInfo, FileMetadata, StoredFile, UploadResult, compute_file_id};
 use async_trait::async_trait;
 use bytes::Bytes;
 use dashmap::DashMap;
@@ -26,7 +26,7 @@ impl MemoryStore {
 impl FileStore for MemoryStore {
     async fn put(&self, content: Bytes, mut metadata: FileMetadata) -> StoreResult<UploadResult> {
         let size = content.len() as u64;
-        
+
         if size > self.config.max_file_size {
             return Err(StoreError::FileTooLarge(size, self.config.max_file_size));
         }
@@ -62,9 +62,10 @@ impl FileStore for MemoryStore {
     }
 
     async fn get(&self, id: &FileId) -> StoreResult<StoredFile> {
-        let mut entry = self.files.get_mut(id).ok_or_else(|| {
-            StoreError::NotFound(id.to_string())
-        })?;
+        let mut entry = self
+            .files
+            .get_mut(id)
+            .ok_or_else(|| StoreError::NotFound(id.to_string()))?;
 
         entry.metadata.touch();
 
@@ -76,9 +77,10 @@ impl FileStore for MemoryStore {
     }
 
     async fn get_metadata(&self, id: &FileId) -> StoreResult<FileMetadata> {
-        let entry = self.files.get(id).ok_or_else(|| {
-            StoreError::NotFound(id.to_string())
-        })?;
+        let entry = self
+            .files
+            .get(id)
+            .ok_or_else(|| StoreError::NotFound(id.to_string()))?;
 
         Ok(entry.metadata.clone())
     }
@@ -107,9 +109,10 @@ impl FileStore for MemoryStore {
     }
 
     async fn touch(&self, id: &FileId) -> StoreResult<()> {
-        let mut entry = self.files.get_mut(id).ok_or_else(|| {
-            StoreError::NotFound(id.to_string())
-        })?;
+        let mut entry = self
+            .files
+            .get_mut(id)
+            .ok_or_else(|| StoreError::NotFound(id.to_string()))?;
 
         entry.metadata.touch();
 

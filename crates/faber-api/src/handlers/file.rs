@@ -1,6 +1,6 @@
 use axum::{
     extract::{Multipart, Path, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Json},
 };
 use bytes::Bytes;
@@ -52,7 +52,7 @@ pub async fn upload_file(
             "file" => {
                 filename = field.file_name().map(|s| s.to_string());
                 content_type = field.content_type().map(|s| s.to_string());
-                
+
                 let mut buffer = Vec::new();
                 let mut chunk_stream = field;
                 while let Some(chunk) = chunk_stream.chunk().await.map_err(|e| {
@@ -70,7 +70,10 @@ pub async fn upload_file(
                         return Err((
                             StatusCode::PAYLOAD_TOO_LARGE,
                             Json(ErrorResponse {
-                                error: format!("File too large. Maximum size is {} bytes", MAX_FILE_SIZE),
+                                error: format!(
+                                    "File too large. Maximum size is {} bytes",
+                                    MAX_FILE_SIZE
+                                ),
                             }),
                         ));
                     }
@@ -137,26 +140,24 @@ pub async fn download_file(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
     let file_id = faber_store::FileId::from(id);
 
-    let file = state.file_store.get(&file_id).await.map_err(|e| {
-        match e {
-            faber_store::StoreError::NotFound(_) => {
-                warn!("File not found: {}", file_id);
-                (
-                    StatusCode::NOT_FOUND,
-                    Json(ErrorResponse {
-                        error: format!("File not found: {}", file_id),
-                    }),
-                )
-            }
-            _ => {
-                error!("Failed to retrieve file: {}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: format!("Failed to retrieve file: {}", e),
-                    }),
-                )
-            }
+    let file = state.file_store.get(&file_id).await.map_err(|e| match e {
+        faber_store::StoreError::NotFound(_) => {
+            warn!("File not found: {}", file_id);
+            (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: format!("File not found: {}", file_id),
+                }),
+            )
+        }
+        _ => {
+            error!("Failed to retrieve file: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("Failed to retrieve file: {}", e),
+                }),
+            )
         }
     })?;
 

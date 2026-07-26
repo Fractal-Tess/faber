@@ -1,5 +1,5 @@
 use std::{
-    io::{pipe, PipeReader, PipeWriter},
+    io::{PipeReader, PipeWriter, pipe},
     os::fd::RawFd,
 };
 

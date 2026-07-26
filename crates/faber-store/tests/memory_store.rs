@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use faber_store::{compute_file_id, FileMetadata, FileStore, MemoryStore, StoreConfig};
+use faber_store::{FileMetadata, FileStore, MemoryStore, StoreConfig, compute_file_id};
 use std::time::Duration;
 
 #[tokio::test]
@@ -43,7 +43,12 @@ async fn test_exists() {
     let result = store.put(content, metadata).await.unwrap();
 
     assert!(store.exists(&result.file_id).await.unwrap());
-    assert!(!store.exists(&compute_file_id(b"nonexistent")).await.unwrap());
+    assert!(
+        !store
+            .exists(&compute_file_id(b"nonexistent"))
+            .await
+            .unwrap()
+    );
 }
 
 #[tokio::test]
@@ -71,17 +76,11 @@ async fn test_list() {
     let content2 = Bytes::from("File 2");
 
     let result1 = store
-        .put(
-            content1,
-            FileMetadata::new(6).with_filename("file1.txt"),
-        )
+        .put(content1, FileMetadata::new(6).with_filename("file1.txt"))
         .await
         .unwrap();
     let result2 = store
-        .put(
-            content2,
-            FileMetadata::new(6).with_filename("file2.txt"),
-        )
+        .put(content2, FileMetadata::new(6).with_filename("file2.txt"))
         .await
         .unwrap();
 
@@ -121,10 +120,7 @@ async fn test_get_nonexistent() {
 
 #[tokio::test]
 async fn test_file_too_large() {
-    let config = StoreConfig::builder()
-        .memory()
-        .max_file_size(10)
-        .build();
+    let config = StoreConfig::builder().memory().max_file_size(10).build();
     let store = MemoryStore::new(config);
     let content = Bytes::from("This is more than 10 bytes");
     let metadata = FileMetadata::new(content.len() as u64);

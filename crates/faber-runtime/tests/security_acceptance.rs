@@ -5,7 +5,7 @@ use faber_runtime::{
 use nix::libc;
 use serde::Deserialize;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     os::unix::fs::MetadataExt,
     path::PathBuf,
     sync::{Mutex, MutexGuard},
@@ -572,6 +572,46 @@ fn parallel_large_results_do_not_deadlock_result_transport() {
         assert_eq!(stdout.len(), OUTPUT_SIZE);
         assert!(!stats.stdout_truncated);
     }
+}
+
+#[test]
+fn concurrent_tasks_use_distinct_cgroups_and_cleanup_all_of_them() {
+    let _guard = lock_security_tests();
+    let parallel_tasks = (0..8)
+        .map(|_| task("/bin/sh", &["-c", "cat /proc/self/cgroup; sleep 0.05"]))
+        .collect();
+    let result = RuntimeBuilder::default()
+        .with_task_group(vec![ExecutionStep::Parallel(parallel_tasks)])
+        .with_timeout(std::time::Duration::from_secs(2))
+        .build()
+        .execute()
+        .expect("runtime execution failed");
+    let RuntimeResult::Success(results) = result else {
+        panic!("container setup failed: {result:?}");
+    };
+    assert_no_task_cgroups();
+
+    let ExecutionStepResult::Parallel(results) = &results[0] else {
+        panic!("expected parallel task results");
+    };
+    let mut memberships = HashSet::new();
+    for result in results {
+        let TaskResult::Completed {
+            stdout,
+            exit_code,
+            stats,
+            ..
+        } = result
+        else {
+            panic!("concurrent task failed: {result:?}");
+        };
+        assert_eq!(*exit_code, 0);
+        assert_eq!(stats.outcome, TaskOutcome::Exited);
+        assert!(stats.cleanup_succeeded);
+        assert!(stdout.contains("task-"), "unexpected membership: {stdout}");
+        memberships.insert(stdout.trim().to_string());
+    }
+    assert_eq!(memberships.len(), 8, "parallel tasks shared task cgroups");
 }
 
 #[test]

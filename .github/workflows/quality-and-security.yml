@@ -1,0 +1,88 @@
+name: Quality and Sandbox Security
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-quality:
+    name: Rust format and Clippy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify rootful Docker
+        run: |
+          docker info
+          ! docker info --format '{{json .SecurityOptions}}' | grep -q 'name=rootless'
+      - name: Run containerized Rust checks
+        run: ./scripts/dev.sh check
+      - name: Cleanup
+        if: always()
+        run: ./scripts/dev.sh down || true
+
+  sdk-quality:
+    name: JavaScript SDK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: sdks/js
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: sdks/js/package-lock.json
+      - run: npm ci
+      - run: npm run type-check
+      - run: npm run test
+      - run: npm run build
+
+  docs-quality:
+    name: Documentation site
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: docs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+
+  sandbox-adversarial:
+    name: Disposable VM sandbox acceptance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify disposable VM prerequisites
+        run: |
+          test -f /sys/fs/cgroup/cgroup.controllers
+          docker info
+          ! docker info --format '{{json .SecurityOptions}}' | grep -q 'name=rootless'
+      - name: Run isolation, lifecycle, resource, and concurrency suites
+        run: ./scripts/dev.sh test
+      - name: Verify and clean runtime state
+        if: always()
+        run: |
+          ./scripts/dev.sh down || true
+          leaked="$(docker ps -a --filter name=faber --format '{{.Names}}')"
+          test -z "$leaked" || { printf 'Leaked Faber containers:\n%s\n' "$leaked"; exit 1; }

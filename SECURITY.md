@@ -78,9 +78,10 @@ The test harness is single-threaded because the runtime currently forks and
 performs setup before `exec`; concurrent execution receives a separate stress
 test rather than relying on the Rust test harness's scheduling.
 
-Destructive abuse tests, mount propagation probes, aggressive fork/OOM stress,
-and future escape-oriented tests belong on disposable CI VMs. The VM must be
-destroyed after the suite. Do not run kernel exploits as sandbox tests.
+Destructive abuse tests, mount propagation probes, fork/OOM enforcement, and
+concurrent-cgroup tests run in `quality-and-security.yml` on disposable GitHub
+hosted VMs. Future escape-oriented tests belong there as well. Do not run kernel
+exploits as sandbox tests.
 
 ## Kernel evidence to capture
 
