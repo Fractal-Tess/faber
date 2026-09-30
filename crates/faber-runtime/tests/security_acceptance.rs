@@ -1861,10 +1861,10 @@ fn request_output_budget_is_shared_by_every_task() {
         };
         (stdout.len(), stats.outcome.clone())
     };
-    assert_eq!(outcome(0), (6000, TaskOutcome::Exited));
-    assert_eq!(outcome(1), (4000, TaskOutcome::OutputLimit));
-    assert_eq!(outcome(2), (0, TaskOutcome::OutputLimit));
-    assert_eq!(outcome(3), (0, TaskOutcome::Exited));
+    assert_eq!(outcome(0), (6000, TaskOutcome::Exited), "{results:?}");
+    assert_eq!(outcome(1), (4000, TaskOutcome::OutputLimit), "{results:?}");
+    assert_eq!(outcome(2), (0, TaskOutcome::OutputLimit), "{results:?}");
+    assert_eq!(outcome(3), (0, TaskOutcome::Exited), "{results:?}");
 }
 
 #[test]
@@ -2404,12 +2404,15 @@ fn file_descriptor_file_size_stack_core_and_cpu_rlimits_are_enforced() {
 
     for index in [0, 1, 2, 5] {
         let TaskResult::Completed {
-            exit_code, stderr, ..
+            exit_code,
+            stderr,
+            stats,
+            ..
         } = single_result(&results[index])
         else {
             panic!("rlimit step {index} failed: {:?}", results[index]);
         };
-        assert_eq!(*exit_code, 0, "rlimit step {index}: {stderr}");
+        assert_eq!(*exit_code, 0, "rlimit step {index}: {stderr} {stats:?}");
     }
     for (index, signal) in [(3, libc::SIGSEGV), (4, libc::SIGABRT), (6, libc::SIGKILL)] {
         let TaskResult::Completed {
@@ -2563,12 +2566,19 @@ fn request_cgroup_limits_cover_its_widest_step() {
     );
     // 16 per task plus its supervisor and init, plus the jailer.
     assert_eq!(read("pids.max"), "55");
+    // The jailer joins the supervisor leaf once it has read its job, a
+    // moment after the controller created the cgroup.
+    let jailer_joined = (0..200).any(|_| {
+        let joined = std::fs::read_to_string(request.join("supervisor/cgroup.procs"))
+            .is_ok_and(|procs| !procs.trim().is_empty());
+        if !joined {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        joined
+    });
     assert!(
-        !std::fs::read_to_string(request.join("supervisor/cgroup.procs"))
-            .expect("failed to read the supervisor cgroup")
-            .trim()
-            .is_empty(),
-        "the jailer is not in the request's supervisor cgroup"
+        jailer_joined,
+        "the jailer never joined the request's supervisor cgroup"
     );
 
     let result = runtime

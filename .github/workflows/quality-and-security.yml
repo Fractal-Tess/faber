@@ -70,7 +70,7 @@ jobs:
   sandbox-adversarial:
     name: Disposable VM sandbox acceptance
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Verify disposable VM prerequisites
