@@ -37,7 +37,7 @@ Not production-ready:
 
 - seccomp profiles are service-controlled and cover known namespace/mount/x32
   bypasses, but remain denylists rather than exhaustive syscall allowlists
-- API cancellation and disposable-VM race/concurrency stress remain incomplete
+- disposable-VM race/concurrency stress remains incomplete
 - library callers may opt out of memory ceilings, while the API service enforces
   finite memory, PID, CPU, wall-time, CPU-time, and output defaults
 - the in-memory execution cache has no TTL, bound, persistence, single-flight,

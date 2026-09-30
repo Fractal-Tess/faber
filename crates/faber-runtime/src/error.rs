@@ -101,6 +101,9 @@ pub enum FaberError {
     #[error("Failed to enable cgroup controllers:\n Error: {e}\nDetails: {details}")]
     CgroupControllerEnable { e: std::io::Error, details: String },
 
+    #[error("Execution was cancelled before it completed")]
+    Cancelled,
+
     #[error("Task exceeded timeout limit:\n Timeout: {timeout_duration:?}\nDetails: {details}")]
     TaskTimeout {
         timeout_duration: std::time::Duration,

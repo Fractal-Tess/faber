@@ -1,16 +1,6 @@
-use axum::{
-    BoxError, Json, Router,
-    error_handling::HandleErrorLayer,
-    extract::DefaultBodyLimit,
-    http::{StatusCode, header},
-    middleware,
-    response::IntoResponse,
-    routing::get,
-    routing::post,
-};
+use axum::{Router, extract::DefaultBodyLimit, middleware, routing::get, routing::post};
 use faber_store::FileStore;
 use std::sync::Arc;
-use tower::{ServiceBuilder, limit::ConcurrencyLimitLayer, load_shed::LoadShedLayer};
 
 use crate::{
     handlers,
@@ -23,7 +13,6 @@ pub fn build_router(
     cache_enabled: bool,
     file_store: Arc<dyn FileStore>,
     execution_limits: ExecutionLimits,
-    max_concurrency: usize,
 ) -> Router {
     let execute_body_limit = execution_limits.execute_body_limit;
     // Multipart framing needs a small allowance beyond the configured file payload.
@@ -37,13 +26,7 @@ pub fn build_router(
     let protected_routes = Router::new()
         .route(
             "/execute",
-            post(handlers::execute).layer(
-                ServiceBuilder::new()
-                    .layer(HandleErrorLayer::new(handle_execution_overload))
-                    .layer(LoadShedLayer::new())
-                    .layer(ConcurrencyLimitLayer::new(max_concurrency))
-                    .layer(DefaultBodyLimit::max(execute_body_limit)),
-            ),
+            post(handlers::execute).layer(DefaultBodyLimit::max(execute_body_limit)),
         )
         .route(
             "/file",
@@ -62,16 +45,6 @@ pub fn build_router(
         .with_state(state);
 
     public_routes.merge(protected_routes)
-}
-
-async fn handle_execution_overload(_error: BoxError) -> impl IntoResponse {
-    (
-        StatusCode::SERVICE_UNAVAILABLE,
-        [(header::RETRY_AFTER, "1")],
-        Json(handlers::ErrorResponse {
-            error: "Execution capacity is currently exhausted".to_string(),
-        }),
-    )
 }
 
 #[cfg(test)]
@@ -106,7 +79,6 @@ mod tests {
                 upload_file_limit: file_limit,
                 ..ExecutionLimits::default()
             },
-            10,
         );
         let request = Request::post("/file")
             .header("Authorization", "Bearer test-key")
@@ -135,8 +107,10 @@ mod tests {
             "test-key".to_string(),
             false,
             create_store(StoreConfig::default()),
-            ExecutionLimits::default(),
-            0,
+            ExecutionLimits {
+                max_concurrency: 0,
+                ..ExecutionLimits::default()
+            },
         );
         let execute = Request::post("/execute")
             .header("Authorization", "Bearer test-key")
@@ -161,7 +135,6 @@ mod tests {
             false,
             create_store(StoreConfig::default()),
             ExecutionLimits::default(),
-            1,
         );
         let request = Request::post("/execute")
             .header("Authorization", "Bearer test-key")
@@ -189,7 +162,6 @@ mod tests {
                 allowed_sandbox_profiles: vec![faber_runtime::SandboxProfile::CompileV1],
                 ..ExecutionLimits::default()
             },
-            1,
         );
         let request = Request::post("/execute")
             .header("Authorization", "Bearer test-key")

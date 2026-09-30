@@ -3,6 +3,7 @@ use faber_runtime::SandboxProfile;
 use faber_store::FileStore;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Semaphore;
 
 #[derive(Clone, Debug)]
 pub struct ExecutionLimits {
@@ -15,6 +16,10 @@ pub struct ExecutionLimits {
     pub output_limit: usize,
     pub max_steps: usize,
     pub max_parallel_tasks: usize,
+    /// Executions that may run at once. Each running execution holds a
+    /// permit until its sandbox has actually finished, not merely until its
+    /// HTTP request ends.
+    pub max_concurrency: usize,
     pub execute_body_limit: usize,
     pub upload_file_limit: usize,
     pub default_sandbox_profile: SandboxProfile,
@@ -33,6 +38,7 @@ impl Default for ExecutionLimits {
             output_limit: 1024 * 1024,
             max_steps: 64,
             max_parallel_tasks: 16,
+            max_concurrency: 10,
             execute_body_limit: 1024 * 1024,
             upload_file_limit: 50 * 1024 * 1024,
             default_sandbox_profile: SandboxProfile::CompileV1,
@@ -48,6 +54,7 @@ pub struct AppState {
     pub api_key: String,
     pub cache_enabled: bool,
     pub execution_limits: ExecutionLimits,
+    pub execution_slots: Arc<Semaphore>,
 }
 
 impl AppState {
@@ -58,6 +65,9 @@ impl AppState {
         execution_limits: ExecutionLimits,
     ) -> Self {
         Self {
+            execution_slots: Arc::new(Semaphore::new(
+                execution_limits.max_concurrency.min(Semaphore::MAX_PERMITS),
+            )),
             cache: ExecutionCache::new(),
             file_store,
             api_key,

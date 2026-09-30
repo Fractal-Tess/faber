@@ -1,9 +1,13 @@
-use axum::{Json, extract::State};
-use faber_api::{AppState, ExecutionLimits, handlers::execute};
+use axum::{Json, body::Body, extract::State, http::Request};
+use faber_api::{AppState, ExecutionLimits, build_router, handlers::execute};
 use faber_runtime::{ExecutionStep, Task};
 use faber_runtime::{ExecutionStepResult, TaskOutcome, TaskResult};
 use faber_store::{StoreConfig, create_store};
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::PathBuf,
+    time::{Duration, Instant},
+};
+use tower::ServiceExt;
 
 fn faber_cgroup_path() -> Option<PathBuf> {
     let membership = std::fs::read_to_string("/proc/self/cgroup").ok()?;
@@ -82,7 +86,7 @@ async fn api_rejects_parallel_fanout_before_execution() {
     .await;
     assert!(matches!(
         response,
-        Err((axum::http::StatusCode::UNPROCESSABLE_ENTITY, _))
+        Err(error) if error.status() == axum::http::StatusCode::UNPROCESSABLE_ENTITY
     ));
     assert!(sandbox_cgroups().is_empty());
 }
@@ -124,7 +128,7 @@ fn task_cgroups() -> Vec<PathBuf> {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn aborting_an_api_request_still_cleans_the_detached_runtime() {
+async fn aborting_an_api_request_cancels_its_sandbox() {
     let state = AppState::new(
         "test-key".to_string(),
         false,
@@ -156,6 +160,7 @@ async fn aborting_an_api_request_still_cleans_the_detached_runtime() {
     }
     assert!(observed_execution, "request never created a task cgroup");
 
+    let aborted_at = Instant::now();
     request.abort();
     assert!(
         request
@@ -164,14 +169,65 @@ async fn aborting_an_api_request_still_cleans_the_detached_runtime() {
             .is_cancelled()
     );
 
-    for _ in 0..400 {
+    // The wall timeout is 5 s; cancellation must tear the sandbox down well
+    // before that.
+    while aborted_at.elapsed() < Duration::from_millis(1500) {
         if sandbox_cgroups().is_empty() {
             return;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     panic!(
-        "detached runtime leaked task cgroups after its wall timeout: {:?}",
+        "cancelled request left its sandbox running: {:?}",
         sandbox_cgroups()
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn disconnecting_clients_cannot_exceed_the_concurrency_limit() {
+    const LIMIT: usize = 2;
+    let router = build_router(
+        "test-key".to_string(),
+        false,
+        create_store(StoreConfig::default()),
+        ExecutionLimits {
+            max_concurrency: LIMIT,
+            ..ExecutionLimits::default()
+        },
+    );
+
+    // Every 100 ms a client submits a 4 s task and disconnects after 300 ms.
+    let mut clients = Vec::new();
+    let mut peak = 0;
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(2) {
+        let request = Request::post("/execute")
+            .header("Authorization", "Bearer test-key")
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"[{"cmd":"/bin/sleep","args":["4"]}]"#))
+            .unwrap();
+        let router = router.clone();
+        clients.push(tokio::spawn(async move {
+            let _ = tokio::time::timeout(Duration::from_millis(300), router.oneshot(request)).await;
+        }));
+        for _ in 0..5 {
+            peak = peak.max(task_cgroups().len());
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+    for client in clients {
+        client.await.expect("client task panicked");
+    }
+
+    assert!(
+        peak <= LIMIT,
+        "{peak} sandboxes ran at once with a limit of {LIMIT}"
+    );
+    for _ in 0..100 {
+        if sandbox_cgroups().is_empty() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("sandboxes leaked: {:?}", sandbox_cgroups());
 }

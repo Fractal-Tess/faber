@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use crate::{
-    Runtime,
+    CancellationToken, Runtime,
     cgroup::{Cgroup, CgroupConfig},
     container::{Container, ContainerConfig},
     task::TaskGroup,
@@ -15,6 +15,7 @@ pub struct RuntimeBuilder {
     cpu_time_limit: Duration,
     output_limit: usize,
     overall_timeout: Duration,
+    cancellation: CancellationToken,
 }
 
 impl Default for RuntimeBuilder {
@@ -27,6 +28,7 @@ impl Default for RuntimeBuilder {
             cpu_time_limit: Duration::from_secs(5),
             output_limit: 1024 * 1024,
             overall_timeout: Duration::from_secs(300),
+            cancellation: CancellationToken::new(),
         }
     }
 }
@@ -67,6 +69,12 @@ impl RuntimeBuilder {
         self
     }
 
+    /// Cancel the execution through this token, e.g. when its caller goes away.
+    pub fn with_cancellation(mut self, cancellation: CancellationToken) -> Self {
+        self.cancellation = cancellation;
+        self
+    }
+
     pub fn build(self) -> Runtime {
         Runtime {
             task_group: self.task_group,
@@ -76,6 +84,7 @@ impl RuntimeBuilder {
             cpu_time_limit: self.cpu_time_limit,
             output_limit: self.output_limit,
             overall_timeout: self.overall_timeout,
+            cancellation: self.cancellation,
         }
     }
 }

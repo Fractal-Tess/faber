@@ -1,15 +1,74 @@
 use crate::{ExecutionCache, handlers::ErrorResponse, state::AppState};
-use axum::{extract::State, http::StatusCode, response::Json};
-use faber_runtime::{
-    CgroupConfigBuilder, ExecutionStep, RuntimeBuilder, RuntimeResult, TaskGroup, TaskGroupResult,
+use axum::{
+    extract::State,
+    http::{StatusCode, header},
+    response::{IntoResponse, Json, Response},
 };
+use faber_runtime::{
+    CancellationToken, CgroupConfigBuilder, ExecutionStep, FaberError, RuntimeBuilder,
+    RuntimeResult, TaskGroup, TaskGroupResult,
+};
+use tokio::sync::OwnedSemaphorePermit;
+
+/// JSON error returned by `/execute`.
+#[derive(Debug)]
+pub struct ExecuteError {
+    status: StatusCode,
+    message: String,
+    retry_after: Option<u32>,
+}
+
+impl ExecuteError {
+    fn new(status: StatusCode, message: impl Into<String>) -> Self {
+        Self {
+            status,
+            message: message.into(),
+            retry_after: None,
+        }
+    }
+
+    pub fn status(&self) -> StatusCode {
+        self.status
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl IntoResponse for ExecuteError {
+    fn into_response(self) -> Response {
+        let body = Json(ErrorResponse {
+            error: self.message,
+        });
+        match self.retry_after {
+            Some(seconds) => (
+                self.status,
+                [(header::RETRY_AFTER, seconds.to_string())],
+                body,
+            )
+                .into_response(),
+            None => (self.status, body).into_response(),
+        }
+    }
+}
+
+/// Cancels the sandbox when the handler future is dropped, which happens when
+/// the client disconnects. Cancelling a finished execution is a no-op.
+struct CancelOnDrop(CancellationToken);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.cancel();
+    }
+}
 
 pub async fn execute(
     State(app_state): State<AppState>,
     Json(mut task_group): Json<TaskGroup>,
-) -> Result<Json<TaskGroupResult>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<TaskGroupResult>, ExecuteError> {
     if task_group.is_empty() {
-        return Err(execute_error(
+        return Err(ExecuteError::new(
             StatusCode::BAD_REQUEST,
             "Task group cannot be empty",
         ));
@@ -19,7 +78,7 @@ pub async fn execute(
             matches!(step, ExecutionStep::Parallel(tasks) if tasks.len() > app_state.execution_limits.max_parallel_tasks)
         })
     {
-        return Err(execute_error(
+        return Err(ExecuteError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             "Task group exceeds configured execution limits",
         ));
@@ -38,7 +97,7 @@ pub async fn execute(
                 .allowed_sandbox_profiles
                 .contains(&profile)
             {
-                return Err(execute_error(
+                return Err(ExecuteError::new(
                     StatusCode::UNPROCESSABLE_ENTITY,
                     "Requested sandbox profile is not allowed by service policy",
                 ));
@@ -47,10 +106,10 @@ pub async fn execute(
         }
     }
 
-    if app_state.cache_enabled {
+    let cache_key = if app_state.cache_enabled {
         let task_hash = ExecutionCache::generate_hash(&task_group).map_err(|error| {
             tracing::error!(%error, "failed to serialize task group for cache key");
-            execute_error(
+            ExecuteError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Execution request failed",
             )
@@ -58,27 +117,39 @@ pub async fn execute(
         if let Some(cached_result) = app_state.cache.try_from_hash(&task_hash) {
             return Ok(Json(cached_result));
         }
-        return execute_uncached(
-            task_group,
-            app_state.execution_limits,
-            Some((app_state.cache, task_hash)),
-        )
-        .await;
-    }
+        Some((app_state.cache.clone(), task_hash))
+    } else {
+        None
+    };
 
-    execute_uncached(task_group, app_state.execution_limits, None).await
+    let permit = app_state
+        .execution_slots
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| ExecuteError {
+            retry_after: Some(1),
+            ..ExecuteError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Execution capacity is currently exhausted",
+            )
+        })?;
+
+    execute_uncached(task_group, app_state.execution_limits, cache_key, permit).await
 }
 
 async fn execute_uncached(
     task_group: TaskGroup,
     limits: crate::ExecutionLimits,
     cache: Option<(ExecutionCache, String)>,
-) -> Result<Json<TaskGroupResult>, (StatusCode, Json<ErrorResponse>)> {
+    permit: OwnedSemaphorePermit,
+) -> Result<Json<TaskGroupResult>, ExecuteError> {
     let cgroup_config = CgroupConfigBuilder::new()
         .with_memory(limits.memory_max)
         .with_pids(limits.pids_max)
         .with_cpu(limits.cpu_max)
         .build();
+    let cancellation = CancellationToken::new();
+    let _cancel_on_drop = CancelOnDrop(cancellation.clone());
     let runtime = RuntimeBuilder::default()
         .with_task_group(task_group)
         .with_cgroup_config(cgroup_config)
@@ -86,16 +157,22 @@ async fn execute_uncached(
         .with_cpu_time_limit(limits.cpu_time_limit)
         .with_output_limit(limits.output_limit)
         .with_overall_timeout(limits.overall_timeout)
+        .with_cancellation(cancellation)
         .build();
-    let result = tokio::task::spawn_blocking(move || runtime.execute())
-        .await
-        .map_err(|error| {
-            tracing::error!(%error, "runtime worker failed");
-            execute_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Execution request failed",
-            )
-        })?;
+    // The permit moves into the blocking closure so the slot stays taken
+    // until the sandbox has really finished, even if this future is dropped.
+    let result = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        runtime.execute()
+    })
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, "runtime worker failed");
+        ExecuteError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Execution request failed",
+        )
+    })?;
 
     match result {
         Ok(RuntimeResult::Success(task_group_result)) => {
@@ -106,26 +183,24 @@ async fn execute_uncached(
         }
         Ok(RuntimeResult::ContainerSetupFailed { error }) => {
             tracing::error!(%error, "container setup failed");
-            Err(execute_error(
+            Err(ExecuteError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Sandbox setup failed",
             ))
         }
+        Err(FaberError::Cancelled) => {
+            tracing::info!("execution cancelled");
+            Err(ExecuteError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Execution was cancelled",
+            ))
+        }
         Err(error) => {
             tracing::error!(%error, "runtime execution failed");
-            Err(execute_error(
+            Err(ExecuteError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Execution request failed",
             ))
         }
     }
-}
-
-fn execute_error(status: StatusCode, message: &str) -> (StatusCode, Json<ErrorResponse>) {
-    (
-        status,
-        Json(ErrorResponse {
-            error: message.to_string(),
-        }),
-    )
 }

@@ -24,6 +24,7 @@ type RlimitResource = libc::__rlimit_resource_t;
 type RlimitResource = libc::c_int;
 
 use crate::{
+    CancellationToken,
     cgroup::{Cgroup, request::RequestCgroup, task::TaskCgroup},
     container::Container,
     prelude::*,
@@ -40,6 +41,7 @@ pub struct Runtime {
     pub(crate) cpu_time_limit: Duration,
     pub(crate) output_limit: usize,
     pub(crate) overall_timeout: Duration,
+    pub(crate) cancellation: CancellationToken,
 }
 
 struct CollectedOutput {
@@ -71,6 +73,9 @@ impl Runtime {
     }
 
     pub fn execute(&self) -> Result<RuntimeResult> {
+        if self.cancellation.is_cancelled() {
+            return Err(FaberError::Cancelled);
+        }
         Cgroup::ensure_faber_cgroup_hierarchy()?;
         let faber_cgroup_path = Cgroup::get_faber_cgroup_path()?;
         let request_cgroup = self.cgroup.create_request_cgroup(&faber_cgroup_path)?;
@@ -150,6 +155,11 @@ impl Runtime {
                 // The execution child is gone but a descendant still holds
                 // the result pipe; nothing further will be written to it.
                 Self::terminate_request(child, request_cgroup, true);
+            }
+
+            if self.cancellation.is_cancelled() {
+                Self::terminate_request(child, request_cgroup, child_exited);
+                return Err(FaberError::Cancelled);
             }
 
             let now = Instant::now();

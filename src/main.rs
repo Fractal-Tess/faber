@@ -20,7 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     Runtime::configure_service_limits(
         &config.execution_limits.memory_max,
         config.execution_limits.pids_max,
-        config.max_concurrency,
+        config.execution_limits.max_concurrency,
     )?;
 
     let mut store_config = match &config.store_backend {
@@ -43,7 +43,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         config.cache_enabled,
         file_store,
         config.execution_limits,
-        config.max_concurrency,
     );
     let router = axum::Router::new().nest("/api/v1", router);
 

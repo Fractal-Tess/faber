@@ -44,7 +44,8 @@ namespace flag is not sufficient evidence.
 | Rlimits | CPU time, file size, descriptors, stack, and core dumps have finite enforced policy limits | Probe verifies configured values; active tests hit `EMFILE`, `EFBIG`, stack/core signals, absent core files, and CPU kill | Verified baseline |
 | Output | stdin/stdout/stderr progress concurrently and each output stream is bounded | Flood and bidirectional-pipe tests report `output_limit` and truncation | Verified baseline |
 | Request scoping | Each execution owns a `faber/req-<id>` cgroup containing all of its task cgroups; a request's overall-deadline kill is confined to that subtree and cannot terminate another request's tasks | Concurrent-request deadline test asserts the unrelated request exits normally | Verified baseline |
-| Cleanup | No process, request or task cgroup, or container root survives success, task failure, timeout, output kill, policy violation, API cancellation, or partial container setup | Outcome tests, detached-request cancellation test, setup-failure root comparison, and post-run host assertions | Verified baseline |
+| Admission | A client disconnect neither frees its concurrency slot nor leaves its sandbox running: the slot is held until the runtime returns and the disconnect cancels the request cgroup | Disconnecting-client test bounds live sandboxes by the limit; abort test requires teardown well before the wall timeout | Verified baseline |
+| Cleanup | No process, request or task cgroup, or container root survives success, task failure, timeout, output kill, policy violation, API cancellation, or partial container setup | Outcome tests, request cancellation test, setup-failure root comparison, and post-run host assertions | Verified baseline |
 
 “Verified baseline” describes the behavior covered by the current test and is
 not a claim that the whole isolation area is complete. Tests must be expanded

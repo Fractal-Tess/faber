@@ -29,7 +29,7 @@ kernel and CI environments; it is not a proof against unknown kernel defects.
 | Timeout teardown | Atomic `cgroup.kill`, fork-successor stdout holders, bounded pipe grace, overall execution deadline scoped to its own request cgroup, no leaked request or task cgroups |
 | CPU and rlimits | `cpu.max` throttling counters, independent `RLIMIT_CPU`, `EMFILE`, `EFBIG`, stack signal, zero core files |
 | I/O | stdout/stderr floods, binary-size caps, truncation reporting, concurrent stdin/stdout, large parallel result transport, 16 MiB result transport-time bound |
-| Lifecycle | Timeout, signal, output kill, policy kill, setup failure, detached API request, cgroup/root cleanup, concurrent distinct cgroups |
+| Lifecycle | Timeout, signal, output kill, policy kill, setup failure, cancelled API request torn down immediately, disconnecting clients held to the concurrency limit, cgroup/root cleanup, concurrent distinct cgroups |
 
 ## Deliberately excluded from privileged-container tests
 
@@ -51,8 +51,6 @@ suite must not be represented as protection from host-kernel compromise.
 
 - Seccomp profiles are versioned denylists, not exhaustive allowlists.
 - ARM64 is build-tested but not runtime-tested.
-- API cancellation detaches the blocking runtime; cleanup is verified after the
-  configured wall timeout rather than immediate cooperative cancellation.
 - The API still forks from a multithreaded service process and performs setup
   before `exec`. Forked paths now avoid inherited mutex acquisition, use `_exit`,
   and cannot return into Tokio, but these mitigations do not make non-async-signal-

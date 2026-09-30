@@ -8,7 +8,6 @@ use faber_runtime::SandboxProfile;
 pub struct Config {
     pub port: u16,
     pub host: String,
-    pub max_concurrency: usize,
     pub api_key: String,
     pub cache_enabled: bool,
     pub store_backend: StoreBackend,
@@ -33,7 +32,6 @@ impl Config {
         Ok(Config {
             port: Self::load_port()?,
             host: Self::load_host(),
-            max_concurrency: Self::load_max_concurrency()?,
             api_key: Self::load_api_key()?,
             cache_enabled: Self::load_cache_enabled(),
             store_backend: Self::load_store_backend(),
@@ -48,11 +46,6 @@ impl Config {
 
     fn load_host() -> String {
         env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string())
-    }
-
-    fn load_max_concurrency() -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
-        let concurrency_str = env::var("MAX_CONCURRENCY").unwrap_or_else(|_| "10".to_string());
-        concurrency_str.parse::<usize>().map_err(|e| e.into())
     }
 
     fn load_api_key() -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
@@ -97,6 +90,7 @@ impl Config {
             output_limit: Self::load_env("OUTPUT_LIMIT_BYTES", 1024 * 1024)?,
             max_steps: Self::load_env("MAX_STEPS_PER_REQUEST", 64)?,
             max_parallel_tasks: Self::load_env("MAX_PARALLEL_TASKS", 16)?,
+            max_concurrency: Self::load_env("MAX_CONCURRENCY", 10)?,
             execute_body_limit: Self::load_env("EXECUTE_BODY_LIMIT_BYTES", 1024 * 1024)?,
             upload_file_limit: Self::load_env("UPLOAD_FILE_LIMIT_BYTES", 50 * 1024 * 1024)?,
             default_sandbox_profile,
