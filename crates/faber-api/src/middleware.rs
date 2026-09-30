@@ -1,10 +1,11 @@
-use crate::state::AppState;
+use crate::{handlers::ErrorResponse, state::AppState};
 use axum::{
+    Json,
     body::Body,
     extract::State,
-    http::{Request, StatusCode},
+    http::{Request, StatusCode, header},
     middleware::Next,
-    response::Response,
+    response::{IntoResponse, Response},
 };
 
 fn constant_time_eq(a: &str, b: &str) -> bool {
@@ -26,15 +27,22 @@ pub async fn api_key_middleware(
     State(app_state): State<AppState>,
     request: Request<Body>,
     next: Next,
-) -> Result<Response, StatusCode> {
+) -> Response {
     if let Some(auth_header) = request.headers().get("Authorization")
         && let Ok(auth_str) = auth_header.to_str()
     {
         let token = auth_str.strip_prefix("Bearer ").unwrap_or(auth_str);
         if constant_time_eq(token, &app_state.api_key) {
-            return Ok(next.run(request).await);
+            return next.run(request).await;
         }
     }
 
-    Err(StatusCode::UNAUTHORIZED)
+    (
+        StatusCode::UNAUTHORIZED,
+        [(header::WWW_AUTHENTICATE, "Bearer")],
+        Json(ErrorResponse {
+            error: "Missing or invalid API key".to_string(),
+        }),
+    )
+        .into_response()
 }

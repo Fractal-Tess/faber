@@ -168,6 +168,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn unauthorized_requests_use_json_shape() {
+        let router = build_router(
+            "test-key".to_string(),
+            false,
+            create_store(StoreConfig::default()),
+            ExecutionLimits::default(),
+        );
+        for authorization in [None, Some("Bearer wrong-key")] {
+            let mut request = Request::get("/file");
+            if let Some(value) = authorization {
+                request = request.header("Authorization", value);
+            }
+            let response = router
+                .clone()
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+            let body = axum::body::to_bytes(response.into_body(), 1024)
+                .await
+                .unwrap();
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+                serde_json::json!({"error": "Missing or invalid API key"})
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn execute_validation_errors_use_json_shape() {
         let router = build_router(
             "test-key".to_string(),
