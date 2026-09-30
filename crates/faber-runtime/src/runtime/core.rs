@@ -775,6 +775,10 @@ impl Runtime {
     }
 
     fn write_workspace_file(file_path: &str, content: &[u8]) -> Result<()> {
+        // Submitted files and the directories created for them belong to the
+        // task identity, so the task can modify and extend nested layouts.
+        const TASK_ID: libc::uid_t = 65534;
+
         let path = Path::new(file_path);
         if file_path.is_empty()
             || path.is_absolute()
@@ -787,6 +791,19 @@ impl Runtime {
                 details: "paths must be normalized and relative to the workspace".to_string(),
             });
         }
+        let component_cstr = |component: &std::ffi::OsStr| {
+            CString::new(component.as_bytes()).map_err(|_| FaberError::InvalidTaskFilePath {
+                path: file_path.to_string(),
+                details: "paths cannot contain NUL bytes".to_string(),
+            })
+        };
+        let components: Vec<&std::ffi::OsStr> = path
+            .components()
+            .map(|component| component.as_os_str())
+            .collect();
+        let Some((file_name, directories)) = components.split_last() else {
+            unreachable!("task path was checked to be non-empty");
+        };
 
         let workspace = OpenOptions::new()
             .read(true)
@@ -796,13 +813,107 @@ impl Runtime {
                 e,
                 details: "Failed to open the task workspace".to_string(),
             })?;
-        let path_cstr = CString::new(path.as_os_str().as_bytes()).map_err(|_| {
-            FaberError::InvalidTaskFilePath {
-                path: file_path.to_string(),
-                details: "paths cannot contain NUL bytes".to_string(),
+
+        // Walk one component at a time. Each directory is created and then
+        // opened relative to the descriptor of its already verified parent,
+        // so a concurrent task swapping a component for a symlink cannot make
+        // this root-privileged walk resolve anywhere else.
+        let mut parent = std::os::fd::OwnedFd::from(workspace);
+        let mut created_path = std::path::PathBuf::new();
+        for directory in directories {
+            created_path.push(directory);
+            let name = component_cstr(directory)?;
+            let created = unsafe { libc::mkdirat(parent.as_raw_fd(), name.as_ptr(), 0o755) } == 0;
+            if !created
+                && std::io::Error::last_os_error().kind() != std::io::ErrorKind::AlreadyExists
+            {
+                return Err(FaberError::WriteFile {
+                    e: std::io::Error::last_os_error(),
+                    details: format!(
+                        "Failed to create task directory '{}'",
+                        created_path.display()
+                    ),
+                });
             }
+
+            let directory_fd = Self::open_beneath(
+                &parent,
+                &name,
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+                0,
+            )
+            .map_err(|e| FaberError::WriteFile {
+                e,
+                details: format!(
+                    "Refused task directory '{}' because it is not safely beneath the workspace without following links",
+                    created_path.display()
+                ),
+            })?;
+            if created && unsafe { libc::fchown(directory_fd.as_raw_fd(), TASK_ID, TASK_ID) } != 0 {
+                return Err(FaberError::WriteFile {
+                    e: std::io::Error::last_os_error(),
+                    details: format!(
+                        "Failed to hand task directory '{}' to the task user",
+                        created_path.display()
+                    ),
+                });
+            }
+            parent = directory_fd;
+        }
+
+        let name = component_cstr(file_name)?;
+        let file_fd = Self::open_beneath(
+            &parent,
+            &name,
+            libc::O_WRONLY
+                | libc::O_CREAT
+                | libc::O_TRUNC
+                | libc::O_CLOEXEC
+                | libc::O_NOFOLLOW
+                | libc::O_NONBLOCK,
+            0o644,
+        )
+        .map_err(|e| FaberError::WriteFile {
+            e,
+            details: format!(
+                "Refused to open task file '{file_path}' beneath the workspace without following links"
+            ),
         })?;
 
+        let mut file = std::fs::File::from(file_fd);
+        let metadata = file.metadata().map_err(|e| FaberError::WriteFile {
+            e,
+            details: format!("Failed to inspect task file '{file_path}'"),
+        })?;
+        if !metadata.is_file() {
+            return Err(FaberError::InvalidTaskFilePath {
+                path: file_path.to_string(),
+                details: "task file targets must be regular files".to_string(),
+            });
+        }
+        if unsafe { libc::fchown(file.as_raw_fd(), TASK_ID, TASK_ID) } != 0 {
+            return Err(FaberError::WriteFile {
+                e: std::io::Error::last_os_error(),
+                details: format!("Failed to hand task file '{file_path}' to the task user"),
+            });
+        }
+
+        file.write_all(content).map_err(|e| FaberError::WriteFile {
+            e,
+            details: format!("Failed to write task file '{file_path}'"),
+        })?;
+
+        Ok(())
+    }
+
+    /// Open a single path component beneath `parent` with openat2(2), refusing
+    /// symlinks, magic links and mount crossings.
+    fn open_beneath(
+        parent: &std::os::fd::OwnedFd,
+        name: &CString,
+        flags: i32,
+        mode: u64,
+    ) -> std::io::Result<std::os::fd::OwnedFd> {
         #[repr(C)]
         struct OpenHow {
             flags: u64,
@@ -817,110 +928,27 @@ impl Runtime {
         const RESOLVE_NO_SYMLINKS: u64 = 0x04;
         const RESOLVE_BENEATH: u64 = 0x08;
 
-        let mut parent = Path::new("").to_path_buf();
-        if let Some(components) = path.parent() {
-            for component in components.components() {
-                let Component::Normal(component) = component else {
-                    unreachable!("task path was normalized above");
-                };
-                parent.push(component);
-                let parent_cstr = CString::new(parent.as_os_str().as_bytes()).map_err(|_| {
-                    FaberError::InvalidTaskFilePath {
-                        path: file_path.to_string(),
-                        details: "paths cannot contain NUL bytes".to_string(),
-                    }
-                })?;
-                let mkdir_result =
-                    unsafe { libc::mkdirat(workspace.as_raw_fd(), parent_cstr.as_ptr(), 0o755) };
-                if mkdir_result < 0
-                    && std::io::Error::last_os_error().kind() != std::io::ErrorKind::AlreadyExists
-                {
-                    return Err(FaberError::WriteFile {
-                        e: std::io::Error::last_os_error(),
-                        details: format!("Failed to create task directory '{}'", parent.display()),
-                    });
-                }
-
-                let directory_how = OpenHow {
-                    flags: (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64,
-                    mode: 0,
-                    resolve: RESOLVE_NO_XDEV
-                        | RESOLVE_NO_MAGICLINKS
-                        | RESOLVE_NO_SYMLINKS
-                        | RESOLVE_BENEATH,
-                };
-                let directory_fd = unsafe {
-                    libc::syscall(
-                        libc::SYS_openat2,
-                        workspace.as_raw_fd(),
-                        parent_cstr.as_ptr(),
-                        &directory_how,
-                        std::mem::size_of::<OpenHow>(),
-                    )
-                };
-                if directory_fd < 0 {
-                    return Err(FaberError::WriteFile {
-                        e: std::io::Error::last_os_error(),
-                        details: format!(
-                            "Refused task directory '{}' because it is not safely beneath the workspace without following links",
-                            parent.display()
-                        ),
-                    });
-                }
-                unsafe { libc::close(directory_fd as i32) };
-            }
-        }
-
         let how = OpenHow {
-            flags: (libc::O_WRONLY
-                | libc::O_CREAT
-                | libc::O_TRUNC
-                | libc::O_CLOEXEC
-                | libc::O_NOFOLLOW
-                | libc::O_NONBLOCK) as u64,
-            mode: 0o644,
+            flags: flags as u64,
+            mode,
             resolve: RESOLVE_NO_XDEV
                 | RESOLVE_NO_MAGICLINKS
                 | RESOLVE_NO_SYMLINKS
                 | RESOLVE_BENEATH,
         };
-
         let fd = unsafe {
             libc::syscall(
                 libc::SYS_openat2,
-                workspace.as_raw_fd(),
-                path_cstr.as_ptr(),
+                parent.as_raw_fd(),
+                name.as_ptr(),
                 &how,
                 std::mem::size_of::<OpenHow>(),
             )
         };
         if fd < 0 {
-            return Err(FaberError::WriteFile {
-                e: std::io::Error::last_os_error(),
-                details: format!(
-                    "Refused to open task file '{file_path}' beneath the workspace without following links"
-                ),
-            });
+            return Err(std::io::Error::last_os_error());
         }
-
-        let mut file = unsafe { std::fs::File::from_raw_fd(fd as i32) };
-        let metadata = file.metadata().map_err(|e| FaberError::WriteFile {
-            e,
-            details: format!("Failed to inspect task file '{file_path}'"),
-        })?;
-        if !metadata.is_file() {
-            return Err(FaberError::InvalidTaskFilePath {
-                path: file_path.to_string(),
-                details: "task file targets must be regular files".to_string(),
-            });
-        }
-
-        file.write_all(content).map_err(|e| FaberError::WriteFile {
-            e,
-            details: format!("Failed to write task file '{file_path}'"),
-        })?;
-
-        Ok(())
+        Ok(unsafe { std::os::fd::OwnedFd::from_raw_fd(fd as i32) })
     }
 
     /// Set up security restrictions in child process before exec

@@ -1344,6 +1344,129 @@ fn parallel_symlink_swaps_cannot_redirect_submitted_files() {
     );
 }
 
+const DIRECTORY_SWAPPER_SOURCE: &str = r#"
+#define _GNU_SOURCE
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/syscall.h>
+#include <time.h>
+#include <unistd.h>
+
+#ifndef RENAME_EXCHANGE
+#define RENAME_EXCHANGE (1 << 1)
+#endif
+
+static double now(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec + ts.tv_nsec / 1e9;
+}
+
+int main(void) {
+    if (symlink("/tmp", "race-alt") != 0) {
+        return 1;
+    }
+    double deadline = now() + 1.5;
+    while (now() < deadline) {
+        for (int i = 0; i < 1000; i++) {
+            syscall(SYS_renameat2, AT_FDCWD, "race", AT_FDCWD, "race-alt", RENAME_EXCHANGE);
+        }
+    }
+    struct stat st;
+    if (lstat("race", &st) == 0 && S_ISLNK(st.st_mode)) {
+        syscall(SYS_renameat2, AT_FDCWD, "race", AT_FDCWD, "race-alt", RENAME_EXCHANGE);
+    }
+    return 0;
+}
+"#;
+
+#[test]
+fn parallel_symlink_swaps_cannot_redirect_nested_directory_creation() {
+    let _guard = lock_security_tests();
+    // The swapper atomically exchanges the `race` directory with a symlink to
+    // /tmp while other tasks materialize nested files beneath `race`. A walk
+    // that resolves accumulated paths from the workspace root would create
+    // directories in /tmp through the symlink.
+    let mut parallel_tasks = vec![task("./directory_swapper", &[])];
+    let content = "x".repeat(512 * 1024);
+    for index in 0..12 {
+        let files = (0..16)
+            .map(|file| {
+                (
+                    format!("race/deep-{index}-{file}/deeper/payload"),
+                    content.clone(),
+                )
+            })
+            .collect();
+        parallel_tasks.push(Task {
+            files: Some(files),
+            ..task("/bin/true", &[])
+        });
+    }
+
+    let result = RuntimeBuilder::default()
+        .with_task_group(vec![
+            ExecutionStep::Single(task_with_file(
+                "/bin/sh",
+                &[
+                    "-c",
+                    "mkdir race && exec /usr/bin/gcc directory_swapper.c -o directory_swapper",
+                ],
+                "directory_swapper.c",
+                DIRECTORY_SWAPPER_SOURCE,
+            )),
+            ExecutionStep::Parallel(parallel_tasks),
+            ExecutionStep::Single(task(
+                "/bin/sh",
+                &["-c", "set -- /tmp/deep-*; test \"$1\" = '/tmp/deep-*'"],
+            )),
+        ])
+        .with_timeout(std::time::Duration::from_secs(5))
+        .build()
+        .execute()
+        .expect("runtime execution failed");
+    let RuntimeResult::Success(results) = result else {
+        panic!("container setup failed: {result:?}");
+    };
+    assert_no_task_cgroups();
+
+    let TaskResult::Completed {
+        exit_code, stderr, ..
+    } = single_result(&results[0])
+    else {
+        panic!("swapper build failed: {:?}", results[0]);
+    };
+    assert_eq!(*exit_code, 0, "{stderr}");
+    let ExecutionStepResult::Parallel(parallel_results) = &results[1] else {
+        panic!("expected parallel race results");
+    };
+    let TaskResult::Completed { exit_code, .. } = &parallel_results[0] else {
+        panic!("swapper failed: {:?}", parallel_results[0]);
+    };
+    assert_eq!(*exit_code, 0);
+    for result in &parallel_results[1..] {
+        match result {
+            TaskResult::Completed { exit_code, .. } => assert_eq!(*exit_code, 0),
+            TaskResult::Failed { error, .. } => assert!(
+                error.contains("without following links")
+                    || error.contains("Failed to create task directory")
+                    || error.contains("Failed to write task file"),
+                "unexpected race rejection: {error}"
+            ),
+        }
+    }
+    let TaskResult::Completed {
+        exit_code, stderr, ..
+    } = single_result(&results[2])
+    else {
+        panic!("race escape check failed: {:?}", results[2]);
+    };
+    assert_eq!(
+        *exit_code, 0,
+        "a task directory was created through a swapped symlink in /tmp: {stderr}"
+    );
+}
+
 #[test]
 fn output_streams_are_drained_bounded_and_report_truncation() {
     let _guard = lock_security_tests();

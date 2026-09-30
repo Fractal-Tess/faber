@@ -379,6 +379,45 @@ fn test_nested_submitted_file_paths() {
 }
 
 #[test]
+fn test_nested_submitted_directories_are_writable_by_the_task() {
+    let mut files = HashMap::new();
+    files.insert("build/x.txt".to_string(), "a\n".to_string());
+    let task = Task {
+        cmd: "/bin/sh".to_string(),
+        args: Some(vec![
+            "-c".to_string(),
+            "touch build/y && echo b >> build/x.txt && mkdir build/sub && cat build/x.txt"
+                .to_string(),
+        ]),
+        env: None,
+        stdin: None,
+        files: Some(files),
+        working_dir: None,
+        sandbox_profile: None,
+    };
+
+    let result = RuntimeBuilder::default()
+        .with_task_group(vec![ExecutionStep::Single(task)])
+        .build()
+        .execute()
+        .expect("runtime execution failed");
+    let RuntimeResult::Success(results) = result else {
+        panic!("container setup failed: {result:?}");
+    };
+    let ExecutionStepResult::Single(TaskResult::Completed {
+        stdout,
+        stderr,
+        exit_code,
+        ..
+    }) = &results[0]
+    else {
+        panic!("nested directory task did not complete: {:?}", results[0]);
+    };
+    assert_eq!(*exit_code, 0, "{stderr}");
+    assert_eq!(stdout, "a\nb\n");
+}
+
+#[test]
 fn test_network_isolation() {
     let task = Task {
         cmd: "/bin/sh".to_string(),

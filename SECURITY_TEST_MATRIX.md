@@ -18,7 +18,7 @@ kernel and CI environments; it is not a proof against unknown kernel defects.
 
 | Attack family | Probes and evidence |
 |---|---|
-| Submitted paths | Absolute paths, `..`, symlinks, proc magic links, cross-mount hard links, directories, FIFOs, Unix sockets, devices, and parallel symlink swaps |
+| Submitted paths | Absolute paths, `..`, symlinks, proc magic links, cross-mount hard links, directories, FIFOs, Unix sockets, devices, parallel symlink swaps, and atomic `RENAME_EXCHANGE` swaps during nested directory creation |
 | Root and mounts | Outer-root marker, old-root absence, private propagation, read-only toolchains/sysfs, absent cgroup filesystem, `nodev,nosuid` writable tmpfs mounts |
 | Identity | UID/GID map comparison, supplementary groups, setuid/setgid/setgroups regain, map rewriting, chroot, hostname changes, capability and ambient-capability regain |
 | Process visibility | PID namespace inode, bounded procfs process list, protected namespace PID 1, denied `/proc/1/root`, orphan/double-fork reaping |
