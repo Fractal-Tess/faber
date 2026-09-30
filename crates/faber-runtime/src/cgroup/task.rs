@@ -1,6 +1,6 @@
 use std::fs::{File, create_dir_all, read_to_string, remove_dir, write};
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
@@ -29,16 +29,11 @@ impl Drop for TaskCgroup {
             self.kill_all_processes().ok();
             thread::sleep(Duration::from_millis(10 * (attempt + 1)));
         }
-        eprintln!(
-            "Warning: Failed to cleanup task cgroup after all retries: {}",
-            self.task_cgroup_path.display()
-        );
     }
 }
 
 impl TaskCgroup {
-    pub fn new(config: CgroupConfig) -> Result<Self> {
-        let faber_cgroup_path = super::core::Cgroup::get_faber_cgroup_path()?;
+    pub fn new(config: CgroupConfig, faber_cgroup_path: &Path) -> Result<Self> {
         let task_id = generate_random_string(16);
         let task_cgroup_path =
             faber_cgroup_path.join(format!("task-{}-{task_id}", std::process::id()));

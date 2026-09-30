@@ -1,5 +1,5 @@
 use std::fs::{create_dir_all, read_dir, read_to_string, remove_dir, write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tracing::{debug, warn};
 
@@ -200,7 +200,7 @@ impl Cgroup {
         Ok(())
     }
 
-    pub fn create_task_cgroup(&self) -> Result<TaskCgroup> {
-        TaskCgroup::new(self.config.clone())
+    pub fn create_task_cgroup(&self, faber_cgroup_path: &Path) -> Result<TaskCgroup> {
+        TaskCgroup::new(self.config.clone(), faber_cgroup_path)
     }
 }

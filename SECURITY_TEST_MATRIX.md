@@ -53,6 +53,9 @@ suite must not be represented as protection from host-kernel compromise.
 - API cancellation detaches the blocking runtime; cleanup is verified after the
   configured wall timeout rather than immediate cooperative cancellation.
 - The API still forks from a multithreaded service process and performs setup
-  before `exec`; a dedicated single-threaded jailer remains the safer design.
+  before `exec`. Forked paths now avoid inherited mutex acquisition, use `_exit`,
+  and cannot return into Tokio, but these mitigations do not make non-async-signal-
+  safe Rust setup code safe after a multithreaded fork. A dedicated single-threaded
+  jailer remains the required architectural fix.
 - Namespace isolation cannot prevent kernel vulnerabilities or all denial-of-service
   and microarchitectural attacks.

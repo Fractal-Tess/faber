@@ -7,7 +7,6 @@ use std::{
         unix::{ffi::OsStrExt, fs::OpenOptionsExt},
     },
     path::{Component, Path},
-    process::exit,
     time::Duration,
 };
 
@@ -60,16 +59,17 @@ impl Runtime {
 
     pub fn execute(&self) -> Result<RuntimeResult> {
         Cgroup::ensure_faber_cgroup_hierarchy()?;
+        let faber_cgroup_path = Cgroup::get_faber_cgroup_path()?;
 
         let (reader, writer) = mk_pipe()?;
 
         match unsafe { fork() } {
             Ok(ForkResult::Child) => {
-                close_fd(reader.into_raw_fd())?;
+                drop(reader);
 
-                let runtime_result = self.execution_child();
+                let runtime_result = self.execution_child(&faber_cgroup_path);
                 let _ = serde_json::to_writer(writer, &runtime_result);
-                exit(0);
+                Self::child_exit(0);
             }
             Ok(ForkResult::Parent { child }) => {
                 close_fd(writer.into_raw_fd())?;
@@ -92,7 +92,7 @@ impl Runtime {
         }
     }
 
-    fn execution_child(&self) -> RuntimeResult {
+    fn execution_child(&self, faber_cgroup_path: &Path) -> RuntimeResult {
         if let Err(e) = self.container.setup() {
             return RuntimeResult::ContainerSetupFailed {
                 error: format!("Container setup failed: {}", e),
@@ -119,8 +119,12 @@ impl Runtime {
 
         for step in &self.task_group {
             let result = match step {
-                ExecutionStep::Single(task) => self.execute_single(task.clone()),
-                ExecutionStep::Parallel(tasks) => self.execute_parallel(tasks.clone()),
+                ExecutionStep::Single(task) => {
+                    self.execute_single(task.clone(), faber_cgroup_path)
+                }
+                ExecutionStep::Parallel(tasks) => {
+                    self.execute_parallel(tasks.clone(), faber_cgroup_path)
+                }
             };
             results.push(result);
         }
@@ -141,20 +145,21 @@ impl Runtime {
                 Ok(_) => {}
                 Err(nix::errno::Errno::EINTR) => {}
                 Err(error) => {
-                    eprintln!("Namespace init failed to reap a descendant: {error}");
-                    exit(125);
+                    let _ = error;
+                    Self::child_exit(125);
                 }
             }
         }
     }
 
-    fn execute_single(&self, task: Task) -> ExecutionStepResult {
+    fn execute_single(&self, task: Task, faber_cgroup_path: &Path) -> ExecutionStepResult {
         match Self::execute_single_task(
             task,
             &self.cgroup,
             self.timeout,
             self.cpu_time_limit,
             self.output_limit,
+            faber_cgroup_path,
         ) {
             Ok(task_result) => ExecutionStepResult::Single(task_result),
             Err(e) => ExecutionStepResult::Single(TaskResult::Failed {
@@ -164,7 +169,7 @@ impl Runtime {
         }
     }
 
-    fn execute_parallel(&self, tasks: Vec<Task>) -> ExecutionStepResult {
+    fn execute_parallel(&self, tasks: Vec<Task>, faber_cgroup_path: &Path) -> ExecutionStepResult {
         // Cannot use std::thread::spawn after unshare(CLONE_NEWPID) because
         // the kernel rejects CLONE_THREAD when pid_ns_for_children differs
         // from the active PID namespace (EINVAL). Use fork + pipes instead.
@@ -191,6 +196,7 @@ impl Runtime {
                         self.timeout,
                         self.cpu_time_limit,
                         self.output_limit,
+                        faber_cgroup_path,
                     ) {
                         Ok(task_result) => task_result,
                         Err(e) => TaskResult::Failed {
@@ -199,7 +205,7 @@ impl Runtime {
                         },
                     };
                     let _ = serde_json::to_writer(writer, &result);
-                    exit(0);
+                    Self::child_exit(0);
                 }
                 Ok(ForkResult::Parent { child }) => {
                     drop(writer);
@@ -237,13 +243,14 @@ impl Runtime {
         timeout: std::time::Duration,
         cpu_time_limit: std::time::Duration,
         output_limit: usize,
+        faber_cgroup_path: &Path,
     ) -> Result<TaskResult> {
         use std::time::Instant;
 
         let start_time = Instant::now();
 
         // Create task cgroup before fork
-        let task_cgroup = cgroup.create_task_cgroup()?;
+        let task_cgroup = cgroup.create_task_cgroup(faber_cgroup_path)?;
 
         // Materialize files relative to the workspace without following links.
         // This happens before privilege dropping, so path resolution must fail closed.
@@ -280,9 +287,8 @@ impl Runtime {
                 // FIRST: Add self to cgroup BEFORE any other work
                 // This ensures resource limits apply from the start
                 let my_pid = std::process::id();
-                if let Err(e) = task_cgroup.add_process(my_pid) {
-                    eprintln!("Failed to add process to cgroup: {}", e);
-                    exit(127);
+                if task_cgroup.add_process(my_pid).is_err() {
+                    Self::child_exit(127);
                 }
 
                 let proc_pid = match std::fs::read_link("/proc/self")
@@ -290,7 +296,7 @@ impl Runtime {
                     .and_then(|path| path.to_string_lossy().parse::<u32>().ok())
                 {
                     Some(pid) => pid,
-                    None => exit(126),
+                    None => Self::child_exit(126),
                 };
 
                 // Close read ends of pipes in child
@@ -313,15 +319,16 @@ impl Runtime {
                 drop(stdin_read);
 
                 // Apply security restrictions
-                if let Err(e) = Self::child_setup_security(
+                if Self::child_setup_security(
                     cpu_time_limit,
                     user_ready_write.into(),
                     user_continue_read.into(),
                     proc_pid,
                     sandbox_profile,
-                ) {
-                    eprintln!("Security setup failed: {}", e);
-                    exit(126);
+                )
+                .is_err()
+                {
+                    Self::child_exit(126);
                 }
 
                 // Change working directory if specified
@@ -329,13 +336,11 @@ impl Runtime {
                     let dir_cstr = match CString::new(working_dir.clone()) {
                         Ok(c) => c,
                         Err(_) => {
-                            eprintln!("Invalid working directory path");
-                            exit(127);
+                            Self::child_exit(127);
                         }
                     };
-                    if let Err(e) = chdir(dir_cstr.as_c_str()) {
-                        eprintln!("Failed to change directory to {}: {}", working_dir, e);
-                        exit(127);
+                    if chdir(dir_cstr.as_c_str()).is_err() {
+                        Self::child_exit(127);
                     }
                 }
 
@@ -366,7 +371,7 @@ impl Runtime {
                 // Build args
                 let cmd_cstr = match CString::new(task.cmd.clone()) {
                     Ok(c) => c,
-                    Err(_) => exit(127),
+                    Err(_) => Self::child_exit(127),
                 };
 
                 let mut args_cstr: Vec<CString> = vec![cmd_cstr.clone()];
@@ -391,7 +396,7 @@ impl Runtime {
                 let _ = execvpe(&cmd_cstr, &args_cstr, &env_cstr);
 
                 // If exec fails, exit with error
-                exit(127);
+                Self::child_exit(127);
             }
             Ok(ForkResult::Parent { child }) => {
                 // Close write ends of pipes in parent
@@ -421,19 +426,13 @@ impl Runtime {
                 // Measure resources
                 let task_stats = match task_cgroup.measure_resources() {
                     Ok(stats) => stats,
-                    Err(e) => {
-                        eprintln!("Warning: Failed to measure resources: {}", e);
-                        Default::default()
-                    }
+                    Err(_) => Default::default(),
                 };
 
                 let events = task_cgroup.measure_events();
                 let cleanup_succeeded = match task_cgroup.cleanup() {
                     Ok(()) => true,
-                    Err(e) => {
-                        eprintln!("Warning: Failed to cleanup task cgroup: {}", e);
-                        false
-                    }
+                    Err(_) => false,
                 };
                 let outcome = if collected.timed_out {
                     TaskOutcome::TimedOut
@@ -476,6 +475,10 @@ impl Runtime {
             }
             Err(e) => Err(FaberError::Fork { e }),
         }
+    }
+
+    fn child_exit(code: i32) -> ! {
+        unsafe { libc::_exit(code) }
     }
 
     fn write_workspace_file(file_path: &str, content: &[u8]) -> Result<()> {
