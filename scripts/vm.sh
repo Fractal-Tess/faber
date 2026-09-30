@@ -14,6 +14,7 @@ RUN_DIR="$STATE_DIR/last-run"
 SHARED_DIR="$RUN_DIR/shared"
 DISK_IMAGE="$STATE_DIR/disk.qcow2"
 HOST_PORT="${FABER_PORT:-3000}"
+DEMO_PORT="${FABER_PORT:-3300}"
 COMPOSE='docker compose -f docker/dev/docker-compose.yaml'
 
 usage() {
@@ -21,13 +22,16 @@ usage() {
 Usage: scripts/vm.sh <command> [--online]
 
 Commands:
-  prepare        Build the dev image and compile the tests (needs network;
-                 runs no Faber code)
+  prepare        Build the dev and production images and compile the tests
+                 (needs network; runs no Faber code)
   check          scripts/dev.sh check inside the guest
   test           scripts/dev.sh test inside the guest
   test-security  scripts/dev.sh test-security inside the guest
   test-stress    scripts/dev.sh test-stress inside the guest (STRESS_ROUNDS)
+  test-docker    scripts/test-docker.sh against the production image
   up             Serve the dev API on 127.0.0.1:$FABER_PORT until interrupted
+  demo           Serve demo/compose.yaml (production image) on
+                 127.0.0.1:${FABER_PORT:-3300} until interrupted
   exec <script>  Run a host script as root inside the guest, from /faber-src
   shell          Root console in the guest (poweroff to leave)
   reset          Delete the guest disk and its caches
@@ -73,6 +77,7 @@ vm_env() {
         online) ;;
         offline) net_opts='restrict=on' ;;
         forward) net_opts="restrict=on,hostfwd=tcp:127.0.0.1:${HOST_PORT}-:3000" ;;
+        forward-demo) net_opts="restrict=on,hostfwd=tcp:127.0.0.1:${DEMO_PORT}-:3300" ;;
     esac
 
     # The pinned QEMU must not pick up libraries from the caller's session.
@@ -156,7 +161,7 @@ case "$command" in
         printf 'Removed %s\n' "$STATE_DIR"
         exit 0
         ;;
-    prepare | check | test | test-security | test-stress | up | exec | shell) ;;
+    prepare | check | test | test-security | test-stress | test-docker | up | demo | exec | shell) ;;
     *)
         usage
         exit 2
@@ -183,6 +188,8 @@ case "$command" in
 set -Eeuo pipefail
 $COMPOSE build faber
 $COMPOSE run --rm --no-TTY faber cargo test --workspace --no-run
+docker build -f docker/prod/Dockerfile -t faber-test:latest .
+docker tag faber-test:latest vgfractal/faber:latest
 EOF
         run_job online "$limit"
         ;;
@@ -193,6 +200,23 @@ $offline_env
 exec ./scripts/dev.sh $command
 EOF
         run_job "$network" "$limit"
+        ;;
+    test-docker)
+        cat >"$job" <<EOF
+$offline_env
+exec ./scripts/test-docker.sh
+EOF
+        run_job "$network" "$limit"
+        ;;
+    demo)
+        [[ "$network" == offline ]] && network=forward-demo
+        cat >"$job" <<EOF
+export FABER_BIND_ADDRESS=0.0.0.0 FABER_PORT=3300
+docker compose -f demo/compose.yaml up --detach
+exec docker compose -f demo/compose.yaml logs --follow faber
+EOF
+        printf 'Forwarding http://127.0.0.1:%s/api/v1 to the demo in the guest. Interrupt to stop.\n' "$DEMO_PORT"
+        run_job "$network" 0
         ;;
     up)
         [[ "$network" == offline ]] && network=forward

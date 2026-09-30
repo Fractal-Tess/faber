@@ -17,11 +17,11 @@ NC='\033[0m'
 API_KEY="${API_KEY:-test-key-123}"
 PORT="${PORT:-3000}"
 
-# Build the Docker image
+# Build the Docker image. FABER_SKIP_IMAGE_BUILD reuses an existing
+# faber-test:latest (scripts/vm.sh builds it while online).
 echo "[1/3] Building Faber Docker image..."
-docker build -f docker/prod/Dockerfile -t faber-test:latest . 2>&1 | tail -10
-
-if [ $? -ne 0 ]; then
+if [ -z "${FABER_SKIP_IMAGE_BUILD:-}" ] && \
+    ! docker build -f docker/prod/Dockerfile -t faber-test:latest . 2>&1 | tail -10; then
     echo -e "${RED}Failed to build Docker image${NC}"
     exit 1
 fi
@@ -31,7 +31,7 @@ echo ""
 
 # Run the container in background
 echo "[2/3] Starting Faber container..."
-CONTAINER_ID=$(sudo docker run -d \
+CONTAINER_ID=$(docker run -d \
     --privileged \
     --cgroupns=host \
     -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
@@ -51,8 +51,8 @@ echo -e "${GREEN}✓ Container started: $CONTAINER_ID${NC}"
 cleanup() {
     echo ""
     echo "[3/3] Cleaning up..."
-    sudo docker stop $CONTAINER_ID > /dev/null 2>&1 || true
-    sudo docker rm $CONTAINER_ID > /dev/null 2>&1 || true
+    docker stop $CONTAINER_ID > /dev/null 2>&1 || true
+    docker rm $CONTAINER_ID > /dev/null 2>&1 || true
     echo -e "${GREEN}✓ Cleanup complete${NC}"
 }
 
