@@ -8,8 +8,8 @@ both without depending on the NixOS host layout.
 ## Prerequisites
 
 - Rootful Docker with the Compose plugin
-- Linux 5.6 or newer with cgroup v2 (`openat2` is required and fails closed when unavailable)
-- Permission to use Docker and `sudo` for one-time cgroup setup
+- Linux 5.8 or newer with cgroup v2 (`openat2` and procfs `subset=pid` are required and fail closed when unavailable)
+- Permission to use Docker
 
 Rootless Docker is not sufficient. Its `privileged` containers cannot acquire
 the mount capabilities Faber needs for nested PID and mount namespaces. The

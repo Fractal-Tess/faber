@@ -280,12 +280,10 @@ Check cgroup setup:
 ```bash
 # Host must have cgroup v2
 ls /sys/fs/cgroup/cgroup.controllers
-
-# Pre-create faber cgroup
-sudo mkdir -p /sys/fs/cgroup/faber
-sudo chmod 777 /sys/fs/cgroup/faber
-echo "+cpu +memory +pids" | sudo tee /sys/fs/cgroup/faber/cgroup.subtree_control
 ```
+
+Faber creates its cgroups inside the container's own cgroup (`<container cgroup>/faber/req-*/task-*`); nothing has to be created on the host. The container needs `--privileged`,
+`--cgroupns=host` and `-v /sys/fs/cgroup:/sys/fs/cgroup:rw`.
 
 ### Out of Memory
 

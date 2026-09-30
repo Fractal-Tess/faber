@@ -58,6 +58,8 @@ Faber runs commands in isolated Linux containers using namespaces and cgroups v2
 | Symbol | Type | Location | Role |
 |--------|------|----------|------|
 | `Runtime` | struct | `faber-runtime/src/runtime/core.rs` | Main execution engine |
+| `JailerJob` | struct | `faber-runtime/src/runtime/jailer.rs` | Request handed to the re-executed jailer process |
+| `SandboxIdentity` | struct | `faber-runtime/src/runtime/identity.rs` | Per-request host UID/GID lease |
 | `Container` | struct | `faber-runtime/src/container/core.rs` | Namespace isolation |
 | `Cgroup` | struct | `faber-runtime/src/cgroup/core.rs` | Resource limits and hierarchy |
 | `ExecutionStep` | enum | `faber-runtime/src/task.rs` | Task vs parallel tasks |
@@ -103,7 +105,7 @@ Faber runs commands in isolated Linux containers using namespaces and cgroups v2
 Faber **MUST** run inside a Docker container and **NEVER** directly on the host. Running on the host causes permission errors and cgroup failures.
 
 ### Why Docker-Only?
-- **Cgroup Permissions**: Faber needs to write to `/sys/fs/cgroup/faber/` which requires container-level isolation
+- **Cgroup Permissions**: Faber creates cgroups beneath its container's own cgroup, which requires a privileged container with the host cgroup tree
 - **Permission Errors**: Running on host produces: `Failed to set memory.max to 'max' in faber cgroup: Permission denied (os error 13)`
 - **Namespace Isolation**: Required for proper process and resource isolation
 
@@ -142,14 +144,13 @@ RUN apt-get update && apt-get install -y \
 - **Run Faber directly on the host** - Always use Docker (see Critical Deployment Rule above)
 - Run Docker without `--privileged --cgroupns=host` (Faber requires host cgroup access)
 - Use `as any` or `@ts-ignore` in TypeScript (strict types enforced)
-- Skip cgroup setup before running tests (causes ENOMEM errors)
 - Commit without conventional format (`type: description`)
 
 **ALWAYS:**
 - Use type aliases, never interfaces (TypeScript)
 - Run `cargo build` before commit (Rust validation)
 - Use TaskBuilder for complex task sequences (SDK)
-- Clean up cgroup directories after testing (`/sys/fs/cgroup/faber/req-*/task-*`)
+- Run privileged tests through `scripts/vm.sh` (disposable VM) rather than on the host kernel
 
 ---
 
@@ -159,7 +160,7 @@ RUN apt-get update && apt-get install -y \
 # Rust Backend
 cargo build --release    # Production build
 cargo test               # Run tests
-cargo run                # Dev server (requires cgroup setup)
+cargo run                # Dev server (inside the dev container only)
 
 # JS SDK (cd sdks/js)
 npm run build            # Build CJS/ESM/IIFE
@@ -181,12 +182,8 @@ npm run build            # Static site
 
 ## Critical Requirements
 
-### Cgroup Setup (Required Before Running)
-```bash
-sudo mkdir -p /sys/fs/cgroup/faber
-sudo chmod 0755 /sys/fs/cgroup/faber
-echo "+cpu +memory +pids" | sudo tee /sys/fs/cgroup/faber/cgroup.subtree_control
-```
+### Cgroups
+Faber creates its cgroups inside the container's own cgroup (`<container cgroup>/faber/req-*/task-*`); nothing has to be created on the host.
 
 ### Docker Requirements
 - `--privileged` flag required

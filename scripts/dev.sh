@@ -4,7 +4,6 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="$ROOT_DIR/docker/dev/docker-compose.yaml"
-CGROUP_ROOT="/sys/fs/cgroup/faber"
 HOST_PORT="${FABER_PORT:-3000}"
 DOCKER=(docker)
 
@@ -36,38 +35,12 @@ require_docker() {
     fi
 }
 
-as_root() {
-    if [[ ${EUID} -eq 0 ]]; then
-        "$@"
-    elif command -v sudo >/dev/null 2>&1; then
-        sudo "$@"
-    else
-        printf 'Root access is required to configure %s.\n' "$CGROUP_ROOT" >&2
-        exit 1
-    fi
-}
-
-setup_cgroups() {
+# Faber builds its cgroup hierarchy inside the container's own cgroup, so
+# nothing has to be created on the host beforehand.
+require_cgroup_v2() {
     if [[ ! -f /sys/fs/cgroup/cgroup.controllers ]]; then
         printf '%s\n' 'Faber requires a cgroup v2 host.' >&2
         exit 1
-    fi
-
-    as_root mkdir -p "$CGROUP_ROOT"
-    as_root chmod 0755 "$CGROUP_ROOT"
-
-    local controllers
-    controllers="$(< /sys/fs/cgroup/cgroup.controllers)"
-    local requested=()
-    local controller
-    for controller in cpu memory pids; do
-        if [[ " $controllers " == *" $controller "* ]]; then
-            requested+=("+$controller")
-        fi
-    done
-
-    if ((${#requested[@]})); then
-        as_root sh -c "printf '%s' '${requested[*]}' > '$CGROUP_ROOT/cgroup.subtree_control'"
     fi
 }
 
@@ -97,7 +70,7 @@ usage() {
 Usage: scripts/dev.sh <command>
 
 Commands:
-  up            Configure cgroup v2 and start the hot-reloading dev service
+  up            Start the hot-reloading dev service
   down          Stop the dev service
   logs          Follow service logs
   shell         Open a shell in the running dev container
@@ -114,7 +87,7 @@ require_docker
 
 case "${1:-}" in
     up)
-        setup_cgroups
+        require_cgroup_v2
         build_image
         compose up --detach
         wait_until_healthy
@@ -145,18 +118,18 @@ case "${1:-}" in
             -A clippy::trim-split-whitespace
         ;;
     test)
-        setup_cgroups
+        require_cgroup_v2
         build_image
         compose run --rm --no-TTY faber cargo test --workspace -- --test-threads=1
         ;;
     test-security)
-        setup_cgroups
+        require_cgroup_v2
         build_image
         compose run --rm --no-TTY faber bash -lc \
             'cargo test -p faber-runtime --test security_acceptance -- --test-threads=1 && cargo test -p faber-runtime --test shutdown && cargo test -p faber-api --test cancellation -- --test-threads=1'
         ;;
     test-stress)
-        setup_cgroups
+        require_cgroup_v2
         build_image
         compose run --rm --no-TTY -e STRESS_ROUNDS="${STRESS_ROUNDS:-3}" faber bash -lc \
             'set -Eeuo pipefail; for round in $(seq 1 "$STRESS_ROUNDS"); do echo "=== adversarial round $round/$STRESS_ROUNDS ==="; cargo test -p faber-runtime --test security_acceptance -- --test-threads=1; cargo test -p faber-runtime --test shutdown; cargo test -p faber-api --test cancellation -- --test-threads=1; done'

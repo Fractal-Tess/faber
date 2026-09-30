@@ -18,7 +18,7 @@ API_KEY="${API_KEY:-test-key-123}"
 PORT="${PORT:-3000}"
 
 # Build the Docker image
-echo "[1/4] Building Faber Docker image..."
+echo "[1/3] Building Faber Docker image..."
 docker build -f docker/prod/Dockerfile -t faber-test:latest . 2>&1 | tail -10
 
 if [ $? -ne 0 ]; then
@@ -29,16 +29,8 @@ fi
 echo -e "${GREEN}✓ Docker image built${NC}"
 echo ""
 
-# Setup cgroup hierarchy (required for faber to work)
-echo "[2/4] Setting up cgroup hierarchy..."
-sudo mkdir -p /sys/fs/cgroup/faber 2>/dev/null || true
-sudo chmod 777 /sys/fs/cgroup/faber 2>/dev/null || true
-echo "+cpu +memory +pids" | sudo tee /sys/fs/cgroup/faber/cgroup.subtree_control 2>/dev/null || true
-echo -e "${GREEN}✓ Cgroup hierarchy ready${NC}"
-echo ""
-
 # Run the container in background
-echo "[3/4] Starting Faber container..."
+echo "[2/3] Starting Faber container..."
 CONTAINER_ID=$(sudo docker run -d \
     --privileged \
     --cgroupns=host \
@@ -58,10 +50,9 @@ echo -e "${GREEN}✓ Container started: $CONTAINER_ID${NC}"
 # Cleanup function
 cleanup() {
     echo ""
-    echo "[4/4] Cleaning up..."
+    echo "[3/3] Cleaning up..."
     sudo docker stop $CONTAINER_ID > /dev/null 2>&1 || true
     sudo docker rm $CONTAINER_ID > /dev/null 2>&1 || true
-    sudo find /sys/fs/cgroup/faber -mindepth 1 -depth -type d \( -name 'req-*' -o -name 'task-*' \) -exec rmdir {} + 2>/dev/null || true
     echo -e "${GREEN}✓ Cleanup complete${NC}"
 }
 

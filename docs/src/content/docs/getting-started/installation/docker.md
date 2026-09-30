@@ -166,16 +166,9 @@ docker run --privileged --cgroupns=host \
 
 ### Permission Denied Errors
 
-If you see cgroup permission errors:
-
-```bash
-# Pre-create cgroup directory
-sudo mkdir -p /sys/fs/cgroup/faber
-sudo chmod 777 /sys/fs/cgroup/faber
-
-# Enable controllers
-echo "+cpu +memory +pids" | sudo tee /sys/fs/cgroup/faber/cgroup.subtree_control
-```
+If you see cgroup permission errors, check that the container runs with
+`--privileged`, `--cgroupns=host` and `-v /sys/fs/cgroup:/sys/fs/cgroup:rw`.
+Faber creates its cgroups inside the container's own cgroup (`<container cgroup>/faber/req-*/task-*`); nothing has to be created on the host.
 
 ### Port Already in Use
 
