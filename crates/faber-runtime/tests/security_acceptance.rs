@@ -1135,24 +1135,47 @@ fn network_routes_dns_and_external_sockets_are_isolated() {
     else {
         panic!("network namespace probe failed: {:?}", results[2]);
     };
-    let second_results = execute(vec![task("/usr/bin/readlink", &["/proc/self/ns/net"])]);
-    let TaskResult::Completed {
-        stdout: second_namespace,
-        exit_code: second_exit,
-        ..
-    } = single_result(&second_results[0])
-    else {
-        panic!(
-            "second network namespace probe failed: {:?}",
-            second_results[0]
-        );
-    };
-    assert_eq!(*second_exit, 0);
-    assert_ne!(
-        first_namespace.trim(),
-        second_namespace.trim(),
-        "independent runtimes reused a network namespace"
+    assert!(
+        first_namespace.trim().starts_with("net:["),
+        "unexpected namespace probe output: {first_namespace}"
     );
+
+    // Two runtimes that are alive at the same time must not share a network
+    // namespace. (Sequential runtimes may legitimately see the same inode
+    // number again: the kernel recycles it once the first namespace is gone.)
+    let namespace_of_running_request = || {
+        let result = RuntimeBuilder::default()
+            .with_task_group(vec![ExecutionStep::Single(task(
+                "/bin/sh",
+                &["-c", "readlink /proc/self/ns/net; sleep 0.5"],
+            ))])
+            .build()
+            .execute()
+            .expect("runtime execution failed");
+        let RuntimeResult::Success(results) = result else {
+            panic!("container setup failed: {result:?}");
+        };
+        let TaskResult::Completed {
+            stdout, exit_code, ..
+        } = single_result(&results[0])
+        else {
+            panic!(
+                "concurrent network namespace probe failed: {:?}",
+                results[0]
+            );
+        };
+        assert_eq!(*exit_code, 0);
+        stdout.trim().to_string()
+    };
+    let first = std::thread::spawn(namespace_of_running_request);
+    let second = std::thread::spawn(namespace_of_running_request);
+    let first = first.join().expect("first runtime panicked");
+    let second = second.join().expect("second runtime panicked");
+    assert_ne!(
+        first, second,
+        "concurrent runtimes shared a network namespace"
+    );
+    assert_no_task_cgroups();
 }
 
 #[test]
