@@ -6,7 +6,7 @@ use tracing::{debug, warn};
 use super::{
     config::CgroupConfig,
     request::{self, REQUEST_CGROUP_PREFIX, RequestCgroup, RequestLimits},
-    task::{TaskCgroup, parse_memory_string},
+    task::{TaskCgroup, disable_swap, parse_memory_string},
 };
 use crate::prelude::*;
 
@@ -230,7 +230,7 @@ impl Cgroup {
             e,
             details: "Failed to set aggregate service memory limit".to_string(),
         })?;
-        write(path.join("memory.swap.max"), "0").map_err(|e| FaberError::WriteFile {
+        disable_swap(&path.join("memory.swap.max")).map_err(|e| FaberError::WriteFile {
             e,
             details: "Failed to disable aggregate service swap".to_string(),
         })?;

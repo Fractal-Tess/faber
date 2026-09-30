@@ -256,7 +256,7 @@ impl TaskCgroup {
         })?;
 
         let memory_swap_max_path = self.task_cgroup_path.join("memory.swap.max");
-        write(&memory_swap_max_path, "0").map_err(|e| FaberError::WriteFile {
+        disable_swap(&memory_swap_max_path).map_err(|e| FaberError::WriteFile {
             e,
             details: format!(
                 "Failed to disable task swap at {}",
@@ -276,6 +276,15 @@ impl TaskCgroup {
         })?;
 
         Ok(())
+    }
+}
+
+/// Write `0` to a `memory.swap.max` file. Kernels without swap accounting
+/// have no such file, and then there is no swap to disable.
+pub(crate) fn disable_swap(memory_swap_max_path: &Path) -> std::io::Result<()> {
+    match write(memory_swap_max_path, "0") {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        result => result,
     }
 }
 
@@ -321,7 +330,16 @@ pub(crate) fn parse_memory_string(memory_str: &str) -> Result<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_memory_string;
+    use super::{disable_swap, parse_memory_string};
+
+    #[test]
+    fn missing_swap_accounting_is_not_an_error() {
+        let missing = std::env::temp_dir()
+            .join(format!("faber-no-swap-{}", std::process::id()))
+            .join("memory.swap.max");
+        disable_swap(&missing).expect("a missing memory.swap.max must be tolerated");
+        assert!(!missing.exists());
+    }
 
     #[test]
     fn parse_memory_string_rejects_empty_unicode_and_overflow() {
