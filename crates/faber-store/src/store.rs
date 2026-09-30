@@ -18,4 +18,7 @@ pub trait FileStore: Send + Sync {
     async fn list(&self) -> StoreResult<Vec<FileInfo>>;
 
     async fn touch(&self, id: &FileId) -> StoreResult<()>;
+
+    /// Remove every expired file and return how many were removed.
+    async fn purge_expired(&self) -> StoreResult<usize>;
 }

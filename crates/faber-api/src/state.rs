@@ -24,6 +24,8 @@ pub struct ExecutionLimits {
     pub max_concurrency: usize,
     pub execute_body_limit: usize,
     pub upload_file_limit: usize,
+    /// Uploads buffered at once; each may hold up to `upload_file_limit`.
+    pub max_concurrent_uploads: usize,
     pub default_sandbox_profile: SandboxProfile,
     pub allowed_sandbox_profiles: Vec<SandboxProfile>,
 }
@@ -44,6 +46,7 @@ impl Default for ExecutionLimits {
             max_concurrency: 10,
             execute_body_limit: 1024 * 1024,
             upload_file_limit: 50 * 1024 * 1024,
+            max_concurrent_uploads: 4,
             default_sandbox_profile: SandboxProfile::CompileV1,
             allowed_sandbox_profiles: vec![SandboxProfile::CompileV1, SandboxProfile::NativeV1],
         }
@@ -58,6 +61,7 @@ pub struct AppState {
     pub cache_enabled: bool,
     pub execution_limits: ExecutionLimits,
     pub execution_slots: Arc<Semaphore>,
+    pub upload_slots: Arc<Semaphore>,
 }
 
 impl AppState {
@@ -70,6 +74,11 @@ impl AppState {
         Self {
             execution_slots: Arc::new(Semaphore::new(
                 execution_limits.max_concurrency.min(Semaphore::MAX_PERMITS),
+            )),
+            upload_slots: Arc::new(Semaphore::new(
+                execution_limits
+                    .max_concurrent_uploads
+                    .min(Semaphore::MAX_PERMITS),
             )),
             cache: ExecutionCache::new(),
             file_store,

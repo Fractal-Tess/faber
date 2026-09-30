@@ -42,6 +42,20 @@ pub async fn upload_file(
     State(state): State<AppState>,
     mut multipart: Multipart,
 ) -> Result<Json<UploadResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // Each upload is buffered in memory, so bound how many run at once.
+    let _upload_slot = state
+        .upload_slots
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorResponse {
+                    error: "Too many uploads in progress".to_string(),
+                }),
+            )
+        })?;
+
     let mut content: Option<Bytes> = None;
     let mut filename: Option<String> = None;
     let mut content_type: Option<String> = None;
@@ -114,9 +128,16 @@ pub async fn upload_file(
     }
 
     let result = state.file_store.put(content, metadata).await.map_err(|e| {
-        error!("Failed to store file: {}", e);
+        let status = match e {
+            faber_store::StoreError::FileTooLarge(..) => StatusCode::PAYLOAD_TOO_LARGE,
+            faber_store::StoreError::StoreFull(_) => StatusCode::INSUFFICIENT_STORAGE,
+            _ => {
+                error!("Failed to store file: {}", e);
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
+        };
         (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            status,
             Json(ErrorResponse {
                 error: format!("Failed to store file: {}", e),
             }),

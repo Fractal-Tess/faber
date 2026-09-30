@@ -102,6 +102,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn uploads_report_a_full_store_and_saturation() {
+        let router = build_router(
+            "test-key".to_string(),
+            false,
+            create_store(StoreConfig::builder().max_total_bytes(1500).build()),
+            ExecutionLimits::default(),
+        );
+        let upload = |size: usize| {
+            Request::post("/file")
+                .header("Authorization", "Bearer test-key")
+                .header("Content-Type", "multipart/form-data; boundary=faber")
+                .body(Body::from(multipart_body(size)))
+                .unwrap()
+        };
+        assert_eq!(
+            router.clone().oneshot(upload(1000)).await.unwrap().status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            router.oneshot(upload(1001)).await.unwrap().status(),
+            StatusCode::INSUFFICIENT_STORAGE
+        );
+
+        let saturated = build_router(
+            "test-key".to_string(),
+            false,
+            create_store(StoreConfig::default()),
+            ExecutionLimits {
+                max_concurrent_uploads: 0,
+                ..ExecutionLimits::default()
+            },
+        );
+        assert_eq!(
+            saturated.oneshot(upload(10)).await.unwrap().status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+    }
+
+    #[tokio::test]
     async fn saturated_execute_is_shed_without_blocking_health() {
         let router = build_router(
             "test-key".to_string(),

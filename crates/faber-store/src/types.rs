@@ -103,6 +103,14 @@ impl FileMetadata {
         self
     }
 
+    /// Give a file without an explicit TTL the store's default. A zero
+    /// default leaves it without expiry.
+    pub fn apply_default_ttl(&mut self, default_ttl: Duration) {
+        if self.ttl.is_none() && !default_ttl.is_zero() {
+            self.ttl = Some(default_ttl);
+        }
+    }
+
     pub fn touch(&mut self) {
         self.last_accessed = SystemTime::now();
     }

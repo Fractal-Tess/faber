@@ -2,6 +2,7 @@ mod backends;
 mod config;
 mod error;
 mod lru;
+mod quota;
 mod store;
 mod types;
 
@@ -19,6 +20,26 @@ pub use backends::FilesystemStore;
 
 #[cfg(all(feature = "memory", feature = "filesystem"))]
 pub use backends::HybridStore;
+
+/// Remove expired files every `interval` for as long as the runtime lives.
+pub fn spawn_expiry_sweeper(
+    store: std::sync::Arc<dyn FileStore>,
+    interval: std::time::Duration,
+) -> tokio::task::JoinHandle<()> {
+    let interval = interval.max(std::time::Duration::from_secs(1));
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            ticker.tick().await;
+            match store.purge_expired().await {
+                Ok(0) => {}
+                Ok(removed) => tracing::debug!(removed, "removed expired files"),
+                Err(error) => tracing::warn!(%error, "failed to remove expired files"),
+            }
+        }
+    })
+}
 
 pub fn create_store(config: StoreConfig) -> std::sync::Arc<dyn FileStore> {
     use std::sync::Arc;

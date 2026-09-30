@@ -26,6 +26,9 @@ pub enum StoreError {
     #[error("File too large: {0} bytes (max: {1})")]
     FileTooLarge(u64, u64),
 
+    #[error("Store is full: {0}")]
+    StoreFull(String),
+
     #[error("Invalid file ID: {0}")]
     InvalidFileId(String),
 }

@@ -16,9 +16,17 @@ pub enum BackendConfig {
 #[derive(Debug, Clone)]
 pub struct StoreConfig {
     pub backend: BackendConfig,
+    /// Files expire this long after they were last read or written.
+    /// Zero disables expiry.
     pub default_ttl: Duration,
+    /// How often [`spawn_expiry_sweeper`](crate::spawn_expiry_sweeper)
+    /// removes expired files.
     pub ttl_check_interval: Duration,
     pub max_file_size: u64,
+    /// Total bytes of file content the store may hold.
+    pub max_total_bytes: u64,
+    /// Number of files the store may hold.
+    pub max_entries: usize,
 }
 
 impl Default for StoreConfig {
@@ -28,6 +36,8 @@ impl Default for StoreConfig {
             default_ttl: Duration::from_secs(3600),
             ttl_check_interval: Duration::from_secs(60),
             max_file_size: 50 * 1024 * 1024,
+            max_total_bytes: 512 * 1024 * 1024,
+            max_entries: 1000,
         }
     }
 }
@@ -80,11 +90,23 @@ impl StoreConfig {
             .and_then(|s| s.parse().ok())
             .unwrap_or(50 * 1024 * 1024);
 
+        let defaults = Self::default();
+        let max_total_bytes = std::env::var("FABER_STORE_MAX_TOTAL_BYTES")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(defaults.max_total_bytes);
+        let max_entries = std::env::var("FABER_STORE_MAX_ENTRIES")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(defaults.max_entries);
+
         Self {
             backend,
             default_ttl,
             ttl_check_interval,
             max_file_size,
+            max_total_bytes,
+            max_entries,
         }
     }
 
@@ -99,6 +121,8 @@ pub struct StoreConfigBuilder {
     default_ttl: Option<Duration>,
     ttl_check_interval: Option<Duration>,
     max_file_size: Option<u64>,
+    max_total_bytes: Option<u64>,
+    max_entries: Option<usize>,
 }
 
 impl StoreConfigBuilder {
@@ -146,6 +170,16 @@ impl StoreConfigBuilder {
         self
     }
 
+    pub fn max_total_bytes(mut self, bytes: u64) -> Self {
+        self.max_total_bytes = Some(bytes);
+        self
+    }
+
+    pub fn max_entries(mut self, entries: usize) -> Self {
+        self.max_entries = Some(entries);
+        self
+    }
+
     pub fn build(self) -> StoreConfig {
         let defaults = StoreConfig::default();
         StoreConfig {
@@ -155,6 +189,8 @@ impl StoreConfigBuilder {
                 .ttl_check_interval
                 .unwrap_or(defaults.ttl_check_interval),
             max_file_size: self.max_file_size.unwrap_or(defaults.max_file_size),
+            max_total_bytes: self.max_total_bytes.unwrap_or(defaults.max_total_bytes),
+            max_entries: self.max_entries.unwrap_or(defaults.max_entries),
         }
     }
 }

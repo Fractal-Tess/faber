@@ -11,8 +11,17 @@ pub struct Config {
     pub api_key: String,
     pub cache_enabled: bool,
     pub store_backend: StoreBackend,
+    pub store_limits: StoreLimits,
     pub execution_limits: ExecutionLimits,
     pub shutdown_timeout: Duration,
+}
+
+#[derive(Debug, Clone)]
+pub struct StoreLimits {
+    pub ttl: Duration,
+    pub ttl_check_interval: Duration,
+    pub max_total_bytes: u64,
+    pub max_entries: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -36,6 +45,15 @@ impl Config {
             api_key: Self::load_api_key()?,
             cache_enabled: Self::load_cache_enabled(),
             store_backend: Self::load_store_backend(),
+            store_limits: StoreLimits {
+                ttl: Duration::from_secs(Self::load_env("FABER_STORE_TTL_SECS", 3600)?),
+                ttl_check_interval: Duration::from_secs(Self::load_env(
+                    "FABER_STORE_TTL_CHECK_SECS",
+                    60,
+                )?),
+                max_total_bytes: Self::load_env("FABER_STORE_MAX_TOTAL_BYTES", 512 * 1024 * 1024)?,
+                max_entries: Self::load_env("FABER_STORE_MAX_ENTRIES", 1000)?,
+            },
             execution_limits: Self::load_execution_limits()?,
             shutdown_timeout: Duration::from_millis(Self::load_env("SHUTDOWN_TIMEOUT_MS", 5_000)?),
         })
@@ -105,6 +123,7 @@ impl Config {
             max_concurrency,
             execute_body_limit: Self::load_env("EXECUTE_BODY_LIMIT_BYTES", 1024 * 1024)?,
             upload_file_limit: Self::load_env("UPLOAD_FILE_LIMIT_BYTES", 50 * 1024 * 1024)?,
+            max_concurrent_uploads: Self::load_env("MAX_CONCURRENT_UPLOADS", 4)?,
             default_sandbox_profile,
             allowed_sandbox_profiles,
         })

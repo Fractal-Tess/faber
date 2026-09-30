@@ -192,7 +192,8 @@ cache policy. On a compile hit, materialize verified output blobs into a fresh
 workspace; always execute the binary in a fresh sandbox.
 
 Use the existing filesystem store as the initial CAS after adding immutable
-descriptors, read verification, quotas, TTL/GC, and leases for in-flight work.
+descriptors, read verification, and leases for in-flight work (total-size and
+entry quotas and TTL expiry exist today).
 Add single-flight by action digest so concurrent identical compilations share
 one producer. Scope metadata and result caches by tenant; cross-tenant artifact
 deduplication must be an explicit confidentiality policy, not an accident.

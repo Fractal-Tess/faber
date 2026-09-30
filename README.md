@@ -153,6 +153,14 @@ materialize inputs in its workspace. Connecting store objects to executions
 requires an explicit task-reference and authorization design and is intentionally
 not implied by uploading an object.
 
+The store is bounded: uploads beyond `FABER_STORE_MAX_TOTAL_BYTES` or
+`FABER_STORE_MAX_ENTRIES` are rejected with `507 Insufficient Storage`, a file
+above `UPLOAD_FILE_LIMIT_BYTES` with `413`, and more than
+`MAX_CONCURRENT_UPLOADS` simultaneous uploads with `503`. Files expire
+`FABER_STORE_TTL_SECS` after they were last uploaded or read; expired files are
+treated as absent on read and removed by a sweep every
+`FABER_STORE_TTL_CHECK_SECS`.
+
 ## 🏗️ Architecture
 
 Faber consists of three main components:

@@ -48,8 +48,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .build(),
     };
     store_config.max_file_size = config.execution_limits.upload_file_limit as u64;
+    store_config.default_ttl = config.store_limits.ttl;
+    store_config.ttl_check_interval = config.store_limits.ttl_check_interval;
+    store_config.max_total_bytes = config.store_limits.max_total_bytes;
+    store_config.max_entries = config.store_limits.max_entries;
 
     let file_store = faber_store::create_store(store_config);
+    if !config.store_limits.ttl.is_zero() {
+        faber_store::spawn_expiry_sweeper(
+            file_store.clone(),
+            config.store_limits.ttl_check_interval,
+        );
+    }
 
     let router = build_router(
         config.api_key.clone(),
