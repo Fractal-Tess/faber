@@ -115,6 +115,32 @@ FABER_BASE_URL=http://localhost:3000 \
   npm run test:integration
 ```
 
+## Running in a disposable VM
+
+The development container is privileged and sees the host cgroup tree, so it is
+root-equivalent on the machine that runs it. Docker keeps Faber off the host
+filesystem layout; it does not protect the host from a sandbox regression, a
+fork bomb, or a cgroup mistake. `scripts/vm.sh` runs the same workflow inside a
+KVM guest (NixOS, defined in `nix/test-vm.nix`) so those stop at the VM
+boundary. It needs Nix and `/dev/kvm`, and no sudo or host Docker.
+
+```bash
+./scripts/vm.sh prepare        # once, and after dependency or Dockerfile changes
+./scripts/vm.sh test-security  # also: check, test, test-stress
+./scripts/vm.sh up             # dev API on 127.0.0.1:$FABER_PORT, Ctrl-C to stop
+./scripts/vm.sh exec probe.sh  # run a host script as root inside the guest
+./scripts/vm.sh shell          # root console; poweroff to leave
+./scripts/vm.sh reset          # delete the guest disk and caches
+```
+
+`prepare` is the only step with network access: it builds the dev image and
+compiles the tests, and runs no Faber code. Everything else boots with guest
+networking cut off (`--online` opts back in), so code under test cannot reach
+the host's loopback services or the LAN. The repository is exported read-only;
+the guest disk with the Docker image and Cargo caches lives in
+`~/.cache/faber-vm`. The guest serves a snapshot: `up` does not hot-reload on
+host edits, so restart it to pick up changes.
+
 ## Production smoke test
 
 Set an API key explicitly, then start the production Compose service:

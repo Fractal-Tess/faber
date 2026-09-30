@@ -71,6 +71,12 @@ setup_cgroups() {
     fi
 }
 
+# FABER_SKIP_IMAGE_BUILD reuses the existing image. scripts/vm.sh sets it for
+# offline guests, where the base image cannot be resolved from the registry.
+build_image() {
+    [[ -n "${FABER_SKIP_IMAGE_BUILD:-}" ]] || compose build faber
+}
+
 wait_until_healthy() {
     local attempts=60
     while ((attempts > 0)); do
@@ -109,7 +115,8 @@ require_docker
 case "${1:-}" in
     up)
         setup_cgroups
-        compose up --build --detach
+        build_image
+        compose up --detach
         wait_until_healthy
         printf 'Faber is healthy at http://localhost:%s/api/v1/health\n' "$HOST_PORT"
         ;;
@@ -126,7 +133,7 @@ case "${1:-}" in
         compose exec faber bash -lc 'pid="$(pgrep -n -x faber)"; exec gdb -p "$pid"'
         ;;
     check)
-        compose build faber
+        build_image
         compose run --rm --no-TTY faber cargo fmt --all -- --check
         compose run --rm --no-TTY faber cargo clippy --workspace --all-targets -- \
             -D warnings \
@@ -139,18 +146,18 @@ case "${1:-}" in
         ;;
     test)
         setup_cgroups
-        compose build faber
+        build_image
         compose run --rm --no-TTY faber cargo test --workspace -- --test-threads=1
         ;;
     test-security)
         setup_cgroups
-        compose build faber
+        build_image
         compose run --rm --no-TTY faber bash -lc \
             'cargo test -p faber-runtime --test security_acceptance -- --test-threads=1 && cargo test -p faber-runtime --test shutdown && cargo test -p faber-api --test cancellation -- --test-threads=1'
         ;;
     test-stress)
         setup_cgroups
-        compose build faber
+        build_image
         compose run --rm --no-TTY -e STRESS_ROUNDS="${STRESS_ROUNDS:-3}" faber bash -lc \
             'set -Eeuo pipefail; for round in $(seq 1 "$STRESS_ROUNDS"); do echo "=== adversarial round $round/$STRESS_ROUNDS ==="; cargo test -p faber-runtime --test security_acceptance -- --test-threads=1; cargo test -p faber-runtime --test shutdown; cargo test -p faber-api --test cancellation -- --test-threads=1; done'
         ;;
