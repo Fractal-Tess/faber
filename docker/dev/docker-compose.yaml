@@ -22,7 +22,10 @@ services:
       - RUST_LOG=faber=debug,faber_api=debug,faber_runtime=debug
     privileged: true
     cgroup: host
-    pids_limit: -1
+    # Backstop for the test suites, which run tasks without memory limits.
+    mem_limit: 6g
+    memswap_limit: 6g
+    pids_limit: 4096
     init: true
     stop_signal: SIGINT
     stop_grace_period: 10s

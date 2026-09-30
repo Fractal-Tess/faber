@@ -27,7 +27,12 @@ services:
       - SHUTDOWN_TIMEOUT_MS=${SHUTDOWN_TIMEOUT_MS:-5000}
     privileged: true
     cgroup: host
-    pids_limit: -1
+    # Backstop above Faber's own aggregate cgroup limits: with the defaults
+    # ((MEMORY_MAX + supervisor allowance) x MAX_CONCURRENCY) that is about
+    # 6.3 GiB and 670 processes. Raise these together with MAX_CONCURRENCY.
+    mem_limit: ${FABER_MEMORY_LIMIT:-8g}
+    memswap_limit: ${FABER_MEMORY_LIMIT:-8g}
+    pids_limit: ${FABER_PIDS_LIMIT:-4096}
     volumes:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
     stop_grace_period: 10s
