@@ -28,7 +28,7 @@ kernel and CI environments; it is not a proof against unknown kernel defects.
 | Memory and processes | Real OOM kill with `memory.events`, swap disabled, fork exhaustion with `pids.events`, peak values, cgroup cleanup |
 | Timeout teardown | Atomic `cgroup.kill`, fork-successor stdout holders, bounded pipe grace, overall execution deadline scoped to its own request cgroup, no leaked request or task cgroups |
 | CPU and rlimits | `cpu.max` throttling counters, independent `RLIMIT_CPU`, `EMFILE`, `EFBIG`, stack signal, zero core files |
-| I/O | stdout/stderr floods, binary-size caps, truncation reporting, concurrent stdin/stdout, large parallel result transport |
+| I/O | stdout/stderr floods, binary-size caps, truncation reporting, concurrent stdin/stdout, large parallel result transport, 16 MiB result transport-time bound |
 | Lifecycle | Timeout, signal, output kill, policy kill, setup failure, detached API request, cgroup/root cleanup, concurrent distinct cgroups |
 
 ## Deliberately excluded from privileged-container tests

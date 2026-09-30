@@ -83,7 +83,7 @@ impl Runtime {
                 let _ = setpgid(Pid::from_raw(0), Pid::from_raw(0));
 
                 let runtime_result = self.execution_child(request_cgroup.path());
-                let _ = serde_json::to_writer(writer, &runtime_result);
+                Self::write_child_result(writer, &runtime_result);
                 Self::child_exit(0);
             }
             Ok(ForkResult::Parent { child }) => {
@@ -121,52 +121,102 @@ impl Runtime {
         let mut pipe_open = true;
         let mut child_exited = false;
 
-        while pipe_open || !child_exited {
-            let mut chunk = [0_u8; 8192];
-            match reader.read(&mut chunk) {
-                Ok(0) => pipe_open = false,
-                Ok(read) => bytes.extend_from_slice(&chunk[..read]),
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
-                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(error) => {
-                    return Err(FaberError::Generic {
-                        message: format!("Failed to read runtime result: {error}"),
-                    });
-                }
+        loop {
+            if pipe_open {
+                pipe_open = match Self::drain_result_pipe(&mut reader, &mut bytes) {
+                    Ok(open) => open,
+                    Err(error) => {
+                        Self::terminate_request(child, request_cgroup, child_exited);
+                        return Err(FaberError::Generic {
+                            message: format!("Failed to read runtime result: {error}"),
+                        });
+                    }
+                };
             }
             if !child_exited {
                 match waitpid(child, Some(WaitPidFlag::WNOHANG)) {
                     Ok(WaitStatus::StillAlive) => {}
                     Ok(_) | Err(nix::errno::Errno::ECHILD) => child_exited = true,
-                    Err(error) => return Err(FaberError::WaitPid { e: error }),
+                    Err(error) => {
+                        Self::terminate_request(child, request_cgroup, false);
+                        return Err(FaberError::WaitPid { e: error });
+                    }
                 }
             }
-            if Instant::now() >= deadline {
-                // Killing the execution child's process group and its PID
-                // namespace init tears down this request's processes; the
-                // request cgroup kill catches anything that left the group.
-                // Other requests live in other request cgroups.
-                let _ = nix::sys::signal::kill(
-                    Pid::from_raw(-child.as_raw()),
-                    nix::sys::signal::Signal::SIGKILL,
-                );
-                let _ = nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL);
-                request_cgroup.kill();
-                let _ = waitpid(child, None);
+            if !pipe_open && child_exited {
+                break;
+            }
+            if child_exited && pipe_open {
+                // The execution child is gone but a descendant still holds
+                // the result pipe; nothing further will be written to it.
+                Self::terminate_request(child, request_cgroup, true);
+            }
+
+            let now = Instant::now();
+            if now >= deadline {
+                Self::terminate_request(child, request_cgroup, child_exited);
                 return Err(FaberError::TaskTimeout {
                     timeout_duration: self.overall_timeout,
                     details: "Execution exceeded the hard overall deadline".to_string(),
                 });
             }
-            if pipe_open || !child_exited {
-                std::thread::sleep(Duration::from_millis(5));
-            }
+
+            // Sleep until the pipe is readable or the deadline passes. The
+            // wait is capped so that child exit is noticed promptly.
+            let wait = (deadline - now).min(Duration::from_millis(50));
+            let mut poll_fd = libc::pollfd {
+                fd: reader.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            let (poll_fds, count, timeout) = if pipe_open {
+                (
+                    &mut poll_fd as *mut libc::pollfd,
+                    1,
+                    wait.as_millis() as i32,
+                )
+            } else {
+                (std::ptr::null_mut(), 0, 1)
+            };
+            unsafe { libc::poll(poll_fds, count, timeout.max(1)) };
         }
 
         serde_json::from_slice(&bytes).map_err(|e| FaberError::ParseResult {
             e,
             details: "Failed to parse results from child process".to_string(),
         })
+    }
+
+    /// Read everything currently available. Returns whether the pipe is
+    /// still open.
+    fn drain_result_pipe(reader: &mut PipeReader, bytes: &mut Vec<u8>) -> std::io::Result<bool> {
+        let mut chunk = [0_u8; 64 * 1024];
+        loop {
+            match reader.read(&mut chunk) {
+                Ok(0) => return Ok(false),
+                Ok(read) => bytes.extend_from_slice(&chunk[..read]),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(true),
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    /// Kill the execution child, its process group (which contains the PID
+    /// namespace init) and this request's cgroup subtree, then reap the child.
+    /// Other requests live in other request cgroups and are unaffected.
+    fn terminate_request(child: Pid, request_cgroup: &RequestCgroup, child_reaped: bool) {
+        let _ = nix::sys::signal::kill(
+            Pid::from_raw(-child.as_raw()),
+            nix::sys::signal::Signal::SIGKILL,
+        );
+        if !child_reaped {
+            let _ = nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL);
+        }
+        request_cgroup.kill();
+        if !child_reaped {
+            let _ = waitpid(child, None);
+        }
     }
 
     fn execution_child(&self, request_cgroup_path: &Path) -> RuntimeResult {
@@ -285,7 +335,7 @@ impl Runtime {
                             stats: TaskResultStats::default(),
                         },
                     };
-                    let _ = serde_json::to_writer(writer, &result);
+                    Self::write_child_result(writer, &result);
                     Self::child_exit(0);
                 }
                 Ok(ForkResult::Parent { child }) => {
@@ -303,11 +353,16 @@ impl Runtime {
 
         // Wait for all parallel children and collect results
         let mut task_results = Vec::with_capacity(children.len());
-        for (child, reader) in children {
+        for (child, mut reader) in children {
             // Drain each result pipe before waiting so large bounded outputs do
-            // not block the child in serde_json::to_writer.
-            let result: TaskResult =
-                serde_json::from_reader(reader).unwrap_or(TaskResult::Failed {
+            // not block the child while it writes. Read in bulk: parsing
+            // straight from the unbuffered pipe costs one syscall per byte.
+            let mut bytes = Vec::new();
+            let result: TaskResult = reader
+                .read_to_end(&mut bytes)
+                .ok()
+                .and_then(|_| serde_json::from_slice(&bytes).ok())
+                .unwrap_or(TaskResult::Failed {
                     error: "Failed to read result from parallel task".to_string(),
                     stats: TaskResultStats::default(),
                 });
@@ -552,6 +607,15 @@ impl Runtime {
                 })
             }
             Err(e) => Err(FaberError::Fork { e }),
+        }
+    }
+
+    /// Serialize a result to a pipe through a buffer; unbuffered serde writes
+    /// issue one syscall per token.
+    fn write_child_result<T: serde::Serialize>(writer: PipeWriter, result: &T) {
+        let mut writer = std::io::BufWriter::with_capacity(64 * 1024, writer);
+        if serde_json::to_writer(&mut writer, result).is_ok() {
+            let _ = writer.flush();
         }
     }
 

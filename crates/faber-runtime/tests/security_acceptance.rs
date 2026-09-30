@@ -1414,6 +1414,58 @@ fn parallel_large_results_do_not_deadlock_result_transport() {
 }
 
 #[test]
+fn sixteen_mebibyte_results_are_transported_quickly() {
+    let _guard = lock_security_tests();
+    const OUTPUT_SIZE: usize = 1024 * 1024;
+
+    let tasks = (0..16)
+        .map(|_| task("/bin/sh", &["-c", "head -c 1048576 /dev/zero | tr '\\0' x"]))
+        .collect();
+    let started = std::time::Instant::now();
+    let result = RuntimeBuilder::default()
+        .with_task_group(vec![ExecutionStep::Parallel(tasks)])
+        .with_output_limit(OUTPUT_SIZE)
+        .with_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .execute()
+        .expect("runtime execution failed");
+    let elapsed = started.elapsed();
+    let RuntimeResult::Success(results) = result else {
+        panic!("container setup failed: {result:?}");
+    };
+    assert_no_task_cgroups();
+
+    let ExecutionStepResult::Parallel(results) = &results[0] else {
+        panic!("expected parallel task results");
+    };
+    assert_eq!(results.len(), 16);
+    let mut slowest_task_ms = 0;
+    for result in results {
+        let TaskResult::Completed {
+            stdout,
+            exit_code,
+            stats,
+            ..
+        } = result
+        else {
+            panic!("flood task failed: {result:?}");
+        };
+        assert_eq!(*exit_code, 0);
+        assert_eq!(stdout.len(), OUTPUT_SIZE);
+        assert!(!stats.stdout_truncated);
+        slowest_task_ms = slowest_task_ms.max(stats.execution_time_ms);
+    }
+
+    // Everything outside the tasks themselves: sandbox setup plus moving
+    // 16 MiB of results from the task children to this process.
+    let overhead = elapsed.saturating_sub(std::time::Duration::from_millis(slowest_task_ms));
+    assert!(
+        overhead < std::time::Duration::from_secs(1),
+        "16 MiB result transport took {overhead:?} (total {elapsed:?})"
+    );
+}
+
+#[test]
 fn concurrent_tasks_use_distinct_cgroups_and_cleanup_all_of_them() {
     let _guard = lock_security_tests();
     let parallel_tasks = (0..8)
