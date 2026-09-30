@@ -29,7 +29,7 @@ kernel and CI environments; it is not a proof against unknown kernel defects.
 | Timeout teardown | Atomic `cgroup.kill`, fork-successor stdout holders, bounded pipe grace, overall execution deadline scoped to its own request cgroup and returning completed steps with later ones marked `not_started`, no leaked request or task cgroups |
 | CPU and rlimits | `cpu.max` throttling counters, independent `RLIMIT_CPU`, `EMFILE`, `EFBIG`, stack signal, zero core files |
 | I/O | stdout/stderr floods, binary-size caps, truncation reporting, per-request output budget, concurrent stdin/stdout, large parallel result transport, 16 MiB result transport-time bound |
-| Lifecycle | Timeout, signal, output kill, policy kill, setup failure, cancelled API request torn down immediately, shutdown stops multi-step requests and refuses new ones, disconnecting clients held to the concurrency limit, cgroup/root cleanup, concurrent distinct cgroups |
+| Lifecycle | Timeout, signal, output kill, policy kill, setup failure, pre-exec failures reported by stage and errno rather than as exit codes, cancelled API request torn down immediately, shutdown stops multi-step requests and refuses new ones, disconnecting clients held to the concurrency limit, cgroup/root cleanup, concurrent distinct cgroups |
 
 ## Deliberately excluded from privileged-container tests
 

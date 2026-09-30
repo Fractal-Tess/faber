@@ -1898,6 +1898,70 @@ fn every_seccomp_profile_rule_reports_a_policy_violation() {
 }
 
 #[test]
+fn pre_exec_failures_are_distinguished_from_program_exits() {
+    let _guard = lock_security_tests();
+    let missing_command = task("/nonexistent/command", &[]);
+    let bad_working_dir = Task {
+        working_dir: Some("/does-not-exist".to_string()),
+        ..task("/bin/true", &[])
+    };
+    let nul_argument = task("/bin/echo", &["before\0after"]);
+    let program_exit = task("/bin/sh", &["-c", "exit 127"]);
+    let results = execute(vec![
+        missing_command,
+        bad_working_dir,
+        nul_argument,
+        program_exit,
+    ]);
+
+    let TaskResult::Completed {
+        exit_code,
+        stderr,
+        stats,
+        ..
+    } = single_result(&results[0])
+    else {
+        panic!("missing command did not complete: {:?}", results[0]);
+    };
+    assert_eq!(*exit_code, 127);
+    assert_eq!(stats.outcome, TaskOutcome::Exited);
+    assert!(
+        stderr.contains("failed to execute '/nonexistent/command'")
+            && stderr.contains("No such file or directory"),
+        "exec failure lacks its errno: {stderr:?}"
+    );
+
+    let TaskResult::Failed { error, stats } = single_result(&results[1]) else {
+        panic!("bad working directory ran: {:?}", results[1]);
+    };
+    assert_eq!(stats.outcome, TaskOutcome::InfrastructureFailure);
+    assert!(stats.cleanup_succeeded);
+    assert!(
+        error.contains("working directory '/does-not-exist'")
+            && error.contains("No such file or directory"),
+        "{error}"
+    );
+
+    let TaskResult::Failed { error, stats } = single_result(&results[2]) else {
+        panic!("NUL argument ran: {:?}", results[2]);
+    };
+    assert_eq!(stats.outcome, TaskOutcome::InfrastructureFailure);
+    assert!(error.contains("NUL byte"), "{error}");
+
+    let TaskResult::Completed {
+        exit_code, stderr, ..
+    } = single_result(&results[3])
+    else {
+        panic!("program exit did not complete: {:?}", results[3]);
+    };
+    assert_eq!(*exit_code, 127);
+    assert!(
+        stderr.is_empty(),
+        "program exit gained a message: {stderr:?}"
+    );
+}
+
+#[test]
 fn signal_termination_is_reported_explicitly() {
     let _guard = lock_security_tests();
     let results = execute(vec![task("/bin/sh", &["-c", "kill -TERM $$"])]);

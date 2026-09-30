@@ -70,6 +70,71 @@ struct OutputLimits {
 /// within steps, so this only fires if the child stops making progress.
 const OVERALL_DEADLINE_BACKSTOP_GRACE: Duration = Duration::from_secs(2);
 
+/// Where a task child failed before `exec`, reported over the status pipe.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+enum SetupStage {
+    CgroupJoin = 1,
+    ProcessIdentity = 2,
+    Security = 3,
+    WorkingDirectory = 4,
+    InvalidString = 5,
+    Exec = 6,
+}
+
+impl SetupStage {
+    fn from_code(code: u8) -> Option<Self> {
+        Some(match code {
+            1 => Self::CgroupJoin,
+            2 => Self::ProcessIdentity,
+            3 => Self::Security,
+            4 => Self::WorkingDirectory,
+            5 => Self::InvalidString,
+            6 => Self::Exec,
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SetupFailure {
+    stage: SetupStage,
+    errno: i32,
+}
+
+impl SetupFailure {
+    fn describe(&self, task: &Task) -> String {
+        let context = match self.stage {
+            SetupStage::CgroupJoin => {
+                "Sandbox setup failed while joining the task cgroup".to_string()
+            }
+            SetupStage::ProcessIdentity => {
+                "Sandbox setup failed while identifying the task process".to_string()
+            }
+            SetupStage::Security => {
+                "Sandbox setup failed while applying the task's security restrictions".to_string()
+            }
+            SetupStage::WorkingDirectory => format!(
+                "Failed to change to working directory '{}'",
+                task.working_dir.as_deref().unwrap_or_default()
+            ),
+            SetupStage::InvalidString => {
+                "The task command, arguments, environment or working directory contain a NUL byte"
+                    .to_string()
+            }
+            SetupStage::Exec => format!("failed to execute '{}'", task.cmd),
+        };
+        if self.errno == 0 {
+            context
+        } else {
+            format!(
+                "{context}: {}",
+                std::io::Error::from_raw_os_error(self.errno)
+            )
+        }
+    }
+}
+
 struct CollectedOutput {
     stdout: Vec<u8>,
     stderr: Vec<u8>,
@@ -564,16 +629,28 @@ impl Runtime {
             e: std::io::Error::from_raw_os_error(e as i32),
             details: "Failed to create user namespace continue pipe".to_string(),
         })?;
+        // Close-on-exec: EOF means `exec` succeeded, a record means the child
+        // failed before it could run the task.
+        let (mut status_read, status_write) = mk_pipe()?;
 
         match unsafe { fork() } {
             Ok(ForkResult::Child) => {
                 let sandbox_profile = task.sandbox_profile.unwrap_or_default();
 
+                drop(status_read);
+                let fail = |stage: SetupStage, errno: i32| -> ! {
+                    Self::report_setup_failure(&status_write, stage, errno)
+                };
+
                 // FIRST: Add self to cgroup BEFORE any other work
                 // This ensures resource limits apply from the start
                 let my_pid = std::process::id();
-                if task_cgroup.add_process(my_pid).is_err() {
-                    Self::child_exit(127);
+                if let Err(error) = task_cgroup.add_process(my_pid) {
+                    let errno = match &error {
+                        FaberError::WriteFile { e, .. } => e.raw_os_error().unwrap_or(0),
+                        _ => 0,
+                    };
+                    fail(SetupStage::CgroupJoin, errno);
                 }
 
                 let proc_pid = match std::fs::read_link("/proc/self")
@@ -581,7 +658,7 @@ impl Runtime {
                     .and_then(|path| path.to_string_lossy().parse::<u32>().ok())
                 {
                     Some(pid) => pid,
-                    None => Self::child_exit(126),
+                    None => fail(SetupStage::ProcessIdentity, 0),
                 };
 
                 // Close read ends of pipes in child
@@ -604,84 +681,65 @@ impl Runtime {
                 drop(stdin_read);
 
                 // Apply security restrictions
-                if Self::child_setup_security(
+                if let Err(error) = Self::child_setup_security(
                     cpu_time_limit,
                     user_ready_write.into(),
                     user_continue_read.into(),
                     proc_pid,
                     sandbox_profile,
-                )
-                .is_err()
-                {
-                    Self::child_exit(126);
+                ) {
+                    fail(SetupStage::Security, error.raw_os_error().unwrap_or(0));
                 }
 
                 // Change working directory if specified
                 if let Some(ref working_dir) = task.working_dir {
-                    let dir_cstr = match CString::new(working_dir.clone()) {
-                        Ok(c) => c,
-                        Err(_) => {
-                            Self::child_exit(127);
-                        }
+                    let Ok(dir_cstr) = CString::new(working_dir.clone()) else {
+                        fail(SetupStage::InvalidString, libc::EINVAL);
                     };
-                    if chdir(dir_cstr.as_c_str()).is_err() {
-                        Self::child_exit(127);
+                    if let Err(errno) = chdir(dir_cstr.as_c_str()) {
+                        fail(SetupStage::WorkingDirectory, errno as i32);
                     }
                 }
 
                 // Build environment
-                let mut env_vars: Vec<(CString, CString)> = Vec::new();
+                let mut env_cstr: Vec<CString> = Vec::new();
                 let mut has_path = false;
 
                 for (key, value) in task.env.unwrap_or_default() {
                     if key == "PATH" {
                         has_path = true;
                     }
-                    if let (Ok(k), Ok(v)) = (CString::new(key.clone()), CString::new(value)) {
-                        env_vars.push((k, v));
-                    }
+                    let Ok(entry) = CString::new(format!("{key}={value}")) else {
+                        fail(SetupStage::InvalidString, libc::EINVAL);
+                    };
+                    env_cstr.push(entry);
                 }
 
                 if !has_path {
-                    if let (Ok(k), Ok(v)) = (
-                        CString::new("PATH"),
-                        CString::new(
-                            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-                        ),
-                    ) {
-                        env_vars.push((k, v));
-                    }
+                    env_cstr.push(
+                        c"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+                            .to_owned(),
+                    );
                 }
 
                 // Build args
-                let cmd_cstr = match CString::new(task.cmd.clone()) {
-                    Ok(c) => c,
-                    Err(_) => Self::child_exit(127),
+                let Ok(cmd_cstr) = CString::new(task.cmd.clone()) else {
+                    fail(SetupStage::InvalidString, libc::EINVAL);
                 };
 
                 let mut args_cstr: Vec<CString> = vec![cmd_cstr.clone()];
-                if let Some(args) = task.args {
-                    for arg in args {
-                        if let Ok(a) = CString::new(arg) {
-                            args_cstr.push(a);
-                        }
-                    }
+                for arg in task.args.unwrap_or_default() {
+                    let Ok(arg) = CString::new(arg) else {
+                        fail(SetupStage::InvalidString, libc::EINVAL);
+                    };
+                    args_cstr.push(arg);
                 }
 
-                // Format env as "KEY=VALUE"
-                let env_cstr: Vec<CString> = env_vars
-                    .into_iter()
-                    .filter_map(|(k, v)| {
-                        let s = format!("{}={}", k.to_string_lossy(), v.to_string_lossy());
-                        CString::new(s).ok()
-                    })
-                    .collect();
-
-                // Execute
-                let _ = execvpe(&cmd_cstr, &args_cstr, &env_cstr);
-
-                // If exec fails, exit with error
-                Self::child_exit(127);
+                // Execute. On success the status pipe closes with the exec.
+                let errno = match execvpe(&cmd_cstr, &args_cstr, &env_cstr) {
+                    Err(errno) => errno as i32,
+                };
+                fail(SetupStage::Exec, errno);
             }
             Ok(ForkResult::Parent { child }) => {
                 // Close write ends of pipes in parent
@@ -690,12 +748,41 @@ impl Runtime {
                 drop(stdin_read);
                 drop(user_ready_write);
                 drop(user_continue_read);
+                drop(status_write);
 
-                Self::configure_child_user_namespace(
+                if let Err(error) = Self::configure_child_user_namespace(
                     child,
                     user_ready_read.into(),
                     user_continue_write.into(),
-                )?;
+                ) {
+                    // The child is dead by now; if it got far enough to say
+                    // why, that is the more useful error.
+                    return Err(
+                        match Self::read_setup_failure(&mut status_read, Duration::ZERO) {
+                            Some(failure) => FaberError::Generic {
+                                message: failure.describe(&task),
+                            },
+                            None => error,
+                        },
+                    );
+                }
+
+                let exec_failure = match Self::read_setup_failure(&mut status_read, timeout) {
+                    Some(failure) if failure.stage != SetupStage::Exec => {
+                        let _ = waitpid(child, None);
+                        let cleanup_succeeded = task_cgroup.cleanup().is_ok();
+                        return Ok(TaskResult::Failed {
+                            error: failure.describe(&task),
+                            stats: TaskResultStats {
+                                execution_time_ms: start_time.elapsed().as_millis() as u64,
+                                outcome: TaskOutcome::InfrastructureFailure,
+                                cleanup_succeeded,
+                                ..TaskResultStats::default()
+                            },
+                        });
+                    }
+                    failure => failure,
+                };
 
                 let collected = Self::wait_and_collect_output(
                     child,
@@ -703,7 +790,11 @@ impl Runtime {
                     stdout_read.into(),
                     stderr_read.into(),
                     stdin_write.into(),
-                    task.stdin.unwrap_or_default().into_bytes(),
+                    task.stdin
+                        .as_deref()
+                        .unwrap_or_default()
+                        .as_bytes()
+                        .to_vec(),
                     output_limits,
                     &task_cgroup,
                 )?;
@@ -750,9 +841,14 @@ impl Runtime {
                     cleanup_succeeded,
                 };
 
+                let mut stderr = String::from_utf8_lossy(&collected.stderr).into_owned();
+                if let Some(failure) = exec_failure {
+                    stderr.insert_str(0, &format!("faber: {}\n", failure.describe(&task)));
+                }
+
                 Ok(TaskResult::Completed {
                     stdout: String::from_utf8_lossy(&collected.stdout).into_owned(),
-                    stderr: String::from_utf8_lossy(&collected.stderr).into_owned(),
+                    stderr,
                     exit_code: collected.exit_code,
                     stats,
                 })
@@ -768,6 +864,47 @@ impl Runtime {
         if serde_json::to_writer(&mut writer, result).is_ok() {
             let _ = writer.flush();
         }
+    }
+
+    /// Report a pre-exec failure to the parent and exit. Only async-signal-safe
+    /// calls: this runs in a child forked from a multithreaded process.
+    fn report_setup_failure(status: &PipeWriter, stage: SetupStage, errno: i32) -> ! {
+        let mut record = [0_u8; 5];
+        record[0] = stage as u8;
+        record[1..].copy_from_slice(&errno.to_ne_bytes());
+        unsafe { libc::write(status.as_raw_fd(), record.as_ptr().cast(), record.len()) };
+        Self::child_exit(if stage == SetupStage::Exec { 127 } else { 126 })
+    }
+
+    /// Read a task child's status pipe: `None` once `exec` closed it (or if it
+    /// stays silent for `timeout`), otherwise the reported failure.
+    fn read_setup_failure(status: &mut PipeReader, timeout: Duration) -> Option<SetupFailure> {
+        let mut poll_fd = libc::pollfd {
+            fd: status.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let timeout_ms = i32::try_from(timeout.as_millis()).unwrap_or(i32::MAX);
+        if unsafe { libc::poll(&mut poll_fd, 1, timeout_ms) } <= 0 {
+            return None;
+        }
+        let mut record = [0_u8; 5];
+        let mut filled = 0;
+        while filled < record.len() {
+            match status.read(&mut record[filled..]) {
+                Ok(0) => break,
+                Ok(read) => filled += read,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(_) => break,
+            }
+        }
+        if filled < record.len() {
+            return None;
+        }
+        Some(SetupFailure {
+            stage: SetupStage::from_code(record[0])?,
+            errno: i32::from_ne_bytes([record[1], record[2], record[3], record[4]]),
+        })
     }
 
     fn child_exit(code: i32) -> ! {
