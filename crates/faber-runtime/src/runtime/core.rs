@@ -585,9 +585,8 @@ impl Runtime {
         Container::mask_paths()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
 
-        // Mount a fresh proc filesystem in the child's PID namespace
-        // This is critical: the child is PID 1 in the new PID namespace,
-        // so mounting proc here will show only the namespace's processes
+        // Mount proc from inside the PID namespace. The dedicated namespace
+        // init is PID 1; this task is one of its descendants.
         Self::mount_proc_in_pid_namespace()?;
 
         // Mount sys from oldroot (sysfs doesn't have PID-specific info)
