@@ -793,6 +793,52 @@ fn overall_deadline_kills_only_the_expired_request() {
 }
 
 #[test]
+fn overall_deadline_returns_completed_steps_and_marks_the_rest() {
+    let _guard = lock_security_tests();
+    let started = std::time::Instant::now();
+    let result = RuntimeBuilder::default()
+        .with_task_group(vec![
+            ExecutionStep::Single(task("/bin/echo", &["first"])),
+            ExecutionStep::Single(task("/bin/sleep", &["3"])),
+            ExecutionStep::Parallel(vec![task("/bin/true", &[]), task("/bin/true", &[])]),
+        ])
+        .with_timeout(std::time::Duration::from_secs(5))
+        .with_overall_timeout(std::time::Duration::from_millis(1500))
+        .build()
+        .execute()
+        .expect("overall deadline discarded the completed steps");
+    assert!(started.elapsed() < std::time::Duration::from_millis(2500));
+    let RuntimeResult::Success(results) = result else {
+        panic!("container setup failed: {result:?}");
+    };
+    assert_eq!(results.len(), 3);
+
+    let TaskResult::Completed { stdout, stats, .. } = single_result(&results[0]) else {
+        panic!("first step failed: {:?}", results[0]);
+    };
+    assert_eq!(stdout, "first\n");
+    assert_eq!(stats.outcome, TaskOutcome::Exited);
+
+    let TaskResult::Completed { stats, .. } = single_result(&results[1]) else {
+        panic!("second step failed: {:?}", results[1]);
+    };
+    assert_eq!(stats.outcome, TaskOutcome::TimedOut);
+
+    let ExecutionStepResult::Parallel(unstarted) = &results[2] else {
+        panic!("expected parallel results");
+    };
+    assert_eq!(unstarted.len(), 2);
+    for result in unstarted {
+        let TaskResult::Failed { error, stats } = result else {
+            panic!("unstarted task ran: {result:?}");
+        };
+        assert!(error.contains("overall execution deadline"), "{error}");
+        assert_eq!(stats.outcome, TaskOutcome::NotStarted);
+    }
+    assert_no_task_cgroups();
+}
+
+#[test]
 fn container_setup_failures_remove_partial_roots_and_cgroups() {
     let _guard = lock_security_tests();
     let roots_before = container_roots();

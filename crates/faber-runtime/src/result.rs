@@ -174,6 +174,8 @@ pub enum TaskOutcome {
     PidsLimit,
     OutputLimit,
     PolicyViolation,
+    /// Never started because the request's overall deadline had passed.
+    NotStarted,
     #[default]
     InfrastructureFailure,
 }

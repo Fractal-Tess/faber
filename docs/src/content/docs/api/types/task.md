@@ -164,7 +164,7 @@ type ExecutionStats = {
   execution_time_ms: number;
   stdout_truncated: boolean;
   stderr_truncated: boolean;
-  outcome: "exited" | "signaled" | "timed_out" | "out_of_memory" | "ancestor_out_of_memory" | "pids_limit" | "output_limit" | "policy_violation" | "infrastructure_failure";
+  outcome: "exited" | "signaled" | "timed_out" | "out_of_memory" | "ancestor_out_of_memory" | "pids_limit" | "output_limit" | "policy_violation" | "not_started" | "infrastructure_failure";
   termination_signal: number | null;
   oom_kill_count: number;
   pids_limit_hit_count: number;

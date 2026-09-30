@@ -191,6 +191,18 @@ async fn execute_uncached(
                 "Sandbox setup failed",
             ))
         }
+        Err(FaberError::TaskTimeout {
+            timeout_duration, ..
+        }) => {
+            tracing::error!(?timeout_duration, "execution overran its overall deadline");
+            Err(ExecuteError::new(
+                StatusCode::GATEWAY_TIMEOUT,
+                format!(
+                    "Execution exceeded the overall deadline of {} ms and was killed",
+                    timeout_duration.as_millis()
+                ),
+            ))
+        }
         Err(FaberError::ShuttingDown) => Err(ExecuteError {
             retry_after: Some(1),
             ..ExecuteError::new(StatusCode::SERVICE_UNAVAILABLE, "Faber is shutting down")

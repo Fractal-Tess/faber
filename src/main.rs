@@ -16,6 +16,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .try_init()?;
 
     let config = Config::from_env()?;
+    let limits = &config.execution_limits;
+    let longest_request = limits
+        .wall_timeout
+        .saturating_mul(u32::try_from(limits.max_steps).unwrap_or(u32::MAX));
+    if longest_request > limits.overall_timeout {
+        tracing::warn!(
+            max_steps = limits.max_steps,
+            wall_timeout = ?limits.wall_timeout,
+            overall_timeout = ?limits.overall_timeout,
+            "a request of MAX_STEPS_PER_REQUEST steps at WALL_TIMEOUT_MS each can outlast \
+             OVERALL_TIMEOUT_MS; steps past the deadline are reported as not_started"
+        );
+    }
     Runtime::initialize()?;
     Runtime::configure_service_limits(
         &config.execution_limits.memory_max,

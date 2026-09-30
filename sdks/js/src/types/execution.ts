@@ -14,6 +14,7 @@ export type TaskOutcome =
   | 'pids_limit'
   | 'output_limit'
   | 'policy_violation'
+  | 'not_started'
   | 'infrastructure_failure';
 
 export type ExecutionStats = {

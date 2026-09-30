@@ -49,6 +49,19 @@ pub struct Runtime {
     pub(crate) cancellation: CancellationToken,
 }
 
+/// Per-task limits for one step, derived from the runtime limits and what
+/// remains of the request's overall budgets.
+#[derive(Clone, Copy)]
+struct StepLimits {
+    timeout: Duration,
+    output_limit: usize,
+}
+
+/// Grace the controller allows beyond the overall deadline before it kills
+/// the execution child itself. The child enforces the deadline between and
+/// within steps, so this only fires if the child stops making progress.
+const OVERALL_DEADLINE_BACKSTOP_GRACE: Duration = Duration::from_secs(2);
+
 struct CollectedOutput {
     stdout: Vec<u8>,
     stderr: Vec<u8>,
@@ -127,13 +140,14 @@ impl Runtime {
         )?;
 
         let (reader, writer) = mk_pipe()?;
+        let deadline = std::time::Instant::now() + self.overall_timeout;
 
         match unsafe { fork() } {
             Ok(ForkResult::Child) => {
                 drop(reader);
                 let _ = setpgid(Pid::from_raw(0), Pid::from_raw(0));
 
-                let runtime_result = self.execution_child(request_cgroup.path());
+                let runtime_result = self.execution_child(request_cgroup.path(), deadline);
                 Self::write_child_result(writer, &runtime_result);
                 Self::child_exit(0);
             }
@@ -141,7 +155,12 @@ impl Runtime {
                 close_fd(writer.into_raw_fd())?;
                 let _ = setpgid(child, child);
 
-                let runtime_result = self.read_runtime_result(child, reader, &request_cgroup);
+                let runtime_result = self.read_runtime_result(
+                    child,
+                    reader,
+                    &request_cgroup,
+                    deadline + OVERALL_DEADLINE_BACKSTOP_GRACE,
+                );
 
                 if let Err(error) = self.container.cleanup() {
                     tracing::error!(%error, "failed to cleanup container");
@@ -161,13 +180,13 @@ impl Runtime {
         child: Pid,
         mut reader: PipeReader,
         request_cgroup: &RequestCgroup,
+        deadline: std::time::Instant,
     ) -> Result<RuntimeResult> {
         use std::time::Instant;
 
         Self::set_nonblocking(reader.as_raw_fd()).map_err(|error| FaberError::Generic {
             message: format!("Failed to make runtime result pipe nonblocking: {error}"),
         })?;
-        let deadline = Instant::now() + self.overall_timeout;
         let mut bytes = Vec::new();
         let mut pipe_open = true;
         let mut child_exited = false;
@@ -279,7 +298,11 @@ impl Runtime {
         }
     }
 
-    fn execution_child(&self, request_cgroup_path: &Path) -> RuntimeResult {
+    fn execution_child(
+        &self,
+        request_cgroup_path: &Path,
+        deadline: std::time::Instant,
+    ) -> RuntimeResult {
         if let Err(e) = self.container.setup() {
             return RuntimeResult::ContainerSetupFailed {
                 error: format!("Container setup failed: {}", e),
@@ -305,12 +328,24 @@ impl Runtime {
         let mut results = Vec::with_capacity(self.task_group.len());
 
         for step in &self.task_group {
+            // Enforce the overall deadline here so that completed steps are
+            // returned: a running step's wall timeout is clipped to what is
+            // left, and steps that cannot start are reported as not started.
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                results.push(Self::not_started(step));
+                continue;
+            }
+            let limits = StepLimits {
+                timeout: self.timeout.min(remaining),
+                output_limit: self.output_limit,
+            };
             let result = match step {
                 ExecutionStep::Single(task) => {
-                    self.execute_single(task.clone(), request_cgroup_path)
+                    self.execute_single(task.clone(), request_cgroup_path, limits)
                 }
                 ExecutionStep::Parallel(tasks) => {
-                    self.execute_parallel(tasks.clone(), request_cgroup_path)
+                    self.execute_parallel(tasks.clone(), request_cgroup_path, limits)
                 }
             };
             results.push(result);
@@ -339,13 +374,35 @@ impl Runtime {
         }
     }
 
-    fn execute_single(&self, task: Task, request_cgroup_path: &Path) -> ExecutionStepResult {
+    fn not_started(step: &ExecutionStep) -> ExecutionStepResult {
+        let not_started = || TaskResult::Failed {
+            error: "Not started: the overall execution deadline was reached".to_string(),
+            stats: TaskResultStats {
+                outcome: TaskOutcome::NotStarted,
+                cleanup_succeeded: true,
+                ..TaskResultStats::default()
+            },
+        };
+        match step {
+            ExecutionStep::Single(_) => ExecutionStepResult::Single(not_started()),
+            ExecutionStep::Parallel(tasks) => {
+                ExecutionStepResult::Parallel(tasks.iter().map(|_| not_started()).collect())
+            }
+        }
+    }
+
+    fn execute_single(
+        &self,
+        task: Task,
+        request_cgroup_path: &Path,
+        limits: StepLimits,
+    ) -> ExecutionStepResult {
         match Self::execute_single_task(
             task,
             &self.cgroup,
-            self.timeout,
+            limits.timeout,
             self.cpu_time_limit,
-            self.output_limit,
+            limits.output_limit,
             request_cgroup_path,
         ) {
             Ok(task_result) => ExecutionStepResult::Single(task_result),
@@ -360,6 +417,7 @@ impl Runtime {
         &self,
         tasks: Vec<Task>,
         request_cgroup_path: &Path,
+        limits: StepLimits,
     ) -> ExecutionStepResult {
         // Cannot use std::thread::spawn after unshare(CLONE_NEWPID) because
         // the kernel rejects CLONE_THREAD when pid_ns_for_children differs
@@ -384,9 +442,9 @@ impl Runtime {
                     let result = match Self::execute_single_task(
                         task,
                         &self.cgroup,
-                        self.timeout,
+                        limits.timeout,
                         self.cpu_time_limit,
-                        self.output_limit,
+                        limits.output_limit,
                         request_cgroup_path,
                     ) {
                         Ok(task_result) => task_result,
