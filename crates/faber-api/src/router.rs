@@ -171,4 +171,27 @@ mod tests {
             serde_json::json!({"error": "Task group cannot be empty"})
         );
     }
+
+    #[tokio::test]
+    async fn execute_rejects_profiles_outside_service_policy() {
+        let router = build_router(
+            "test-key".to_string(),
+            false,
+            create_store(StoreConfig::default()),
+            ExecutionLimits {
+                allowed_sandbox_profiles: vec![faber_runtime::SandboxProfile::CompileV1],
+                ..ExecutionLimits::default()
+            },
+            1,
+        );
+        let request = Request::post("/execute")
+            .header("Authorization", "Bearer test-key")
+            .header("Content-Type", "application/json")
+            .body(Body::from(
+                r#"[{"cmd":"/bin/true","sandbox_profile":"native_v1"}]"#,
+            ))
+            .unwrap();
+        let response = router.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
 }

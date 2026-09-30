@@ -1097,8 +1097,35 @@ impl Runtime {
     }
 
     fn apply_seccomp_filter(profile: SandboxProfile) -> std::io::Result<()> {
-        use seccompiler::{BpfProgram, SeccompAction, SeccompFilter, SeccompRule};
+        use seccompiler::{
+            BpfProgram, SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition,
+            SeccompFilter, SeccompRule,
+        };
         use std::collections::BTreeMap;
+
+        #[cfg(target_arch = "x86_64")]
+        Self::apply_x32_seccomp_guard()?;
+
+        if profile == SandboxProfile::CompileV1 {
+            let architecture = std::env::consts::ARCH.try_into().map_err(|error| {
+                std::io::Error::other(format!("unsupported seccomp architecture: {error}"))
+            })?;
+            let filter = SeccompFilter::new(
+                BTreeMap::from([(libc::SYS_clone3, Vec::new())]),
+                SeccompAction::Allow,
+                SeccompAction::Errno(libc::ENOSYS as u32),
+                architecture,
+            )
+            .map_err(|error| {
+                std::io::Error::other(format!("failed to compile clone3 filter: {error}"))
+            })?;
+            let program: BpfProgram = filter.try_into().map_err(|error| {
+                std::io::Error::other(format!("failed to compile clone3 BPF: {error}"))
+            })?;
+            seccompiler::apply_filter(&program).map_err(|error| {
+                std::io::Error::other(format!("failed to apply clone3 filter: {error}"))
+            })?;
+        }
 
         let mut blocked_syscalls = vec![
             libc::SYS_acct,
@@ -1107,14 +1134,23 @@ impl Runtime {
             libc::SYS_delete_module,
             libc::SYS_finit_module,
             libc::SYS_fanotify_init,
+            libc::SYS_fsconfig,
+            libc::SYS_fsmount,
+            libc::SYS_fsopen,
             libc::SYS_init_module,
             libc::SYS_io_uring_setup,
             libc::SYS_kcmp,
             libc::SYS_kexec_load,
+            libc::SYS_kexec_file_load,
             libc::SYS_keyctl,
             libc::SYS_mount,
+            libc::SYS_mount_setattr,
+            libc::SYS_move_mount,
+            libc::SYS_name_to_handle_at,
+            libc::SYS_open_tree,
             libc::SYS_open_by_handle_at,
             libc::SYS_perf_event_open,
+            libc::SYS_pidfd_getfd,
             libc::SYS_pivot_root,
             libc::SYS_process_vm_readv,
             libc::SYS_process_vm_writev,
@@ -1140,10 +1176,53 @@ impl Runtime {
             blocked_syscalls.extend([libc::SYS_fork, libc::SYS_vfork]);
         }
 
+        if profile == SandboxProfile::CompileV1 {
+            let clone_rules = [
+                libc::CLONE_NEWCGROUP,
+                libc::CLONE_NEWIPC,
+                libc::CLONE_NEWNET,
+                libc::CLONE_NEWNS,
+                libc::CLONE_NEWPID,
+                libc::CLONE_NEWTIME,
+                libc::CLONE_NEWUSER,
+                libc::CLONE_NEWUTS,
+            ]
+            .into_iter()
+            .map(|flag| {
+                let flag = flag as u64;
+                let condition = SeccompCondition::new(
+                    0,
+                    SeccompCmpArgLen::Qword,
+                    SeccompCmpOp::MaskedEq(flag),
+                    flag,
+                )?;
+                SeccompRule::new(vec![condition])
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|error| {
+                std::io::Error::other(format!("failed to build clone flag rules: {error}"))
+            })?;
+            blocked_syscalls.push(libc::SYS_clone);
+            let mut rules: BTreeMap<i64, Vec<SeccompRule>> = blocked_syscalls
+                .into_iter()
+                .map(|syscall| (syscall, Vec::new()))
+                .collect();
+            rules.insert(libc::SYS_clone, clone_rules);
+            return Self::compile_and_apply_seccomp(rules);
+        }
+
         let rules: BTreeMap<i64, Vec<SeccompRule>> = blocked_syscalls
             .into_iter()
             .map(|syscall| (syscall, Vec::new()))
             .collect();
+        Self::compile_and_apply_seccomp(rules)
+    }
+
+    fn compile_and_apply_seccomp(
+        rules: std::collections::BTreeMap<i64, Vec<seccompiler::SeccompRule>>,
+    ) -> std::io::Result<()> {
+        use seccompiler::{BpfProgram, SeccompAction, SeccompFilter};
+
         let architecture = std::env::consts::ARCH.try_into().map_err(|error| {
             std::io::Error::other(format!("unsupported seccomp architecture: {error}"))
         })?;
@@ -1162,5 +1241,43 @@ impl Runtime {
         seccompiler::apply_filter(&program).map_err(|error| {
             std::io::Error::other(format!("failed to apply seccomp profile: {error}"))
         })
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn apply_x32_seccomp_guard() -> std::io::Result<()> {
+        const X32_SYSCALL_BIT: u32 = 0x4000_0000;
+        const BPF_LOAD_SYSCALL_NR: u16 = 0x20;
+        const BPF_JUMP_GREATER_OR_EQUAL: u16 = 0x35;
+        const BPF_RETURN: u16 = 0x06;
+        const SECCOMP_RETURN_TRAP: u32 = 0x0003_0000;
+        const SECCOMP_RETURN_ALLOW: u32 = 0x7fff_0000;
+
+        let mut instructions = [
+            libc::sock_filter { code: BPF_LOAD_SYSCALL_NR, jt: 0, jf: 0, k: 0 },
+            libc::sock_filter {
+                code: BPF_JUMP_GREATER_OR_EQUAL,
+                jt: 0,
+                jf: 1,
+                k: X32_SYSCALL_BIT,
+            },
+            libc::sock_filter { code: BPF_RETURN, jt: 0, jf: 0, k: SECCOMP_RETURN_TRAP },
+            libc::sock_filter { code: BPF_RETURN, jt: 0, jf: 0, k: SECCOMP_RETURN_ALLOW },
+        ];
+        let program = libc::sock_fprog {
+            len: instructions.len() as u16,
+            filter: instructions.as_mut_ptr(),
+        };
+        let result = unsafe {
+            libc::prctl(
+                libc::PR_SET_SECCOMP,
+                libc::SECCOMP_MODE_FILTER,
+                &program as *const libc::sock_fprog,
+            )
+        };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
     }
 }

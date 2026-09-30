@@ -6,7 +6,7 @@ use faber_runtime::{
 
 pub async fn execute(
     State(app_state): State<AppState>,
-    Json(task_group): Json<TaskGroup>,
+    Json(mut task_group): Json<TaskGroup>,
 ) -> Result<Json<TaskGroupResult>, (StatusCode, Json<ErrorResponse>)> {
     if task_group.is_empty() {
         return Err(execute_error(StatusCode::BAD_REQUEST, "Task group cannot be empty"));
@@ -20,6 +20,28 @@ pub async fn execute(
             StatusCode::UNPROCESSABLE_ENTITY,
             "Task group exceeds configured execution limits",
         ));
+    }
+    for step in &mut task_group {
+        let tasks = match step {
+            ExecutionStep::Single(task) => std::slice::from_mut(task),
+            ExecutionStep::Parallel(tasks) => tasks.as_mut_slice(),
+        };
+        for task in tasks {
+            let profile = task
+                .sandbox_profile
+                .unwrap_or(app_state.execution_limits.default_sandbox_profile);
+            if !app_state
+                .execution_limits
+                .allowed_sandbox_profiles
+                .contains(&profile)
+            {
+                return Err(execute_error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "Requested sandbox profile is not allowed by service policy",
+                ));
+            }
+            task.sandbox_profile = Some(profile);
+        }
     }
 
     if app_state.cache_enabled {

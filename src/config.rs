@@ -2,6 +2,7 @@ use std::env;
 use std::time::Duration;
 
 use faber_api::ExecutionLimits;
+use faber_runtime::SandboxProfile;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -72,6 +73,18 @@ impl Config {
             return Err("MEMORY_MAX must be finite for the API service".into());
         }
 
+        let default_sandbox_profile = Self::load_sandbox_profile(
+            &env::var("DEFAULT_SANDBOX_PROFILE").unwrap_or_else(|_| "compile_v1".to_string()),
+        )?;
+        let allowed_sandbox_profiles = env::var("ALLOWED_SANDBOX_PROFILES")
+            .unwrap_or_else(|_| "compile_v1,native_v1".to_string())
+            .split(',')
+            .map(|value| Self::load_sandbox_profile(value.trim()))
+            .collect::<Result<Vec<_>, _>>()?;
+        if !allowed_sandbox_profiles.contains(&default_sandbox_profile) {
+            return Err("DEFAULT_SANDBOX_PROFILE must be present in ALLOWED_SANDBOX_PROFILES".into());
+        }
+
         Ok(ExecutionLimits {
             memory_max,
             pids_max: Self::load_env("PIDS_MAX", 64)?,
@@ -83,7 +96,19 @@ impl Config {
             max_parallel_tasks: Self::load_env("MAX_PARALLEL_TASKS", 16)?,
             execute_body_limit: Self::load_env("EXECUTE_BODY_LIMIT_BYTES", 1024 * 1024)?,
             upload_file_limit: Self::load_env("UPLOAD_FILE_LIMIT_BYTES", 50 * 1024 * 1024)?,
+            default_sandbox_profile,
+            allowed_sandbox_profiles,
         })
+    }
+
+    fn load_sandbox_profile(
+        value: &str,
+    ) -> Result<SandboxProfile, Box<dyn std::error::Error + Send + Sync>> {
+        match value {
+            "compile_v1" => Ok(SandboxProfile::CompileV1),
+            "native_v1" => Ok(SandboxProfile::NativeV1),
+            _ => Err(format!("Unknown sandbox profile: {value}").into()),
+        }
     }
 
     fn load_env<T>(name: &str, default: T) -> Result<T, Box<dyn std::error::Error + Send + Sync>>

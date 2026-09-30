@@ -2,6 +2,7 @@ use crate::cache::ExecutionCache;
 use faber_store::FileStore;
 use std::sync::Arc;
 use std::time::Duration;
+use faber_runtime::SandboxProfile;
 
 #[derive(Clone, Debug)]
 pub struct ExecutionLimits {
@@ -15,6 +16,8 @@ pub struct ExecutionLimits {
     pub max_parallel_tasks: usize,
     pub execute_body_limit: usize,
     pub upload_file_limit: usize,
+    pub default_sandbox_profile: SandboxProfile,
+    pub allowed_sandbox_profiles: Vec<SandboxProfile>,
 }
 
 impl Default for ExecutionLimits {
@@ -30,6 +33,8 @@ impl Default for ExecutionLimits {
             max_parallel_tasks: 16,
             execute_body_limit: 1024 * 1024,
             upload_file_limit: 50 * 1024 * 1024,
+            default_sandbox_profile: SandboxProfile::CompileV1,
+            allowed_sandbox_profiles: vec![SandboxProfile::CompileV1, SandboxProfile::NativeV1],
         }
     }
 }

@@ -35,7 +35,8 @@ Implemented:
 
 Not production-ready:
 
-- seccomp profiles are denylist-based rather than exhaustive syscall allowlists
+- seccomp profiles are service-controlled and cover known namespace/mount/x32
+  bypasses, but remain denylists rather than exhaustive syscall allowlists
 - API cancellation and disposable-VM race/concurrency stress remain incomplete
 - library callers may opt out of memory ceilings, while the API service enforces
   finite memory, PID, CPU, wall-time, CPU-time, and output defaults

@@ -116,6 +116,9 @@ int main(void) {
 "#;
 
 const SECCOMP_PROBE_SOURCE: &str = r#"
+#include <errno.h>
+#include <sched.h>
+#include <signal.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/syscall.h>
@@ -130,6 +133,21 @@ int main(int argc, char **argv) {
     if (argc != 2) {
         return 64;
     }
+    if (strcmp(argv[1], "clone_newuser") == 0) {
+        syscall(SYS_clone, CLONE_NEWUSER | SIGCHLD, 0, 0, 0, 0);
+        return 2;
+    }
+    if (strcmp(argv[1], "clone3_enosys") == 0) {
+        errno = 0;
+        long result = syscall(SYS_clone3, 0, 0);
+        return result == -1 && errno == ENOSYS ? 0 : 3;
+    }
+#ifdef __x86_64__
+    if (strcmp(argv[1], "x32") == 0) {
+        syscall(SYS_getpid | 0x40000000UL);
+        return 2;
+    }
+#endif
     const struct syscall_entry entries[] = {
         {"acct", SYS_acct},
         {"add_key", SYS_add_key},
@@ -139,16 +157,25 @@ int main(int argc, char **argv) {
         {"delete_module", SYS_delete_module},
         {"fanotify_init", SYS_fanotify_init},
         {"finit_module", SYS_finit_module},
+        {"fsconfig", SYS_fsconfig},
+        {"fsmount", SYS_fsmount},
+        {"fsopen", SYS_fsopen},
         {"fork", SYS_fork},
         {"init_module", SYS_init_module},
         {"io_uring_setup", SYS_io_uring_setup},
         {"kcmp", SYS_kcmp},
         {"kexec_load", SYS_kexec_load},
+        {"kexec_file_load", SYS_kexec_file_load},
         {"keyctl", SYS_keyctl},
         {"mount", SYS_mount},
+        {"mount_setattr", SYS_mount_setattr},
+        {"move_mount", SYS_move_mount},
+        {"name_to_handle_at", SYS_name_to_handle_at},
         {"open_by_handle_at", SYS_open_by_handle_at},
+        {"open_tree", SYS_open_tree},
         {"perf_event_open", SYS_perf_event_open},
         {"pivot_root", SYS_pivot_root},
+        {"pidfd_getfd", SYS_pidfd_getfd},
         {"process_vm_readv", SYS_process_vm_readv},
         {"process_vm_writev", SYS_process_vm_writev},
         {"ptrace", SYS_ptrace},
@@ -1395,15 +1422,24 @@ fn every_seccomp_profile_rule_reports_a_policy_violation() {
         "delete_module",
         "fanotify_init",
         "finit_module",
+        "fsconfig",
+        "fsmount",
+        "fsopen",
         "init_module",
         "io_uring_setup",
         "kcmp",
         "kexec_load",
+        "kexec_file_load",
         "keyctl",
         "mount",
+        "mount_setattr",
+        "move_mount",
+        "name_to_handle_at",
         "open_by_handle_at",
+        "open_tree",
         "perf_event_open",
         "pivot_root",
+        "pidfd_getfd",
         "process_vm_readv",
         "process_vm_writev",
         "ptrace",
@@ -1442,6 +1478,22 @@ fn every_seccomp_profile_rule_reports_a_policy_violation() {
         tasks.push(probe);
         expected.push((profile, syscall));
     }
+    for syscall in ["clone_newuser"] {
+        let mut probe = task("./seccomp_probe", &[syscall]);
+        probe.sandbox_profile = Some(SandboxProfile::CompileV1);
+        tasks.push(probe);
+        expected.push((SandboxProfile::CompileV1, syscall));
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        let mut probe = task("./seccomp_probe", &["x32"]);
+        probe.sandbox_profile = Some(SandboxProfile::CompileV1);
+        tasks.push(probe);
+        expected.push((SandboxProfile::CompileV1, "x32"));
+    }
+    let mut clone3_probe = task("./seccomp_probe", &["clone3_enosys"]);
+    clone3_probe.sandbox_profile = Some(SandboxProfile::CompileV1);
+    tasks.push(clone3_probe);
 
     let results = execute(tasks);
     let TaskResult::Completed {
@@ -1470,6 +1522,15 @@ fn every_seccomp_profile_rule_reports_a_policy_violation() {
         assert_eq!(stats.termination_signal, Some(libc::SIGSYS));
         assert!(stats.cleanup_succeeded);
     }
+
+    let TaskResult::Completed {
+        exit_code, stats, ..
+    } = single_result(results.last().unwrap())
+    else {
+        panic!("compile clone3 fallback probe produced no result");
+    };
+    assert_eq!(*exit_code, 0);
+    assert_eq!(stats.outcome, TaskOutcome::Exited);
 }
 
 #[test]
