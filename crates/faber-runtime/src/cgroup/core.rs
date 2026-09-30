@@ -22,6 +22,10 @@ impl Cgroup {
         Self { config }
     }
 
+    pub(crate) fn config(&self) -> &CgroupConfig {
+        &self.config
+    }
+
     pub fn ensure_faber_cgroup_hierarchy() -> Result<()> {
         let mut path = FABER_CGROUP_PATH.lock().map_err(|_| FaberError::Generic {
             message: "Faber cgroup initialization lock was poisoned".to_string(),
@@ -80,29 +84,59 @@ impl Cgroup {
             })
     }
 
-    /// Detect the current process's cgroup v2 path on the filesystem.
+    /// Resolve the cgroup this service manages: the one it was started in.
     /// Reads /proc/self/cgroup to find "0::/<relative-path>" and resolves it
     /// against the cgroup2 mount at /sys/fs/cgroup.
     fn detect_own_cgroup_path() -> Result<PathBuf> {
         let content = read_to_string("/proc/self/cgroup").map_err(|e| FaberError::Generic {
             message: format!("Failed to read /proc/self/cgroup: {}", e),
         })?;
+        let relative_path = content
+            .lines()
+            .find_map(|line| line.strip_prefix("0::"))
+            .ok_or_else(|| FaberError::Generic {
+                message: "This process is not in a cgroup v2 hierarchy".to_string(),
+            })?;
+        let own_path = PathBuf::from("/sys/fs/cgroup").join(relative_path.trim_start_matches('/'));
 
-        for line in content.lines() {
-            if let Some(rel_path) = line.strip_prefix("0::") {
-                let rel_path = rel_path.trim_start_matches('/');
-                let full_path = if rel_path.is_empty() {
-                    PathBuf::from("/sys/fs/cgroup")
-                } else {
-                    PathBuf::from("/sys/fs/cgroup").join(rel_path)
-                };
-                debug!("Detected own cgroup path: {}", full_path.display());
-                return Ok(full_path);
-            }
+        // /proc/self/cgroup is relative to the cgroup namespace while the
+        // mount may be the host's whole tree. When the two disagree the
+        // resolved path is someone else's cgroup (the host root, for a
+        // private namespace), so refuse to manage it.
+        let members =
+            read_to_string(own_path.join("cgroup.procs")).map_err(|e| FaberError::Generic {
+                message: format!("Failed to read {}/cgroup.procs: {}", own_path.display(), e),
+            })?;
+        if !Self::lists_process(&members, std::process::id()) {
+            return Err(FaberError::Generic {
+                message: format!(
+                    "{} does not contain this process: the cgroup mount and the cgroup \
+                     namespace disagree. Run the container with --cgroupns=host and the \
+                     host's /sys/fs/cgroup mounted, or with neither.",
+                    own_path.display()
+                ),
+            });
         }
 
-        debug!("Could not parse /proc/self/cgroup, falling back to /sys/fs/cgroup");
-        Ok(PathBuf::from("/sys/fs/cgroup"))
+        let base_path = Self::service_base(&own_path).to_path_buf();
+        debug!("Detected base cgroup path: {}", base_path.display());
+        Ok(base_path)
+    }
+
+    fn lists_process(cgroup_procs: &str, pid: u32) -> bool {
+        cgroup_procs
+            .lines()
+            .any(|line| line.trim().parse::<u32>() == Ok(pid))
+    }
+
+    /// A previous start moves the service into `<base>/faber-init`, and a
+    /// restart in the same container begins there. Step back out so the
+    /// hierarchy is reused instead of nesting one level deeper per restart.
+    fn service_base(own_path: &Path) -> &Path {
+        match (own_path.file_name(), own_path.parent()) {
+            (Some(name), Some(parent)) if name == "faber-init" => parent,
+            _ => own_path,
+        }
     }
 
     fn create_faber_cgroup_hierarchy() -> Result<PathBuf> {
@@ -287,5 +321,29 @@ impl Cgroup {
 
     pub fn create_task_cgroup(&self, request_cgroup_path: &Path) -> Result<TaskCgroup> {
         TaskCgroup::new(self.config.clone(), request_cgroup_path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Cgroup;
+    use std::path::Path;
+
+    #[test]
+    fn restarted_service_reuses_the_base_cgroup() {
+        let scope = Path::new("/sys/fs/cgroup/system.slice/docker-abc.scope");
+        assert_eq!(Cgroup::service_base(scope), scope);
+        assert_eq!(Cgroup::service_base(&scope.join("faber-init")), scope);
+        assert_eq!(
+            Cgroup::service_base(Path::new("/sys/fs/cgroup")),
+            Path::new("/sys/fs/cgroup")
+        );
+    }
+
+    #[test]
+    fn membership_requires_an_exact_pid_line() {
+        assert!(Cgroup::lists_process("1\n28\n", 28));
+        assert!(!Cgroup::lists_process("1\n280\n0\n", 28));
+        assert!(!Cgroup::lists_process("", 28));
     }
 }
