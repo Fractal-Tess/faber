@@ -87,8 +87,7 @@ Invalid or missing key:
 
 ```json
 {
-  "error": "Unauthorized",
-  "message": "Invalid or missing API key"
+  "error": "Missing or invalid API key"
 }
 ```
 

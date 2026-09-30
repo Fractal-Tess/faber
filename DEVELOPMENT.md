@@ -72,8 +72,8 @@ host:
 ./scripts/dev.sh test
 ```
 
-Run only the sandbox isolation, cancellation, and cgroup acceptance tests while
-working on the jailer:
+Run only the sandbox isolation, cancellation, shutdown, and cgroup acceptance
+tests while working on the jailer:
 
 ```bash
 ./scripts/dev.sh test-security

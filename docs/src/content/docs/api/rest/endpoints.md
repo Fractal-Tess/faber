@@ -157,8 +157,7 @@ Array of `TaskResult` or `TaskResult[]` (for parallel steps).
 
 ```json
 {
-  "error": "Unauthorized",
-  "message": "Invalid or missing API key"
+  "error": "Missing or invalid API key"
 }
 ```
 

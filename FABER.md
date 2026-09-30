@@ -353,8 +353,11 @@ crates/
 | `API_KEY` | Yes | - | API key for authentication |
 | `PORT` | No | `3000` | Server port |
 | `HOST` | No | `0.0.0.0` | Server bind address |
-| `MAX_CONCURRENCY` | No | `10` | Max concurrent requests |
+| `MAX_CONCURRENCY` | No | `10` | Task slots: sandboxed tasks running at once; a request reserves one per task of its widest step |
 | `CACHE_ENABLED` | No | `false` | Enable experimental whole-request result caching |
+
+The README lists every variable, including the per-task and per-request limits
+and the file store settings, with their defaults.
 
 ### Runtime Defaults
 
