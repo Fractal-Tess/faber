@@ -182,8 +182,8 @@ int main(void) {
     print_file_field("status", "/proc/self/status", 1);
     print_file_field("cgroup", "/proc/self/cgroup", 1);
     print_file_field("mountinfo", "/proc/self/mountinfo", 1);
-    print_file_field("route4", "/proc/net/route", 1);
-    print_file_field("route6", "/proc/net/ipv6_route", 1);
+    print_file_field("route4", "/proc/self/net/route", 1);
+    print_file_field("route6", "/proc/self/net/ipv6_route", 1);
 
     fputs("\"rlimits\":{", stdout);
     print_rlimit("cpu", RLIMIT_CPU, 1);

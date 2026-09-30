@@ -1,4 +1,6 @@
-#[derive(Debug, Clone)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CgroupConfig {
     pub(crate) cpu_max: String,
     pub(crate) memory_max: String,

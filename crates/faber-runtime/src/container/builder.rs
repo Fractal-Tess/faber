@@ -15,7 +15,7 @@ impl ContainerConfigBuilder {
     }
 
     pub fn with_ro_bind_mounts(mut self, ro_bind_mounts: Vec<&'static str>) -> Self {
-        self.config.bind_mounts_ro = ro_bind_mounts;
+        self.config.bind_mounts_ro = ro_bind_mounts.into_iter().map(String::from).collect();
         self
     }
 

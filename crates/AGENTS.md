@@ -41,7 +41,9 @@ crates/
         ├── container/       # Namespace isolation
         │   ├── core.rs      # Container struct, pivot_root
         ├── runtime/         # Task execution engine
-        │   ├── core.rs      # Runtime, RuntimeBuilder
+        │   ├── core.rs      # Runtime: controller, sandbox setup, task supervision
+        │   ├── jailer.rs    # Re-executed jailer process and its job
+        │   ├── identity.rs  # Per-request host UID/GID leases
         │   └── builder.rs   # Builder pattern
         ├── task.rs          # Task, ExecutionStep definitions
         ├── result.rs        # TaskResult, RuntimeResult
@@ -89,13 +91,14 @@ pub enum FaberError {
 ```
 
 ### Task Execution Flow
-1. `Runtime::execute()` receives `TaskGroup`
-2. Fork → child process sets up container (namespaces, pivot_root)
-3. For each `ExecutionStep`:
-   - Single task: fork → cgroup setup → exec → wait → collect stats
-   - Parallel tasks: spawn all → wait all → collect results
-4. Cleanup container and cgroups
-5. Return `TaskGroupResult`
+1. `Runtime::execute()` leases a host identity and creates the request cgroup
+2. It starts the jailer: the same executable again (`/proc/self/exe`, empty
+   environment), which takes over before `main` and reads the job from stdin
+3. The jailer sets up the container (namespaces, pivot_root)
+4. For each task of an `ExecutionStep` the jailer forks a supervisor, which
+   creates the task's PID namespace and init, then: fork → cgroup join →
+   privilege drop → exec → wait → collect stats. Parallel tasks run side by side
+5. The controller reads the result, then cleans up the container and cgroups
 
 ---
 
@@ -112,18 +115,16 @@ pub enum FaberError {
 ## Critical Implementation Details
 
 ### Container Isolation
-- **Namespaces**: PID, mount, network, UTS, IPC
-- **User**: Unprivileged (UID/GID 65534 - nobody)
+- **Namespaces**: mount, network, UTS, IPC per request; PID and user per task
+- **User**: 65534 inside the user namespace, a per-request host UID/GID (100000+) outside
 - **Capabilities**: All dropped via `capset`
 - **Filesystem**: pivot_root to minimal rootfs
 
 ### Cgroup v2 Requirements
 ```rust
-// Cgroup path format: one request cgroup per execution, one task cgroup per task
-/sys/fs/cgroup/faber/req-{id}/task-{id}/
-
-// Required controllers
-echo "+cpu +memory +pids" > /sys/fs/cgroup/faber/cgroup.subtree_control
+// Cgroup path format: one request cgroup per execution, one task cgroup per task,
+// beneath the cgroup the service was started in
+<container cgroup>/faber/req-{id}/task-{id}/
 ```
 
 ### API Authentication
@@ -144,26 +145,21 @@ Authorization: <api_key>
 # Unit tests
 cargo test
 
-# Integration tests (requires cgroup setup)
+# Integration tests
 cargo test --test integration_tests
 
 # Run server
 cargo run
 ```
 
-**Cgroup Setup Required:**
-```bash
-sudo mkdir -p /sys/fs/cgroup/faber
-sudo chmod 0755 /sys/fs/cgroup/faber
-echo "+cpu +memory +pids" | sudo tee /sys/fs/cgroup/faber/cgroup.subtree_control
-```
+Run these inside the dev container or the VM (`scripts/dev.sh`, `scripts/vm.sh`),
+never on the host. Faber creates its cgroups inside the container's own cgroup (`<container cgroup>/faber/req-*/task-*`); nothing has to be created on the host.
 
 ---
 
 ## Anti-Patterns
 
 **NEVER:**
-- Run without cgroup setup (ENOMEM errors)
 - Use `unwrap()` in production code
 - Block the async runtime with sync I/O
 - Forget to cleanup cgroup directories

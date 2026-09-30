@@ -62,7 +62,7 @@ fn test_basic_command_execution() {
 fn test_pid_namespace_isolation() {
     let task = Task {
         cmd: "/bin/sh".to_string(),
-        args: Some(vec!["-c".to_string(), "echo $$ && ps aux".to_string()]),
+        args: Some(vec!["-c".to_string(), "echo $$ && ls /proc".to_string()]),
         env: None,
         stdin: None,
         files: None,
@@ -99,9 +99,13 @@ fn test_pid_namespace_isolation() {
                                 "Expected task PID 2 after namespace init, got: {}",
                                 first_line
                             );
+                            // procfs is mounted with subset=pid: only the
+                            // namespace's own processes are listed.
+                            let pids: Vec<u32> =
+                                lines.iter().filter_map(|line| line.parse().ok()).collect();
                             assert!(
-                                stdout.contains("PID"),
-                                "Expected ps output from the namespaced procfs, got: {}",
+                                pids.contains(&1) && pids.iter().all(|pid| *pid < 16),
+                                "Expected only namespaced processes in /proc, got: {}",
                                 stdout
                             );
                         }

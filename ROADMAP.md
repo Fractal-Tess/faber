@@ -149,7 +149,7 @@ The runtime now uses `seccompiler` and installs a fail-closed filter before
 - language-specific runtime profiles for JVM, Node, Python, and other supported
   toolchains
 
-Both profiles trap policy violations with `SIGSYS`, which results report as
+Both profiles kill the process on a policy violation with `SIGSYS`, which results report as
 `policy_violation`. `compile_v1` denies namespace, mount, kernel-module,
 introspection, keyring, and high-risk kernel interfaces while retaining process
 creation. `native_v1` additionally denies process creation and sockets. These
@@ -157,7 +157,7 @@ are versioned denylists, not exhaustive syscall allowlists; representative
 workload tracing and tighter language-specific profiles remain future work.
 
 **User namespace complete:** every task enters a fresh user namespace mapping
-inner 65534:65534 to exactly outer 65534:65534. The controller-side
+inner 65534:65534 to exactly one outer identity leased to its request. The controller-side
 probe verifies distinct namespace inodes, one-entry maps, empty supplementary
 groups, and empty capability sets. Seccomp remains an independent slice.
 

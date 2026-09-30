@@ -1,13 +1,16 @@
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
+
 use crate::utils::generate_random_string;
 
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ContainerConfig {
     pub(crate) container_root_dir: PathBuf,
     pub(crate) workdir: PathBuf,
     pub(crate) tmpdir_size: String,
     pub(crate) workdir_size: String,
-    pub(crate) bind_mounts_ro: Vec<&'static str>,
+    pub(crate) bind_mounts_ro: Vec<String>,
     pub(crate) hostname: String,
 }
 
@@ -15,7 +18,9 @@ impl Default for ContainerConfig {
     fn default() -> Self {
         let id = generate_random_string(12);
         let container_root_dir = PathBuf::from(format!("/tmp/faber/{}", id));
-        let bind_mounts_ro = vec!["/bin", "/lib", "/lib64", "/usr"];
+        let bind_mounts_ro = ["/bin", "/lib", "/lib64", "/usr"]
+            .map(String::from)
+            .to_vec();
         let workdir = PathBuf::from("/faber");
         let tmpdir_size = "128M".to_string();
         let workdir_size = "128M".to_string();

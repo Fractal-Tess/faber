@@ -19,16 +19,17 @@ kernel and CI environments; it is not a proof against unknown kernel defects.
 | Attack family | Probes and evidence |
 |---|---|
 | Submitted paths | Absolute paths, `..`, symlinks, proc magic links, cross-mount hard links, directories, FIFOs, Unix sockets, devices, parallel symlink swaps, and atomic `RENAME_EXCHANGE` swaps during nested directory creation |
-| Root and mounts | Outer-root marker, old-root absence, private propagation, read-only toolchains/sysfs, absent cgroup filesystem, `nodev,nosuid` writable tmpfs mounts |
-| Identity | UID/GID map comparison, supplementary groups, setuid/setgid/setgroups regain, map rewriting, chroot, hostname changes, capability and ambient-capability regain |
-| Process visibility | PID namespace inode, bounded procfs process list, protected namespace PID 1, denied `/proc/1/root`, orphan/double-fork reaping |
+| Root and mounts | Outer-root marker, old-root absence, private propagation, read-only toolchains, empty `/sys`, `subset=pid` procfs without host-wide files, absent cgroup filesystem, `nodev,nosuid` writable tmpfs mounts |
+| Identity | User namespace owned by the request's leased identity, distinct identities for concurrent requests, UID/GID map comparison, supplementary groups, setuid/setgid/setgroups regain, map rewriting, chroot, hostname changes, capability and ambient-capability regain |
+| Process visibility | Per-task PID namespace, parallel tasks unable to see or signal each other, bounded procfs process list, protected namespace PID 1, denied `/proc/1/root`, orphan/double-fork reaping |
 | File descriptors | Post-`exec` enumeration permits only stdin/stdout/stderr plus the probe’s own temporary directory descriptor |
-| Syscalls | Every syscall entry in `compile_v1` and `native_v1` is invoked directly and must terminate with `SIGSYS`/`policy_violation` |
+| Syscalls | Every syscall entry in `compile_v1` and `native_v1` is invoked directly and must terminate with `SIGSYS`/`policy_violation`, also when the task handles `SIGSYS`; `compile_v1` socket-family and netlink-protocol rules |
 | Network | Interface inventory, IPv4/IPv6 route tables, external nonblocking connects, resolver-file absence, native socket denial, unique net namespace per runtime |
 | Memory and processes | Real OOM kill with `memory.events`, own-limit versus ancestor-limit OOM classification, per-request cgroup sizing, swap disabled, fork exhaustion with `pids.events`, peak values, cgroup cleanup |
 | Timeout teardown | Atomic `cgroup.kill`, fork-successor stdout holders, bounded pipe grace, overall execution deadline scoped to its own request cgroup and returning completed steps with later ones marked `not_started`, no leaked request or task cgroups |
 | CPU and rlimits | `cpu.max` throttling counters, independent `RLIMIT_CPU`, `EMFILE`, `EFBIG`, stack signal, zero core files |
 | I/O | stdout/stderr floods, binary-size caps, truncation reporting, per-request output budget, concurrent stdin/stdout, large parallel result transport, 16 MiB result transport-time bound |
+| Supervisors | Jailer, task supervisor and namespace init hold no sockets and no environment of the embedding process |
 | Lifecycle | Timeout, signal, output kill, policy kill, setup failure, pre-exec failures reported by stage and errno rather than as exit codes, cancelled API request torn down immediately, shutdown stops multi-step requests and refuses new ones, disconnecting clients held to the concurrency limit, cgroup/root cleanup, concurrent distinct cgroups |
 
 ## Deliberately excluded from privileged-container tests
@@ -51,10 +52,10 @@ suite must not be represented as protection from host-kernel compromise.
 
 - Seccomp profiles are versioned denylists, not exhaustive allowlists.
 - ARM64 is build-tested but not runtime-tested.
-- The API still forks from a multithreaded service process and performs setup
-  before `exec`. Forked paths now avoid inherited mutex acquisition, use `_exit`,
-  and cannot return into Tokio, but these mitigations do not make non-async-signal-
-  safe Rust setup code safe after a multithreaded fork. A dedicated single-threaded
-  jailer remains the required architectural fix.
+- The jailer, task supervisors and PID namespace inits run as root outside the
+  request cgroup, so their own memory and CPU use is not charged to the request.
+  It is bounded by the request's output limits.
+- Sandbox identities are leased per service process; several Faber services on
+  one kernel can overlap and then share per-user kernel limits.
 - Namespace isolation cannot prevent kernel vulnerabilities or all denial-of-service
   and microarchitectural attacks.

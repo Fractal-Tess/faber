@@ -136,17 +136,27 @@ int main(void) {
 const SECCOMP_PROBE_SOURCE: &str = r#"
 #define _GNU_SOURCE
 #include <errno.h>
+#include <linux/netlink.h>
 #include <sched.h>
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+
+#ifndef AF_VSOCK
+#define AF_VSOCK 40
+#endif
 
 struct syscall_entry {
     const char *name;
     long number;
 };
+
+static void ignore_signal(int signal_number) {
+    (void)signal_number;
+}
 
 int main(int argc, char **argv) {
     if (argc != 2) {
@@ -155,6 +165,33 @@ int main(int argc, char **argv) {
     if (strcmp(argv[1], "clone_newuser") == 0) {
         syscall(SYS_clone, CLONE_NEWUSER | SIGCHLD, 0, 0, 0, 0);
         return 2;
+    }
+    if (strcmp(argv[1], "socket_vsock") == 0) {
+        syscall(SYS_socket, AF_VSOCK, SOCK_STREAM, 0);
+        return 2;
+    }
+    if (strcmp(argv[1], "socket_netlink_audit") == 0) {
+        syscall(SYS_socket, AF_NETLINK, SOCK_RAW, NETLINK_AUDIT);
+        return 2;
+    }
+    if (strcmp(argv[1], "handled_violation") == 0) {
+        signal(SIGSYS, ignore_signal);
+        syscall(SYS_unshare, CLONE_NEWNS);
+        return 2;
+    }
+    if (strcmp(argv[1], "sockets_allowed") == 0) {
+        const int sockets[][3] = {
+            {AF_UNIX, SOCK_STREAM, 0},
+            {AF_INET, SOCK_STREAM, 0},
+            {AF_INET6, SOCK_DGRAM, 0},
+            {AF_NETLINK, SOCK_RAW, NETLINK_ROUTE},
+        };
+        for (size_t index = 0; index < sizeof(sockets) / sizeof(sockets[0]); index++) {
+            if (socket(sockets[index][0], sockets[index][1], sockets[index][2]) < 0) {
+                return 4 + (int)index;
+            }
+        }
+        return 0;
     }
     if (strcmp(argv[1], "clone3_enosys") == 0) {
         errno = 0;
@@ -206,6 +243,7 @@ int main(int argc, char **argv) {
         {"socketpair", SYS_socketpair},
         {"swapoff", SYS_swapoff},
         {"swapon", SYS_swapon},
+        {"syslog", SYS_syslog},
         {"umount2", SYS_umount2},
         {"unshare", SYS_unshare},
         {"userfaultfd", SYS_userfaultfd},
@@ -438,7 +476,7 @@ static void connect_must_fail(int family, const void *address, socklen_t length)
 }
 
 static void verify_no_default_routes(void) {
-    FILE *routes = fopen("/proc/net/route", "r");
+    FILE *routes = fopen("/proc/self/net/route", "r");
     if (routes == NULL) {
         failures++;
         return;
@@ -456,7 +494,7 @@ static void verify_no_default_routes(void) {
     }
     fclose(routes);
 
-    routes = fopen("/proc/net/ipv6_route", "r");
+    routes = fopen("/proc/self/net/ipv6_route", "r");
     if (routes == NULL) {
         failures++;
         return;
@@ -627,6 +665,9 @@ int main(void) {
     return 0;
 }
 "#;
+
+/// Host UIDs/GIDs the runtime leases to requests.
+const SANDBOX_IDENTITIES: std::ops::Range<u32> = 100_000..165_536;
 
 fn lock_security_tests() -> MutexGuard<'static, ()> {
     SECURITY_TEST_LOCK
@@ -938,16 +979,17 @@ fn security_probe_records_identity_namespaces_mounts_and_limits() {
 
     let uid_map: Vec<&str> = state.uid_map.split_whitespace().collect();
     let gid_map: Vec<&str> = state.gid_map.split_whitespace().collect();
-    assert_eq!(
-        uid_map,
-        ["65534", "65534", "1"],
-        "task UID map exposed an unexpected outer identity"
+    // Inside, the task is 65534. Outside, it is the one identity leased to
+    // this request, the same for its UID and GID.
+    let outer_identity = match uid_map.as_slice() {
+        ["65534", outer, "1"] => outer.parse::<u32>().expect("outer UID was not a number"),
+        _ => panic!("task UID map was not a single 65534 entry: {uid_map:?}"),
+    };
+    assert!(
+        SANDBOX_IDENTITIES.contains(&outer_identity),
+        "task UID map exposed an unexpected outer identity: {uid_map:?}"
     );
-    assert_eq!(
-        gid_map,
-        ["65534", "65534", "1"],
-        "task GID map exposed an unexpected outer identity"
-    );
+    assert_eq!(gid_map, uid_map, "task GID map differs from its UID map");
     assert!(
         state.groups.is_empty(),
         "supplementary groups were not cleared: {:?}",
@@ -972,10 +1014,19 @@ fn security_probe_records_identity_namespaces_mounts_and_limits() {
     let sys_options = sys_mount
         .split_whitespace()
         .nth(5)
-        .expect("sysfs mount options were missing");
+        .expect("/sys mount options were missing");
     assert!(
         sys_options.split(',').any(|option| option == "ro"),
-        "sysfs was not read-only: {sys_mount}"
+        "/sys was not read-only: {sys_mount}"
+    );
+    assert!(
+        sys_mount.contains(" - tmpfs "),
+        "/sys exposes something other than an empty tmpfs: {sys_mount}"
+    );
+    let proc_mount = mountinfo_line(&state.mountinfo, "/proc");
+    assert!(
+        proc_mount.contains("subset=pid"),
+        "procfs exposes more than per-process entries: {proc_mount}"
     );
     assert!(
         state
@@ -1144,6 +1195,246 @@ fn identity_procfs_and_descriptor_escape_attempts_fail() {
         panic!("namespace init liveness probe failed: {:?}", results[2]);
     };
     assert_eq!(*init_exit, 1, "task could signal namespace PID 1");
+}
+
+#[test]
+fn procfs_and_sysfs_expose_no_host_state() {
+    let _guard = lock_security_tests();
+    let script = "for file in cmdline meminfo stat loadavg interrupts version modules net sys; do \
+                      test ! -e /proc/$file || { echo visible: /proc/$file; exit 1; }; \
+                  done; \
+                  test -r /proc/self/status && test -r /proc/self/net/route && \
+                  test -z \"$(ls -A /sys)\" && \
+                  ! touch /sys/faber-write-test 2>/dev/null && \
+                  ! touch /proc/faber-write-test 2>/dev/null";
+    let results = execute(vec![task("/bin/sh", &["-c", script])]);
+
+    let TaskResult::Completed {
+        exit_code,
+        stdout,
+        stderr,
+        ..
+    } = single_result(&results[0])
+    else {
+        panic!("procfs probe did not complete: {:?}", results[0]);
+    };
+    assert_eq!(*exit_code, 0, "stdout: {stdout} stderr: {stderr}");
+}
+
+/// Processes whose parent is `parent`, as (pid, real uid, command name).
+fn child_processes(parent: u32) -> Vec<(u32, u32, String)> {
+    std::fs::read_dir("/proc")
+        .expect("failed to list /proc")
+        .filter_map(|entry| {
+            entry
+                .ok()?
+                .file_name()
+                .to_string_lossy()
+                .parse::<u32>()
+                .ok()
+        })
+        .filter_map(|pid| {
+            let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+            let field = |name: &str| {
+                status
+                    .lines()
+                    .find_map(|line| line.strip_prefix(name))
+                    .and_then(|value| value.split_whitespace().next().map(str::to_string))
+            };
+            (field("PPid:")?.parse::<u32>().ok()? == parent).then(|| {
+                Some((
+                    pid,
+                    field("Uid:")?.parse::<u32>().ok()?,
+                    field("Name:").unwrap_or_default(),
+                ))
+            })?
+        })
+        .collect()
+}
+
+#[test]
+fn supervisors_are_a_fresh_process_image_and_requests_own_their_user_namespace() {
+    let _guard = lock_security_tests();
+    // Stands in for the embedding service's listening and client sockets.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("failed to bind a socket");
+
+    let runtime = std::thread::spawn(|| {
+        RuntimeBuilder::default()
+            .with_task_group(vec![ExecutionStep::Single(task("/bin/sleep", &["1.5"]))])
+            .build()
+            .execute()
+    });
+    wait_for_request_cgroup();
+
+    // This process, then the jailer, then the task's supervisor, then the
+    // PID namespace init (root) and the task once it has called exec.
+    let mut found = None;
+    for _ in 0..200 {
+        if let [(jailer, _, _)] = child_processes(std::process::id()).as_slice()
+            && let [(supervisor, _, _)] = child_processes(*jailer).as_slice()
+        {
+            let below = child_processes(*supervisor);
+            let init = below.iter().find(|(_, uid, _)| *uid == 0);
+            let sleeper = below.iter().find(|(_, _, name)| name == "sleep");
+            if let (Some(init), Some(sleeper)) = (init, sleeper) {
+                found = Some((*jailer, *supervisor, init.0, sleeper.0, sleeper.1));
+                break;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let (jailer, supervisor, init, sleeper, sleeper_uid) =
+        found.expect("sandbox processes never appeared");
+
+    let sockets = |pid: u32| -> Vec<String> {
+        std::fs::read_dir(format!("/proc/{pid}/fd"))
+            .unwrap_or_else(|error| panic!("failed to list descriptors of {pid}: {error}"))
+            .filter_map(|entry| std::fs::read_link(entry.ok()?.path()).ok())
+            .map(|target| target.to_string_lossy().into_owned())
+            .filter(|target| target.starts_with("socket:"))
+            .collect()
+    };
+    assert!(
+        !sockets(std::process::id()).is_empty(),
+        "the test process should hold its listener"
+    );
+    for process in [jailer, supervisor, init] {
+        let inherited = sockets(process);
+        assert!(
+            inherited.is_empty(),
+            "sandbox supervisor {process} holds sockets of the embedding process: {inherited:?}"
+        );
+        // Nothing of the embedding process's environment either: the jailer
+        // is started with only its own marker variable.
+        let environment = std::fs::read(format!("/proc/{process}/environ"))
+            .unwrap_or_else(|error| panic!("failed to read environment of {process}: {error}"));
+        assert_eq!(
+            String::from_utf8_lossy(&environment),
+            "__FABER_JAILER=1\0",
+            "sandbox supervisor {process} inherited an environment"
+        );
+    }
+    assert!(
+        std::env::vars_os().count() > 1,
+        "the test process should have an environment to leak"
+    );
+
+    // NS_GET_OWNER_UID: the user that created the namespace, which is the one
+    // the kernel charges for the namespace's per-user resource use.
+    const NS_GET_OWNER_UID: libc::c_ulong = 0xb704;
+    let namespace = std::fs::File::open(format!("/proc/{sleeper}/ns/user"))
+        .expect("failed to open the task user namespace");
+    let mut owner: libc::uid_t = 0;
+    let result = unsafe {
+        libc::ioctl(
+            std::os::fd::AsRawFd::as_raw_fd(&namespace),
+            NS_GET_OWNER_UID as _,
+            &mut owner,
+        )
+    };
+    assert_eq!(result, 0, "{}", std::io::Error::last_os_error());
+    assert!(
+        SANDBOX_IDENTITIES.contains(&owner),
+        "the task user namespace is owned by {owner}, not by a sandbox identity"
+    );
+    assert_eq!(
+        owner, sleeper_uid,
+        "the task does not run as the namespace owner"
+    );
+
+    let result = runtime
+        .join()
+        .expect("runtime panicked")
+        .expect("runtime failed");
+    assert!(matches!(result, RuntimeResult::Success(_)), "{result:?}");
+    drop(listener);
+    assert_no_task_cgroups();
+}
+
+#[test]
+fn concurrent_requests_run_as_different_identities() {
+    let _guard = lock_security_tests();
+    let outer_identity = || {
+        let result = RuntimeBuilder::default()
+            .with_task_group(vec![ExecutionStep::Single(task(
+                "/bin/sh",
+                &["-c", "cat /proc/self/uid_map; sleep 0.5"],
+            ))])
+            .build()
+            .execute()
+            .expect("runtime execution failed");
+        let RuntimeResult::Success(results) = result else {
+            panic!("container setup failed: {result:?}");
+        };
+        let TaskResult::Completed { stdout, .. } = single_result(&results[0]) else {
+            panic!("identity task failed: {:?}", results[0]);
+        };
+        stdout
+            .split_whitespace()
+            .nth(1)
+            .and_then(|outer| outer.parse::<u32>().ok())
+            .unwrap_or_else(|| panic!("unexpected UID map: {stdout}"))
+    };
+
+    let first = std::thread::spawn(outer_identity);
+    let second = std::thread::spawn(outer_identity);
+    let first = first.join().expect("first runtime panicked");
+    let second = second.join().expect("second runtime panicked");
+
+    assert!(SANDBOX_IDENTITIES.contains(&first) && SANDBOX_IDENTITIES.contains(&second));
+    assert_ne!(first, second, "two running requests shared a host identity");
+    assert_no_task_cgroups();
+}
+
+#[test]
+fn parallel_tasks_cannot_see_or_signal_each_other() {
+    let _guard = lock_security_tests();
+    let result = RuntimeBuilder::default()
+        .with_task_group(vec![ExecutionStep::Parallel(vec![
+            task("/bin/sh", &["-c", "sleep 1; echo survived"]),
+            task(
+                "/bin/sh",
+                &[
+                    "-c",
+                    "sleep 0.3; kill -9 -1 2>/dev/null; ls /proc | grep -c '^[0-9]'",
+                ],
+            ),
+        ])])
+        .build()
+        .execute()
+        .expect("runtime execution failed");
+    let RuntimeResult::Success(results) = result else {
+        panic!("container setup failed: {result:?}");
+    };
+    let ExecutionStepResult::Parallel(parallel) = &results[0] else {
+        panic!("expected parallel results");
+    };
+
+    let TaskResult::Completed {
+        stdout,
+        exit_code,
+        stats,
+        ..
+    } = &parallel[0]
+    else {
+        panic!("victim task failed: {:?}", parallel[0]);
+    };
+    assert_eq!(stats.outcome, TaskOutcome::Exited, "{stats:?}");
+    assert_eq!((*exit_code, stdout.as_str()), (0, "survived\n"));
+
+    let TaskResult::Completed { stdout, .. } = &parallel[1] else {
+        panic!("signalling task failed: {:?}", parallel[1]);
+    };
+    // The namespace init, the shell, and the pipeline's ls and grep.
+    let visible: u32 = stdout
+        .trim()
+        .parse()
+        .expect("process count was not a number");
+    assert!(
+        visible <= 4,
+        "a task saw {visible} processes; its sibling's are visible"
+    );
+    assert_no_task_cgroups();
 }
 
 #[test]
@@ -1814,6 +2105,7 @@ fn every_seccomp_profile_rule_reports_a_policy_violation() {
         "setns",
         "swapoff",
         "swapon",
+        "syslog",
         "umount2",
         "unshare",
         "userfaultfd",
@@ -1843,11 +2135,19 @@ fn every_seccomp_profile_rule_reports_a_policy_violation() {
         tasks.push(probe);
         expected.push((profile, syscall));
     }
-    let syscall = "clone_newuser";
-    let mut probe = task("./seccomp_probe", &[syscall]);
-    probe.sandbox_profile = Some(SandboxProfile::CompileV1);
-    tasks.push(probe);
-    expected.push((SandboxProfile::CompileV1, syscall));
+    // Rules that depend on arguments, and a violation the task tries to
+    // survive by handling SIGSYS.
+    for syscall in [
+        "clone_newuser",
+        "socket_vsock",
+        "socket_netlink_audit",
+        "handled_violation",
+    ] {
+        let mut probe = task("./seccomp_probe", &[syscall]);
+        probe.sandbox_profile = Some(SandboxProfile::CompileV1);
+        tasks.push(probe);
+        expected.push((SandboxProfile::CompileV1, syscall));
+    }
     #[cfg(target_arch = "x86_64")]
     {
         let mut probe = task("./seccomp_probe", &["x32"]);
@@ -1855,9 +2155,13 @@ fn every_seccomp_profile_rule_reports_a_policy_violation() {
         tasks.push(probe);
         expected.push((SandboxProfile::CompileV1, "x32"));
     }
-    let mut clone3_probe = task("./seccomp_probe", &["clone3_enosys"]);
-    clone3_probe.sandbox_profile = Some(SandboxProfile::CompileV1);
-    tasks.push(clone3_probe);
+    // Calls the compile profile must keep working, last in the task list.
+    const COMPILE_ALLOWED: &[&str] = &["sockets_allowed", "clone3_enosys"];
+    for probe_name in COMPILE_ALLOWED {
+        let mut probe = task("./seccomp_probe", &[probe_name]);
+        probe.sandbox_profile = Some(SandboxProfile::CompileV1);
+        tasks.push(probe);
+    }
 
     let results = execute(tasks);
     let TaskResult::Completed {
@@ -1887,14 +2191,17 @@ fn every_seccomp_profile_rule_reports_a_policy_violation() {
         assert!(stats.cleanup_succeeded);
     }
 
-    let TaskResult::Completed {
-        exit_code, stats, ..
-    } = single_result(results.last().unwrap())
-    else {
-        panic!("compile clone3 fallback probe produced no result");
-    };
-    assert_eq!(*exit_code, 0);
-    assert_eq!(stats.outcome, TaskOutcome::Exited);
+    let allowed_results = &results[results.len() - COMPILE_ALLOWED.len()..];
+    for (result, probe_name) in allowed_results.iter().zip(COMPILE_ALLOWED) {
+        let TaskResult::Completed {
+            exit_code, stats, ..
+        } = single_result(result)
+        else {
+            panic!("compile {probe_name} probe produced no result");
+        };
+        assert_eq!(*exit_code, 0, "{probe_name}");
+        assert_eq!(stats.outcome, TaskOutcome::Exited, "{probe_name}");
+    }
 }
 
 #[test]

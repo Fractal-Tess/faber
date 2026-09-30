@@ -280,11 +280,11 @@ The container root is created via `pivot_root` with:
 
 ### Security Hardening
 
-1. **User namespace**: Each task maps only inner `nobody` (65534:65534) to outer 65534:65534 and has no supplementary groups
+1. **User namespace**: Each task maps only inner `nobody` (65534:65534) to one outer UID/GID leased to its request and has no supplementary groups
 2. **Capability drop**: Effective, permitted, inheritable, ambient, and bounding sets are cleared
 3. **Privilege lock**: `NoNewPrivs` prevents privilege gain across `execve`
 4. **Workspace paths**: Submitted files must use normalized workspace-relative paths and cannot traverse symlinks
-5. **Seccomp**: Versioned `compile_v1` and `native_v1` denylists trap policy violations with `SIGSYS`
+5. **Seccomp**: Versioned `compile_v1` and `native_v1` denylists kill the process on a policy violation (reported as `SIGSYS`)
 
 ---
 
@@ -390,18 +390,8 @@ rlimits: CPU=5 seconds, file=64 MiB, FDs=256, stack=8 MiB, core=0
 
 - Linux kernel with cgroups v2
 - Root privileges (or appropriate capabilities)
-- Cgroup hierarchy at `/sys/fs/cgroup/faber`
 
-### Host Setup
-
-```bash
-# Create faber cgroup directory
-sudo mkdir -p /sys/fs/cgroup/faber
-sudo chmod 777 /sys/fs/cgroup/faber
-
-# Enable required controllers
-echo "+cpu +memory +pids" | sudo tee /sys/fs/cgroup/faber/cgroup.subtree_control
-```
+Faber creates its cgroups inside the container's own cgroup (`<container cgroup>/faber/req-*/task-*`); nothing has to be created on the host.
 
 ### Docker Deployment
 

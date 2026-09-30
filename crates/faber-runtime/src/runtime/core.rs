@@ -16,7 +16,10 @@ use nix::{
     libc,
     sched::{CloneFlags, unshare},
     sys::wait::{WaitPidFlag, WaitStatus, waitpid},
-    unistd::{ForkResult, Pid, chdir, execvpe, fork, pipe, setgid, setgroups, setpgid, setuid},
+    unistd::{
+        ForkResult, Pid, chdir, execvpe, fork, pipe, setgid, setgroups, setresgid, setresuid,
+        setuid,
+    },
 };
 
 #[cfg(target_env = "gnu")]
@@ -30,9 +33,17 @@ use crate::{
     container::Container,
     prelude::*,
     result::{ExecutionStepResult, RuntimeResult, TaskOutcome, TaskResult, TaskResultStats},
+    runtime::{
+        identity::SandboxIdentity,
+        jailer::{self, JailerJob},
+    },
     task::{ExecutionStep, SandboxProfile, Task, TaskGroup},
     utils::mk_pipe,
 };
+
+/// UID and GID a task has inside its user namespace. Outside, it is the
+/// request's [`SandboxIdentity`].
+const TASK_ID: u32 = 65534;
 
 /// Set once by [`Runtime::shutdown`]; every running execution observes it and
 /// tears itself down, and no new execution starts.
@@ -66,8 +77,8 @@ struct OutputLimits {
 }
 
 /// Grace the controller allows beyond the overall deadline before it kills
-/// the execution child itself. The child enforces the deadline between and
-/// within steps, so this only fires if the child stops making progress.
+/// the jailer itself. The jailer enforces the deadline between and within
+/// steps, so this only fires if it stops making progress.
 const OVERALL_DEADLINE_BACKSTOP_GRACE: Duration = Duration::from_secs(2);
 
 /// Where a task child failed before `exec`, reported over the status pipe.
@@ -185,7 +196,7 @@ impl Runtime {
     }
 
     /// Stop the runtime for service shutdown. New executions are refused;
-    /// running ones kill their execution child, PID namespace and request
+    /// running ones kill their jailer, its process group and the request
     /// cgroup within one poll interval and return [`FaberError::ShuttingDown`].
     /// Every request cgroup is also killed here directly.
     pub fn shutdown() -> Result<()> {
@@ -212,42 +223,44 @@ impl Runtime {
             self.container.workspace_allowance(),
         )?;
 
-        let (reader, writer) = mk_pipe()?;
+        let identity = SandboxIdentity::acquire()?;
         let deadline = std::time::Instant::now() + self.overall_timeout;
 
-        match unsafe { fork() } {
-            Ok(ForkResult::Child) => {
-                drop(reader);
-                let _ = setpgid(Pid::from_raw(0), Pid::from_raw(0));
+        let job = JailerJob {
+            task_group: self.task_group.clone(),
+            container: self.container.config().clone(),
+            cgroup: self.cgroup.config().clone(),
+            request_cgroup_path: request_cgroup.path().to_path_buf(),
+            timeout: self.timeout,
+            cpu_time_limit: self.cpu_time_limit,
+            output_limit: self.output_limit,
+            request_output_limit: self.request_output_limit,
+            remaining: self.overall_timeout,
+            identity: identity.id(),
+            controller_pid: std::process::id(),
+        };
+        // Nothing between a successful spawn and read_runtime_result may
+        // return early: that function owns killing and reaping the jailer.
+        let (child, reader) = jailer::spawn(&job)?;
+        drop(job);
 
-                let runtime_result = self.execution_child(request_cgroup.path(), deadline);
-                Self::write_child_result(writer, &runtime_result);
-                Self::child_exit(0);
-            }
-            Ok(ForkResult::Parent { child }) => {
-                // Nothing between here and read_runtime_result may return
-                // early: that function owns killing and reaping the child.
-                drop(writer);
-                let _ = setpgid(child, child);
+        let runtime_result = self.read_runtime_result(
+            child,
+            reader,
+            &request_cgroup,
+            deadline + OVERALL_DEADLINE_BACKSTOP_GRACE,
+        );
 
-                let runtime_result = self.read_runtime_result(
-                    child,
-                    reader,
-                    &request_cgroup,
-                    deadline + OVERALL_DEADLINE_BACKSTOP_GRACE,
-                );
-
-                if let Err(error) = self.container.cleanup() {
-                    tracing::error!(%error, "failed to cleanup container");
-                }
-                if let Err(error) = request_cgroup.cleanup() {
-                    tracing::error!(%error, "failed to cleanup request cgroup");
-                }
-
-                runtime_result
-            }
-            Err(e) => Err(FaberError::Fork { e }),
+        if let Err(error) = self.container.cleanup() {
+            tracing::error!(%error, "failed to cleanup container");
         }
+        if let Err(error) = request_cgroup.cleanup() {
+            tracing::error!(%error, "failed to cleanup request cgroup");
+        }
+        // Released only now that no process of the request is left.
+        drop(identity);
+
+        runtime_result
     }
 
     fn read_runtime_result(
@@ -295,7 +308,7 @@ impl Runtime {
                 break;
             }
             if child_exited && pipe_open {
-                // The execution child is gone but a descendant still holds
+                // The jailer is gone but a descendant still holds
                 // the result pipe; nothing further will be written to it.
                 Self::terminate_request(child, request_cgroup, true);
             }
@@ -359,8 +372,8 @@ impl Runtime {
         }
     }
 
-    /// Kill the execution child, its process group (which contains the PID
-    /// namespace init) and this request's cgroup subtree, then reap the child.
+    /// Kill the jailer, its process group (which contains the task supervisors
+    /// and PID namespace inits) and this request's cgroup subtree, then reap it.
     /// Other requests live in other request cgroups and are unaffected.
     fn terminate_request(child: Pid, request_cgroup: &RequestCgroup, child_reaped: bool) {
         let _ = nix::sys::signal::kill(
@@ -376,32 +389,18 @@ impl Runtime {
         }
     }
 
-    fn execution_child(
+    /// The jailer's work: build the sandbox, then run the steps in order.
+    pub(crate) fn execution_child(
         &self,
         request_cgroup_path: &Path,
         deadline: std::time::Instant,
+        identity: u32,
     ) -> RuntimeResult {
         if let Err(e) = self.container.setup() {
             return RuntimeResult::ContainerSetupFailed {
                 error: format!("Container setup failed: {}", e),
             };
         }
-
-        // Fork a dedicated "init" process to keep the PID namespace alive.
-        // container.setup() calls unshare(CLONE_NEWPID), so the first child we
-        // fork becomes PID 1 in the new namespace. If PID 1 exits, the kernel
-        // destroys the namespace and all subsequent forks fail with ENOMEM.
-        // This init process stays alive for the duration of task execution,
-        // allowing task children to get PID 2, 3, etc.
-        let init_pid = match unsafe { fork() } {
-            Ok(ForkResult::Child) => Self::run_namespace_init(),
-            Ok(ForkResult::Parent { child }) => child,
-            Err(e) => {
-                return RuntimeResult::ContainerSetupFailed {
-                    error: format!("Failed to fork namespace init process: {}", e),
-                };
-            }
-        };
 
         let mut results = Vec::with_capacity(self.task_group.len());
         // Output kept for the whole request. Every copy of the result (this
@@ -430,20 +429,17 @@ impl Runtime {
                 },
             };
             let result = match step {
-                ExecutionStep::Single(task) => {
-                    self.execute_single(task.clone(), request_cgroup_path, limits)
-                }
-                ExecutionStep::Parallel(tasks) => {
-                    self.execute_parallel(tasks.clone(), request_cgroup_path, limits)
-                }
+                ExecutionStep::Single(task) => ExecutionStepResult::Single(
+                    self.execute_tasks(vec![task.clone()], request_cgroup_path, limits, identity)
+                        .remove(0),
+                ),
+                ExecutionStep::Parallel(tasks) => ExecutionStepResult::Parallel(
+                    self.execute_tasks(tasks.clone(), request_cgroup_path, limits, identity),
+                ),
             };
             output_budget = output_budget.saturating_sub(Self::output_bytes(&result));
             results.push(result);
         }
-
-        // Tear down the namespace init process
-        let _ = nix::sys::signal::kill(init_pid, nix::sys::signal::Signal::SIGKILL);
-        let _ = waitpid(init_pid, None);
 
         RuntimeResult::Success(results)
     }
@@ -492,104 +488,126 @@ impl Runtime {
         }
     }
 
-    fn execute_single(
+    /// Run tasks side by side, each under a supervisor process of its own.
+    /// Returns one result per task, in order.
+    ///
+    /// The supervisor is what gives a task its own PID namespace: a process
+    /// can move its future children into a new PID namespace only once, so
+    /// the jailer cannot do it per task itself.
+    fn execute_tasks(
+        &self,
+        tasks: Vec<Task>,
+        request_cgroup_path: &Path,
+        limits: StepLimits,
+        identity: u32,
+    ) -> Vec<TaskResult> {
+        let failed = |error: String| TaskResult::Failed {
+            error,
+            stats: TaskResultStats::default(),
+        };
+        let jailer = nix::unistd::getpid();
+
+        let mut supervisors = Vec::with_capacity(tasks.len());
+        for task in tasks {
+            let (reader, writer) = match mk_pipe() {
+                Ok(pipe) => pipe,
+                Err(e) => {
+                    supervisors.push(Err(format!("Failed to create the task result pipe: {e}")));
+                    continue;
+                }
+            };
+
+            match unsafe { fork() } {
+                Ok(ForkResult::Child) => {
+                    drop(reader);
+                    Self::die_with_parent();
+                    if nix::unistd::getppid() != jailer {
+                        Self::child_exit(125);
+                    }
+                    let result = self
+                        .supervise_task(task, request_cgroup_path, limits, identity)
+                        .unwrap_or_else(|e| failed(format!("Task execution failed: {e}")));
+                    Self::write_child_result(writer, &result);
+                    Self::child_exit(0);
+                }
+                Ok(ForkResult::Parent { child }) => {
+                    drop(writer);
+                    supervisors.push(Ok((child, reader)));
+                }
+                Err(e) => supervisors.push(Err(format!("Failed to fork the task supervisor: {e}"))),
+            }
+        }
+
+        supervisors
+            .into_iter()
+            .map(|supervisor| {
+                let (child, mut reader) = match supervisor {
+                    Ok(supervisor) => supervisor,
+                    Err(error) => return failed(error),
+                };
+                // Drain the result pipe before waiting so large bounded
+                // outputs do not block the supervisor while it writes. Read
+                // in bulk: parsing straight from the unbuffered pipe costs
+                // one syscall per byte.
+                let mut bytes = Vec::new();
+                let result = reader
+                    .read_to_end(&mut bytes)
+                    .ok()
+                    .and_then(|_| serde_json::from_slice(&bytes).ok())
+                    .unwrap_or_else(|| {
+                        failed("Failed to read the result from the task supervisor".to_string())
+                    });
+                let _ = waitpid(child, None);
+                result
+            })
+            .collect()
+    }
+
+    /// Runs in a task's supervisor: give the task a PID namespace with a
+    /// reaping init as PID 1, run it, then tear the namespace down.
+    fn supervise_task(
         &self,
         task: Task,
         request_cgroup_path: &Path,
         limits: StepLimits,
-    ) -> ExecutionStepResult {
-        match Self::execute_single_task(
+        identity: u32,
+    ) -> Result<TaskResult> {
+        // Tasks in separate PID namespaces cannot see or signal each other,
+        // even though the tasks of one request share an identity.
+        unshare(CloneFlags::CLONE_NEWPID).map_err(|e| FaberError::Unshare { e })?;
+
+        // The first child is PID 1 of the new namespace. It has to outlive
+        // the task: when PID 1 exits the kernel kills the namespace and
+        // refuses further forks into it.
+        let init_pid = match unsafe { fork() } {
+            Ok(ForkResult::Child) => {
+                Self::die_with_parent();
+                Self::run_namespace_init()
+            }
+            Ok(ForkResult::Parent { child }) => child,
+            Err(e) => return Err(FaberError::Fork { e }),
+        };
+
+        let result = Self::execute_single_task(
             task,
             &self.cgroup,
             limits.timeout,
             self.cpu_time_limit,
             limits.output,
             request_cgroup_path,
-        ) {
-            Ok(task_result) => ExecutionStepResult::Single(task_result),
-            Err(e) => ExecutionStepResult::Single(TaskResult::Failed {
-                error: format!("Task execution failed: {}", e),
-                stats: TaskResultStats::default(),
-            }),
-        }
+            identity,
+        );
+
+        let _ = nix::sys::signal::kill(init_pid, nix::sys::signal::Signal::SIGKILL);
+        let _ = waitpid(init_pid, None);
+
+        result
     }
 
-    fn execute_parallel(
-        &self,
-        tasks: Vec<Task>,
-        request_cgroup_path: &Path,
-        limits: StepLimits,
-    ) -> ExecutionStepResult {
-        // Cannot use std::thread::spawn after unshare(CLONE_NEWPID) because
-        // the kernel rejects CLONE_THREAD when pid_ns_for_children differs
-        // from the active PID namespace (EINVAL). Use fork + pipes instead.
-        let mut children: Vec<(Pid, std::io::PipeReader)> = Vec::with_capacity(tasks.len());
-
-        for task in tasks {
-            let pipe = match mk_pipe() {
-                Ok(p) => p,
-                Err(e) => {
-                    return ExecutionStepResult::Parallel(vec![TaskResult::Failed {
-                        error: format!("Failed to create pipe for parallel task: {}", e),
-                        stats: TaskResultStats::default(),
-                    }]);
-                }
-            };
-            let (reader, writer) = pipe;
-
-            match unsafe { fork() } {
-                Ok(ForkResult::Child) => {
-                    drop(reader);
-                    let result = match Self::execute_single_task(
-                        task,
-                        &self.cgroup,
-                        limits.timeout,
-                        self.cpu_time_limit,
-                        limits.output,
-                        request_cgroup_path,
-                    ) {
-                        Ok(task_result) => task_result,
-                        Err(e) => TaskResult::Failed {
-                            error: format!("Task execution failed: {}", e),
-                            stats: TaskResultStats::default(),
-                        },
-                    };
-                    Self::write_child_result(writer, &result);
-                    Self::child_exit(0);
-                }
-                Ok(ForkResult::Parent { child }) => {
-                    drop(writer);
-                    children.push((child, reader));
-                }
-                Err(e) => {
-                    return ExecutionStepResult::Parallel(vec![TaskResult::Failed {
-                        error: format!("Failed to fork parallel task: {}", e),
-                        stats: TaskResultStats::default(),
-                    }]);
-                }
-            }
-        }
-
-        // Wait for all parallel children and collect results
-        let mut task_results = Vec::with_capacity(children.len());
-        for (child, mut reader) in children {
-            // Drain each result pipe before waiting so large bounded outputs do
-            // not block the child while it writes. Read in bulk: parsing
-            // straight from the unbuffered pipe costs one syscall per byte.
-            let mut bytes = Vec::new();
-            let result: TaskResult = reader
-                .read_to_end(&mut bytes)
-                .ok()
-                .and_then(|_| serde_json::from_slice(&bytes).ok())
-                .unwrap_or(TaskResult::Failed {
-                    error: "Failed to read result from parallel task".to_string(),
-                    stats: TaskResultStats::default(),
-                });
-            let _ = waitpid(child, None);
-            task_results.push(result);
-        }
-
-        ExecutionStepResult::Parallel(task_results)
+    /// Have the kernel kill this process when its parent dies, so that a
+    /// crashed controller, jailer or supervisor leaves nothing behind.
+    pub(crate) fn die_with_parent() {
+        unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL, 0, 0, 0) };
     }
 
     fn execute_single_task(
@@ -599,6 +617,7 @@ impl Runtime {
         cpu_time_limit: std::time::Duration,
         output_limits: OutputLimits,
         request_cgroup_path: &Path,
+        identity: u32,
     ) -> Result<TaskResult> {
         use std::time::Instant;
 
@@ -610,7 +629,7 @@ impl Runtime {
         // Materialize files relative to the workspace without following links.
         // This happens before privilege dropping, so path resolution must fail closed.
         for (file_path, file_content) in task.files.clone().unwrap_or_default() {
-            Self::write_workspace_file(&file_path, file_content.as_bytes())?;
+            Self::write_workspace_file(&file_path, file_content.as_bytes(), identity)?;
         }
 
         // Create pipes for stdout, stderr, stdin
@@ -691,6 +710,7 @@ impl Runtime {
                     user_ready_write.into(),
                     user_continue_read.into(),
                     proc_pid,
+                    identity,
                     sandbox_profile,
                 ) {
                     fail(SetupStage::Security, error.raw_os_error().unwrap_or(0));
@@ -759,6 +779,7 @@ impl Runtime {
                     child,
                     user_ready_read.into(),
                     user_continue_write.into(),
+                    identity,
                 ) {
                     // The child is dead by now; if it got far enough to say
                     // why, that is the more useful error.
@@ -864,15 +885,14 @@ impl Runtime {
 
     /// Serialize a result to a pipe through a buffer; unbuffered serde writes
     /// issue one syscall per token.
-    fn write_child_result<T: serde::Serialize>(writer: PipeWriter, result: &T) {
+    pub(crate) fn write_child_result<T: serde::Serialize>(writer: impl Write, result: &T) {
         let mut writer = std::io::BufWriter::with_capacity(64 * 1024, writer);
         if serde_json::to_writer(&mut writer, result).is_ok() {
             let _ = writer.flush();
         }
     }
 
-    /// Report a pre-exec failure to the parent and exit. Only async-signal-safe
-    /// calls: this runs in a child forked from a multithreaded process.
+    /// Report a pre-exec failure to the parent and exit.
     fn report_setup_failure(status: &PipeWriter, stage: SetupStage, errno: i32) -> ! {
         let mut record = [0_u8; 5];
         record[0] = stage as u8;
@@ -912,15 +932,13 @@ impl Runtime {
         })
     }
 
-    fn child_exit(code: i32) -> ! {
+    pub(crate) fn child_exit(code: i32) -> ! {
         unsafe { libc::_exit(code) }
     }
 
-    fn write_workspace_file(file_path: &str, content: &[u8]) -> Result<()> {
-        // Submitted files and the directories created for them belong to the
-        // task identity, so the task can modify and extend nested layouts.
-        const TASK_ID: libc::uid_t = 65534;
-
+    /// Submitted files and the directories created for them are handed to
+    /// `identity`, so the task can modify and extend nested layouts.
+    fn write_workspace_file(file_path: &str, content: &[u8], identity: u32) -> Result<()> {
         let path = Path::new(file_path);
         if file_path.is_empty()
             || path.is_absolute()
@@ -991,7 +1009,8 @@ impl Runtime {
                     created_path.display()
                 ),
             })?;
-            if created && unsafe { libc::fchown(directory_fd.as_raw_fd(), TASK_ID, TASK_ID) } != 0 {
+            if created && unsafe { libc::fchown(directory_fd.as_raw_fd(), identity, identity) } != 0
+            {
                 return Err(FaberError::WriteFile {
                     e: std::io::Error::last_os_error(),
                     details: format!(
@@ -1033,7 +1052,7 @@ impl Runtime {
                 details: "task file targets must be regular files".to_string(),
             });
         }
-        if unsafe { libc::fchown(file.as_raw_fd(), TASK_ID, TASK_ID) } != 0 {
+        if unsafe { libc::fchown(file.as_raw_fd(), identity, identity) } != 0 {
             return Err(FaberError::WriteFile {
                 e: std::io::Error::last_os_error(),
                 details: format!("Failed to hand task file '{file_path}' to the task user"),
@@ -1099,26 +1118,26 @@ impl Runtime {
         user_ready: PipeWriter,
         user_continue: PipeReader,
         proc_pid: u32,
+        identity: u32,
         sandbox_profile: SandboxProfile,
     ) -> std::io::Result<()> {
         let unshare_flags = CloneFlags::CLONE_NEWNS;
 
         unshare(unshare_flags).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
-        // mask_paths unmounts and masks proc/sys with tmpfs for security
+        // mask_paths replaces proc and sys with empty read-only tmpfs mounts.
+        // /sys stays that way: sysfs describes the host's hardware, disks and
+        // kernel modules, none of which a task needs.
         Container::mask_paths()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
 
-        // Mount proc from inside the PID namespace. The dedicated namespace
-        // init is PID 1; this task is one of its descendants.
+        // Mount proc from inside the task's PID namespace, where the
+        // supervisor's init is PID 1.
         Self::mount_proc_in_pid_namespace()?;
-
-        // Mount sys from oldroot (sysfs doesn't have PID-specific info)
-        Self::mount_sys()?;
         Self::apply_resource_limits(cpu_time_limit)?;
 
         setgroups(&[]).map_err(std::io::Error::other)?;
-        Self::enter_user_namespace(user_ready, user_continue, proc_pid)?;
+        Self::enter_user_namespace(user_ready, user_continue, proc_pid, identity)?;
 
         // Clear every capability set granted while establishing the new user
         // namespace before executing submitted code.
@@ -1138,42 +1157,19 @@ impl Runtime {
         // Create /proc directory
         std::fs::create_dir_all("/proc").ok();
 
-        // Mount a fresh proc filesystem
-        // This will show only the processes in the current PID namespace
-        // because we're calling this from the child that is PID 1 in the new namespace
+        // Mount a fresh proc filesystem for the task's PID namespace. `subset=pid`
+        // (Linux 5.8) leaves only the per-process directories, so host-wide
+        // files such as /proc/cmdline, /proc/meminfo, /proc/stat and
+        // /proc/interrupts are not there to read.
         let proc_flags = MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC;
         mount(
             Some("proc"),
             "/proc",
             Some("proc"),
             proc_flags,
-            None::<&str>,
+            Some("subset=pid"),
         )
         .map_err(|e| std::io::Error::other(format!("Failed to mount procfs: {e}")))?;
-
-        Ok(())
-    }
-
-    /// Mount sysfs in the new mount namespace
-    fn mount_sys() -> std::io::Result<()> {
-        use nix::mount::{MsFlags, mount};
-
-        std::fs::create_dir_all("/sys").ok();
-
-        let sys_flags =
-            MsFlags::MS_RDONLY | MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC;
-        mount(None::<&str>, "/sys", Some("sysfs"), sys_flags, None::<&str>)
-            .map_err(|error| std::io::Error::other(format!("Failed to mount sysfs: {error}")))?;
-        mount(
-            None::<&str>,
-            "/sys",
-            None::<&str>,
-            sys_flags | MsFlags::MS_REMOUNT,
-            None::<&str>,
-        )
-        .map_err(|error| {
-            std::io::Error::other(format!("Failed to remount sysfs read-only: {error}"))
-        })?;
 
         Ok(())
     }
@@ -1411,6 +1407,7 @@ impl Runtime {
         child: Pid,
         mut user_ready: PipeReader,
         mut user_continue: PipeWriter,
+        identity: u32,
     ) -> Result<()> {
         let mut ready = [0; std::mem::size_of::<u32>()];
         if let Err(error) = user_ready.read_exact(&mut ready) {
@@ -1434,9 +1431,10 @@ impl Runtime {
             std::fs::write(proc_path.join("setgroups"), "deny").map_err(|error| {
                 std::io::Error::new(error.kind(), format!("setgroups: {error}"))
             })?;
-            std::fs::write(proc_path.join("uid_map"), "65534 65534 1\n")
+            let map = format!("{TASK_ID} {identity} 1\n");
+            std::fs::write(proc_path.join("uid_map"), &map)
                 .map_err(|error| std::io::Error::new(error.kind(), format!("uid_map: {error}")))?;
-            std::fs::write(proc_path.join("gid_map"), "65534 65534 1\n")
+            std::fs::write(proc_path.join("gid_map"), &map)
                 .map_err(|error| std::io::Error::new(error.kind(), format!("gid_map: {error}")))?;
             Ok(())
         })();
@@ -1468,7 +1466,7 @@ impl Runtime {
                     .map(str::parse::<u32>)
                     .collect::<std::result::Result<Vec<_>, _>>()
                     .map_err(std::io::Error::other)?;
-                if values != [65534, 65534, 65534, 65534] {
+                if values != [identity; 4] {
                     return Err(std::io::Error::other(format!(
                         "unexpected outer {field} values: {values:?}"
                     )));
@@ -1491,10 +1489,27 @@ impl Runtime {
         mut user_ready: PipeWriter,
         mut user_continue: PipeReader,
         proc_pid: u32,
+        identity: u32,
     ) -> std::io::Result<()> {
-        const TASK_ID: u32 = 65534;
+        // Create the namespace as the request's identity, not as root. Per-user
+        // kernel limits (inotify instances, pending signals, nested
+        // namespaces) are charged in the parent namespace to whoever created
+        // the child, so a root-owned namespace lets a task use up root's.
+        // Capabilities are kept across the identity change only because some
+        // kernels refuse to create a user namespace without CAP_SYS_ADMIN;
+        // entering the new namespace gives them up in this one.
+        Self::set_keep_capabilities(true)?;
+        setresgid(identity.into(), identity.into(), identity.into())
+            .map_err(std::io::Error::other)?;
+        setresuid(identity.into(), identity.into(), identity.into())
+            .map_err(std::io::Error::other)?;
+        let permitted = caps::read(None, CapSet::Permitted)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        caps::set(None, CapSet::Effective, &permitted)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
 
         unshare(CloneFlags::CLONE_NEWUSER).map_err(std::io::Error::other)?;
+        Self::set_keep_capabilities(false)?;
         user_ready.write_all(&proc_pid.to_ne_bytes())?;
         let mut configured = [0];
         user_continue.read_exact(&mut configured)?;
@@ -1513,6 +1528,16 @@ impl Runtime {
         user_ready.write_all(&[1])?;
 
         Ok(())
+    }
+
+    fn set_keep_capabilities(keep: bool) -> std::io::Result<()> {
+        let result =
+            unsafe { libc::prctl(libc::PR_SET_KEEPCAPS, libc::c_ulong::from(keep), 0, 0, 0) };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
     }
 
     fn set_resource_limit(resource: RlimitResource, value: u64) -> std::io::Result<()> {
@@ -1634,6 +1659,7 @@ impl Runtime {
             libc::SYS_setns,
             libc::SYS_swapoff,
             libc::SYS_swapon,
+            libc::SYS_syslog,
             libc::SYS_umount2,
             libc::SYS_unshare,
             libc::SYS_userfaultfd,
@@ -1675,12 +1701,44 @@ impl Runtime {
             .map_err(|error| {
                 std::io::Error::other(format!("failed to build clone flag rules: {error}"))
             })?;
+            // Socket families that stay inside the network namespace. Others
+            // either ignore it (AF_VSOCK reaches the hypervisor and other
+            // local sockets) or are kernel interfaces a build does not need
+            // (AF_ALG, AF_PACKET, ...). Netlink is limited to the route
+            // protocol that interface and address lookups use.
+            let socket_condition = |argument, operator, value: i32| {
+                SeccompCondition::new(argument, SeccompCmpArgLen::Dword, operator, value as u64)
+            };
+            let socket_rules = (|| {
+                let unlisted_family = [
+                    libc::AF_UNIX,
+                    libc::AF_INET,
+                    libc::AF_INET6,
+                    libc::AF_NETLINK,
+                ]
+                .into_iter()
+                .map(|family| socket_condition(0, SeccompCmpOp::Ne, family))
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+                let other_netlink_protocol = vec![
+                    socket_condition(0, SeccompCmpOp::Eq, libc::AF_NETLINK)?,
+                    socket_condition(2, SeccompCmpOp::Ne, libc::NETLINK_ROUTE)?,
+                ];
+                Ok::<_, seccompiler::BackendError>(vec![
+                    SeccompRule::new(unlisted_family)?,
+                    SeccompRule::new(other_netlink_protocol)?,
+                ])
+            })()
+            .map_err(|error| {
+                std::io::Error::other(format!("failed to build socket family rules: {error}"))
+            })?;
+
             blocked_syscalls.push(libc::SYS_clone);
             let mut rules: BTreeMap<i64, Vec<SeccompRule>> = blocked_syscalls
                 .into_iter()
                 .map(|syscall| (syscall, Vec::new()))
                 .collect();
             rules.insert(libc::SYS_clone, clone_rules);
+            rules.insert(libc::SYS_socket, socket_rules);
             return Self::compile_and_apply_seccomp(rules);
         }
 
@@ -1702,7 +1760,8 @@ impl Runtime {
         let filter = SeccompFilter::new(
             rules,
             SeccompAction::Allow,
-            SeccompAction::Trap,
+            // Not Trap: that raises a SIGSYS the task can catch and survive.
+            SeccompAction::KillProcess,
             architecture,
         )
         .map_err(|error| {
@@ -1722,7 +1781,7 @@ impl Runtime {
         const BPF_LOAD_SYSCALL_NR: u16 = 0x20;
         const BPF_JUMP_GREATER_OR_EQUAL: u16 = 0x35;
         const BPF_RETURN: u16 = 0x06;
-        const SECCOMP_RETURN_TRAP: u32 = 0x0003_0000;
+        const SECCOMP_RETURN_KILL_PROCESS: u32 = 0x8000_0000;
         const SECCOMP_RETURN_ALLOW: u32 = 0x7fff_0000;
 
         let mut instructions = [
@@ -1742,7 +1801,7 @@ impl Runtime {
                 code: BPF_RETURN,
                 jt: 0,
                 jf: 0,
-                k: SECCOMP_RETURN_TRAP,
+                k: SECCOMP_RETURN_KILL_PROCESS,
             },
             libc::sock_filter {
                 code: BPF_RETURN,

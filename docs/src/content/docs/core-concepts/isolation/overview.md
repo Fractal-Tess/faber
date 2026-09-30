@@ -47,7 +47,7 @@ This ensures tasks run with minimal privileges.
 ### 4. Unprivileged User
 
 Each task receives a fresh user namespace. Only inner UID/GID 65534 (`nobody`)
-is mapped to the executor's outer identity; supplementary groups and all
+is mapped, to a host identity leased to the request; supplementary groups and all
 capability sets are cleared before execution.
 
 ## Container Lifecycle
@@ -72,7 +72,7 @@ capability sets are cleared before execution.
 Faber uses `pivot_root` to change the root filesystem:
 
 1. Create minimal root filesystem
-2. Mount procfs and sysfs (limited)
+2. Mount a per-process procfs (`subset=pid`) and an empty `/sys`
 3. pivot_root to new root
 4. Old root is unmounted
 
@@ -157,7 +157,7 @@ Faber is designed for fast, lightweight task execution rather than long-running 
 1. **Enable caching** - Avoid duplicate executions
 2. **Use parallel execution** - Run independent tasks concurrently
 3. **Set appropriate limits** - Don't over-allocate resources
-4. **Clean up cgroups** - Monitor `/sys/fs/cgroup/faber/`
+4. **Clean up cgroups** - Monitor the `faber/` cgroup beneath the container's own cgroup
 
 ## Next Steps
 

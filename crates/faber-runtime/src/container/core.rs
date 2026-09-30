@@ -23,14 +23,19 @@ impl Container {
         Self { config }
     }
 
+    pub(crate) fn config(&self) -> &ContainerConfig {
+        &self.config
+    }
+
     pub(crate) fn setup(&self) -> Result<()> {
         self.create_container_root_dir()?;
 
+        // No PID namespace here: every task gets its own, created by the
+        // task's supervisor.
         let unshare_flags = CloneFlags::CLONE_NEWUTS
             | CloneFlags::CLONE_NEWNET
             | CloneFlags::CLONE_NEWIPC
-            | CloneFlags::CLONE_NEWNS
-            | CloneFlags::CLONE_NEWPID;
+            | CloneFlags::CLONE_NEWNS;
 
         unshare(unshare_flags).map_err(|e| FaberError::Unshare { e })?;
 
@@ -93,39 +98,29 @@ impl Container {
         Ok(())
     }
 
+    /// Replace the execution child's proc and sys mounts with empty read-only
+    /// tmpfs mounts. The task's own procfs is mounted over /proc afterwards.
     pub(crate) fn mask_paths() -> Result<()> {
-        umount2("/sys", MntFlags::MNT_DETACH).map_err(|e| FaberError::Umount {
-            e,
-            details: "Failed to unmount sys".to_string(),
-        })?;
-        umount2("/proc", MntFlags::MNT_DETACH).map_err(|e| FaberError::Umount {
-            e,
-            details: "Failed to unmount proc".to_string(),
-        })?;
+        for target in ["/sys", "/proc"] {
+            umount2(target, MntFlags::MNT_DETACH).map_err(|e| FaberError::Umount {
+                e,
+                details: format!("Failed to unmount {target}"),
+            })?;
 
-        mount(
-            Some("tmpfs"),
-            "/sys",
-            Some("tmpfs"),
-            MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC,
-            Some("size=0"),
-        )
-        .map_err(|e| FaberError::Mount {
-            e,
-            details: "Failed to mount tmpfs to sys".to_string(),
-        })?;
-
-        mount(
-            Some("tmpfs"),
-            "/proc",
-            Some("tmpfs"),
-            MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC,
-            Some("size=0"),
-        )
-        .map_err(|e| FaberError::Mount {
-            e,
-            details: "Failed to mount tmpfs to proc".to_string(),
-        })?;
+            // tmpfs treats size=0 as unlimited and defaults to mode 1777, so
+            // both are set explicitly: nothing can be written here.
+            mount(
+                Some("tmpfs"),
+                target,
+                Some("tmpfs"),
+                MsFlags::MS_RDONLY | MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC,
+                Some("size=4k,mode=0555"),
+            )
+            .map_err(|e| FaberError::Mount {
+                e,
+                details: format!("Failed to mount an empty tmpfs on {target}"),
+            })?;
+        }
 
         Ok(())
     }
@@ -150,7 +145,7 @@ impl Container {
             let target = self
                 .config
                 .container_root_dir
-                .join(source.strip_prefix("/").unwrap_or(source));
+                .join(source.trim_start_matches('/'));
 
             create_dir_all(&target).map_err(|e| FaberError::CreateDir {
                 e,
@@ -158,7 +153,7 @@ impl Container {
             })?;
 
             mount(
-                Some(*source),
+                Some(source.as_str()),
                 target.as_os_str(),
                 None::<&str>,
                 MsFlags::MS_BIND | MsFlags::MS_REC,
