@@ -8,7 +8,8 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
-RUN cargo install cargo-chef --locked
+ARG CARGO_CHEF_VERSION=0.1.78
+RUN cargo install cargo-chef --locked --version "${CARGO_CHEF_VERSION}"
 
 FROM chef AS planner
 COPY . .
