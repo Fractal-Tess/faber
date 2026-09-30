@@ -66,8 +66,8 @@ impl Config {
             .unwrap_or(false)
     }
 
-    fn load_execution_limits(
-    ) -> Result<ExecutionLimits, Box<dyn std::error::Error + Send + Sync>> {
+    fn load_execution_limits() -> Result<ExecutionLimits, Box<dyn std::error::Error + Send + Sync>>
+    {
         let memory_max = env::var("MEMORY_MAX").unwrap_or_else(|_| "256M".to_string());
         if memory_max.trim().eq_ignore_ascii_case("max") {
             return Err("MEMORY_MAX must be finite for the API service".into());
@@ -82,7 +82,9 @@ impl Config {
             .map(|value| Self::load_sandbox_profile(value.trim()))
             .collect::<Result<Vec<_>, _>>()?;
         if !allowed_sandbox_profiles.contains(&default_sandbox_profile) {
-            return Err("DEFAULT_SANDBOX_PROFILE must be present in ALLOWED_SANDBOX_PROFILES".into());
+            return Err(
+                "DEFAULT_SANDBOX_PROFILE must be present in ALLOWED_SANDBOX_PROFILES".into(),
+            );
         }
 
         Ok(ExecutionLimits {

@@ -1442,7 +1442,10 @@ fn timeout_kills_fork_successors_that_hold_output_open() {
     let run = task("./stdout_holder", &[]);
     let started = std::time::Instant::now();
     let result = RuntimeBuilder::default()
-        .with_task_group(vec![ExecutionStep::Single(compile), ExecutionStep::Single(run)])
+        .with_task_group(vec![
+            ExecutionStep::Single(compile),
+            ExecutionStep::Single(run),
+        ])
         .with_timeout(std::time::Duration::from_secs(2))
         .with_overall_timeout(std::time::Duration::from_secs(5))
         .build()
@@ -1526,12 +1529,11 @@ fn every_seccomp_profile_rule_reports_a_policy_violation() {
         tasks.push(probe);
         expected.push((profile, syscall));
     }
-    for syscall in ["clone_newuser"] {
-        let mut probe = task("./seccomp_probe", &[syscall]);
-        probe.sandbox_profile = Some(SandboxProfile::CompileV1);
-        tasks.push(probe);
-        expected.push((SandboxProfile::CompileV1, syscall));
-    }
+    let syscall = "clone_newuser";
+    let mut probe = task("./seccomp_probe", &[syscall]);
+    probe.sandbox_profile = Some(SandboxProfile::CompileV1);
+    tasks.push(probe);
+    expected.push((SandboxProfile::CompileV1, syscall));
     #[cfg(target_arch = "x86_64")]
     {
         let mut probe = task("./seccomp_probe", &["x32"]);

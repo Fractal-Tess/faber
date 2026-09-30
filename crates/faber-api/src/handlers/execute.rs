@@ -9,7 +9,10 @@ pub async fn execute(
     Json(mut task_group): Json<TaskGroup>,
 ) -> Result<Json<TaskGroupResult>, (StatusCode, Json<ErrorResponse>)> {
     if task_group.is_empty() {
-        return Err(execute_error(StatusCode::BAD_REQUEST, "Task group cannot be empty"));
+        return Err(execute_error(
+            StatusCode::BAD_REQUEST,
+            "Task group cannot be empty",
+        ));
     }
     if task_group.len() > app_state.execution_limits.max_steps
         || task_group.iter().any(|step| {
@@ -47,7 +50,10 @@ pub async fn execute(
     if app_state.cache_enabled {
         let task_hash = ExecutionCache::generate_hash(&task_group).map_err(|error| {
             tracing::error!(%error, "failed to serialize task group for cache key");
-            execute_error(StatusCode::INTERNAL_SERVER_ERROR, "Execution request failed")
+            execute_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Execution request failed",
+            )
         })?;
         if let Some(cached_result) = app_state.cache.try_from_hash(&task_hash) {
             return Ok(Json(cached_result));
@@ -85,7 +91,10 @@ async fn execute_uncached(
         .await
         .map_err(|error| {
             tracing::error!(%error, "runtime worker failed");
-            execute_error(StatusCode::INTERNAL_SERVER_ERROR, "Execution request failed")
+            execute_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Execution request failed",
+            )
         })?;
 
     match result {

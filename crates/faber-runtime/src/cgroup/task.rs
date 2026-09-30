@@ -237,8 +237,7 @@ impl TaskCgroup {
         let memory_max_value = if self.config.memory_max == "max" {
             "max".to_string()
         } else {
-            parse_memory_string(&self.config.memory_max)?
-                .to_string()
+            parse_memory_string(&self.config.memory_max)?.to_string()
         };
 
         write(&memory_max_path, &memory_max_value).map_err(|e| FaberError::WriteFile {

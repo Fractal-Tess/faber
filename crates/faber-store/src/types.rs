@@ -166,7 +166,7 @@ mod tests {
 
     #[test]
     fn file_id_rejects_short_and_traversal_values() {
-        for value in ["abc", "../../etc/passwd", "../" , "éé"] {
+        for value in ["abc", "../../etc/passwd", "../", "éé"] {
             assert!(FileId::new(value).is_err(), "accepted invalid id {value:?}");
         }
     }

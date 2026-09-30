@@ -97,7 +97,11 @@ mod tests {
         let router = build_router(
             "test-key".to_string(),
             false,
-            create_store(StoreConfig::builder().max_file_size(file_limit as u64).build()),
+            create_store(
+                StoreConfig::builder()
+                    .max_file_size(file_limit as u64)
+                    .build(),
+            ),
             ExecutionLimits {
                 upload_file_limit: file_limit,
                 ..ExecutionLimits::default()
@@ -114,7 +118,10 @@ mod tests {
 
     #[tokio::test]
     async fn upload_above_axum_default_is_accepted() {
-        assert_eq!(upload(3 * 1024 * 1024, 4 * 1024 * 1024).await, StatusCode::OK);
+        assert_eq!(
+            upload(3 * 1024 * 1024, 4 * 1024 * 1024).await,
+            StatusCode::OK
+        );
     }
 
     #[tokio::test]

@@ -183,9 +183,7 @@ impl Runtime {
 
         for step in &self.task_group {
             let result = match step {
-                ExecutionStep::Single(task) => {
-                    self.execute_single(task.clone(), faber_cgroup_path)
-                }
+                ExecutionStep::Single(task) => self.execute_single(task.clone(), faber_cgroup_path),
                 ExecutionStep::Parallel(tasks) => {
                     self.execute_parallel(tasks.clone(), faber_cgroup_path)
                 }
@@ -488,10 +486,7 @@ impl Runtime {
                 )?;
 
                 // Measure resources
-                let task_stats = match task_cgroup.measure_resources() {
-                    Ok(stats) => stats,
-                    Err(_) => Default::default(),
-                };
+                let task_stats = task_cgroup.measure_resources().unwrap_or_default();
 
                 let events = task_cgroup.measure_events();
                 let cleanup_succeeded = match task_cgroup.cleanup() {
@@ -601,12 +596,10 @@ impl Runtime {
                         details: "paths cannot contain NUL bytes".to_string(),
                     }
                 })?;
-                let mkdir_result = unsafe {
-                    libc::mkdirat(workspace.as_raw_fd(), parent_cstr.as_ptr(), 0o755)
-                };
+                let mkdir_result =
+                    unsafe { libc::mkdirat(workspace.as_raw_fd(), parent_cstr.as_ptr(), 0o755) };
                 if mkdir_result < 0
-                    && std::io::Error::last_os_error().kind()
-                        != std::io::ErrorKind::AlreadyExists
+                    && std::io::Error::last_os_error().kind() != std::io::ErrorKind::AlreadyExists
                 {
                     return Err(FaberError::WriteFile {
                         e: std::io::Error::last_os_error(),
@@ -971,9 +964,8 @@ impl Runtime {
 
             if kill_started_at.is_some()
                 && (!task_cgroup.is_populated()
-                    || kill_started_at.is_some_and(|started| {
-                        started.elapsed() >= Duration::from_millis(500)
-                    }))
+                    || kill_started_at
+                        .is_some_and(|started| started.elapsed() >= Duration::from_millis(500)))
             {
                 if exit_code.is_none() {
                     let _ = nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL);
@@ -1326,15 +1318,30 @@ impl Runtime {
         const SECCOMP_RETURN_ALLOW: u32 = 0x7fff_0000;
 
         let mut instructions = [
-            libc::sock_filter { code: BPF_LOAD_SYSCALL_NR, jt: 0, jf: 0, k: 0 },
+            libc::sock_filter {
+                code: BPF_LOAD_SYSCALL_NR,
+                jt: 0,
+                jf: 0,
+                k: 0,
+            },
             libc::sock_filter {
                 code: BPF_JUMP_GREATER_OR_EQUAL,
                 jt: 0,
                 jf: 1,
                 k: X32_SYSCALL_BIT,
             },
-            libc::sock_filter { code: BPF_RETURN, jt: 0, jf: 0, k: SECCOMP_RETURN_TRAP },
-            libc::sock_filter { code: BPF_RETURN, jt: 0, jf: 0, k: SECCOMP_RETURN_ALLOW },
+            libc::sock_filter {
+                code: BPF_RETURN,
+                jt: 0,
+                jf: 0,
+                k: SECCOMP_RETURN_TRAP,
+            },
+            libc::sock_filter {
+                code: BPF_RETURN,
+                jt: 0,
+                jf: 0,
+                k: SECCOMP_RETURN_ALLOW,
+            },
         ];
         let program = libc::sock_fprog {
             len: instructions.len() as u16,

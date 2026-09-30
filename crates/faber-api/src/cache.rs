@@ -53,6 +53,12 @@ impl ExecutionCache {
     }
 }
 
+impl Default for ExecutionCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -86,11 +92,5 @@ mod tests {
         let first_hash = ExecutionCache::generate_hash(&vec![ExecutionStep::Single(first)]);
         let second_hash = ExecutionCache::generate_hash(&vec![ExecutionStep::Single(second)]);
         assert_eq!(first_hash.unwrap(), second_hash.unwrap());
-    }
-}
-
-impl Default for ExecutionCache {
-    fn default() -> Self {
-        Self::new()
     }
 }

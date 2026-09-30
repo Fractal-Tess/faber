@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tracing::{debug, warn};
 
-use super::{config::CgroupConfig, task::{TaskCgroup, parse_memory_string}};
+use super::{
+    config::CgroupConfig,
+    task::{TaskCgroup, parse_memory_string},
+};
 use crate::prelude::*;
 
 static FABER_CGROUP_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
@@ -217,11 +220,9 @@ impl Cgroup {
                 message: "Aggregate service PID limit overflows u64".to_string(),
             })?;
 
-        write(path.join("memory.max"), memory.to_string()).map_err(|e| {
-            FaberError::WriteFile {
-                e,
-                details: "Failed to set aggregate service memory limit".to_string(),
-            }
+        write(path.join("memory.max"), memory.to_string()).map_err(|e| FaberError::WriteFile {
+            e,
+            details: "Failed to set aggregate service memory limit".to_string(),
         })?;
         write(path.join("memory.swap.max"), "0").map_err(|e| FaberError::WriteFile {
             e,

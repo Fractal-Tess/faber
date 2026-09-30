@@ -346,7 +346,10 @@ fn test_file_operations() {
 #[test]
 fn test_nested_submitted_file_paths() {
     let mut files = HashMap::new();
-    files.insert("src/generated/main.txt".to_string(), "nested content".to_string());
+    files.insert(
+        "src/generated/main.txt".to_string(),
+        "nested content".to_string(),
+    );
     let task = Task {
         cmd: "/bin/cat".to_string(),
         args: Some(vec!["src/generated/main.txt".to_string()]),
