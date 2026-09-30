@@ -14,6 +14,7 @@ pub struct ExecutionLimits {
     pub cpu_time_limit: Duration,
     pub overall_timeout: Duration,
     pub output_limit: usize,
+    pub request_output_limit: usize,
     pub max_steps: usize,
     pub max_parallel_tasks: usize,
     /// Task slots: how many sandboxed tasks may run at once across all
@@ -37,6 +38,7 @@ impl Default for ExecutionLimits {
             cpu_time_limit: Duration::from_secs(5),
             overall_timeout: Duration::from_secs(30),
             output_limit: 1024 * 1024,
+            request_output_limit: 16 * 1024 * 1024,
             max_steps: 64,
             max_parallel_tasks: 8,
             max_concurrency: 10,

@@ -159,6 +159,7 @@ async fn execute_uncached(
         .with_timeout(limits.wall_timeout)
         .with_cpu_time_limit(limits.cpu_time_limit)
         .with_output_limit(limits.output_limit)
+        .with_request_output_limit(limits.request_output_limit)
         .with_overall_timeout(limits.overall_timeout)
         .with_cancellation(cancellation)
         .build();

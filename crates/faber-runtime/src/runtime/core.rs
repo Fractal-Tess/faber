@@ -45,6 +45,7 @@ pub struct Runtime {
     pub(crate) timeout: Duration,
     pub(crate) cpu_time_limit: Duration,
     pub(crate) output_limit: usize,
+    pub(crate) request_output_limit: usize,
     pub(crate) overall_timeout: Duration,
     pub(crate) cancellation: CancellationToken,
 }
@@ -54,7 +55,14 @@ pub struct Runtime {
 #[derive(Clone, Copy)]
 struct StepLimits {
     timeout: Duration,
-    output_limit: usize,
+    output: OutputLimits,
+}
+
+/// Output bytes one task may keep: per stream, and across both streams.
+#[derive(Clone, Copy)]
+struct OutputLimits {
+    per_stream: usize,
+    total: usize,
 }
 
 /// Grace the controller allows beyond the overall deadline before it kills
@@ -326,6 +334,10 @@ impl Runtime {
         };
 
         let mut results = Vec::with_capacity(self.task_group.len());
+        // Output kept for the whole request. Every copy of the result (this
+        // process, the controller, the API response, the cache) is bounded by
+        // it; once spent, later tasks get no output budget at all.
+        let mut output_budget = self.request_output_limit;
 
         for step in &self.task_group {
             // Enforce the overall deadline here so that completed steps are
@@ -336,9 +348,16 @@ impl Runtime {
                 results.push(Self::not_started(step));
                 continue;
             }
+            let width = match step {
+                ExecutionStep::Single(_) => 1,
+                ExecutionStep::Parallel(tasks) => tasks.len().max(1),
+            };
             let limits = StepLimits {
                 timeout: self.timeout.min(remaining),
-                output_limit: self.output_limit,
+                output: OutputLimits {
+                    per_stream: self.output_limit,
+                    total: output_budget / width,
+                },
             };
             let result = match step {
                 ExecutionStep::Single(task) => {
@@ -348,6 +367,7 @@ impl Runtime {
                     self.execute_parallel(tasks.clone(), request_cgroup_path, limits)
                 }
             };
+            output_budget = output_budget.saturating_sub(Self::output_bytes(&result));
             results.push(result);
         }
 
@@ -371,6 +391,17 @@ impl Runtime {
                     Self::child_exit(125);
                 }
             }
+        }
+    }
+
+    fn output_bytes(result: &ExecutionStepResult) -> usize {
+        let task_bytes = |result: &TaskResult| match result {
+            TaskResult::Completed { stdout, stderr, .. } => stdout.len() + stderr.len(),
+            TaskResult::Failed { .. } => 0,
+        };
+        match result {
+            ExecutionStepResult::Single(result) => task_bytes(result),
+            ExecutionStepResult::Parallel(results) => results.iter().map(task_bytes).sum(),
         }
     }
 
@@ -402,7 +433,7 @@ impl Runtime {
             &self.cgroup,
             limits.timeout,
             self.cpu_time_limit,
-            limits.output_limit,
+            limits.output,
             request_cgroup_path,
         ) {
             Ok(task_result) => ExecutionStepResult::Single(task_result),
@@ -444,7 +475,7 @@ impl Runtime {
                         &self.cgroup,
                         limits.timeout,
                         self.cpu_time_limit,
-                        limits.output_limit,
+                        limits.output,
                         request_cgroup_path,
                     ) {
                         Ok(task_result) => task_result,
@@ -496,7 +527,7 @@ impl Runtime {
         cgroup: &Cgroup,
         timeout: std::time::Duration,
         cpu_time_limit: std::time::Duration,
-        output_limit: usize,
+        output_limits: OutputLimits,
         request_cgroup_path: &Path,
     ) -> Result<TaskResult> {
         use std::time::Instant;
@@ -673,7 +704,7 @@ impl Runtime {
                     stderr_read.into(),
                     stdin_write.into(),
                     task.stdin.unwrap_or_default().into_bytes(),
-                    output_limit,
+                    output_limits,
                     &task_cgroup,
                 )?;
 
@@ -1029,7 +1060,7 @@ impl Runtime {
         mut stderr_reader: PipeReader,
         stdin_writer: PipeWriter,
         stdin: Vec<u8>,
-        output_limit: usize,
+        output_limits: OutputLimits,
         task_cgroup: &TaskCgroup,
     ) -> Result<CollectedOutput> {
         use std::time::Instant;
@@ -1045,8 +1076,8 @@ impl Runtime {
         })?;
 
         let start_time = Instant::now();
-        let mut stdout = Vec::with_capacity(output_limit.min(8192));
-        let mut stderr = Vec::with_capacity(output_limit.min(8192));
+        let mut stdout = Vec::with_capacity(output_limits.per_stream.min(8192));
+        let mut stderr = Vec::with_capacity(output_limits.per_stream.min(8192));
         let mut stdout_open = true;
         let mut stderr_open = true;
         let mut stdin_writer = Some(stdin_writer);
@@ -1104,7 +1135,9 @@ impl Runtime {
                 stdout_open = Self::drain_pipe(
                     &mut stdout_reader,
                     &mut stdout,
-                    output_limit,
+                    output_limits
+                        .per_stream
+                        .min(output_limits.total.saturating_sub(stderr.len())),
                     &mut stdout_truncated,
                 )
                 .map_err(|error| FaberError::Generic {
@@ -1115,7 +1148,9 @@ impl Runtime {
                 stderr_open = Self::drain_pipe(
                     &mut stderr_reader,
                     &mut stderr,
-                    output_limit,
+                    output_limits
+                        .per_stream
+                        .min(output_limits.total.saturating_sub(stdout.len())),
                     &mut stderr_truncated,
                 )
                 .map_err(|error| FaberError::Generic {

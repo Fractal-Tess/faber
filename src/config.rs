@@ -99,6 +99,7 @@ impl Config {
             cpu_time_limit: Duration::from_secs(Self::load_env("CPU_TIME_LIMIT_SECS", 5)?),
             overall_timeout: Duration::from_millis(Self::load_env("OVERALL_TIMEOUT_MS", 30_000)?),
             output_limit: Self::load_env("OUTPUT_LIMIT_BYTES", 1024 * 1024)?,
+            request_output_limit: Self::load_env("REQUEST_OUTPUT_LIMIT_BYTES", 16 * 1024 * 1024)?,
             max_steps: Self::load_env("MAX_STEPS_PER_REQUEST", 64)?,
             max_parallel_tasks,
             max_concurrency,

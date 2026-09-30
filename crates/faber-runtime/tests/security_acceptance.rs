@@ -1387,6 +1387,45 @@ fn output_streams_are_drained_bounded_and_report_truncation() {
 }
 
 #[test]
+fn request_output_budget_is_shared_by_every_task() {
+    let _guard = lock_security_tests();
+    let flood = |bytes: usize| {
+        task(
+            "/bin/sh",
+            &["-c", &format!("head -c {bytes} /dev/zero | tr '\\0' x")],
+        )
+    };
+    let result = RuntimeBuilder::default()
+        .with_task_group(vec![
+            ExecutionStep::Single(flood(6000)),
+            ExecutionStep::Single(flood(6000)),
+            ExecutionStep::Single(task("/bin/echo", &["hi"])),
+            ExecutionStep::Single(task("/bin/true", &[])),
+        ])
+        .with_output_limit(64 * 1024)
+        .with_request_output_limit(10_000)
+        .with_timeout(std::time::Duration::from_secs(2))
+        .build()
+        .execute()
+        .expect("runtime execution failed");
+    let RuntimeResult::Success(results) = result else {
+        panic!("container setup failed: {result:?}");
+    };
+    assert_no_task_cgroups();
+
+    let outcome = |index: usize| {
+        let TaskResult::Completed { stdout, stats, .. } = single_result(&results[index]) else {
+            panic!("step {index} failed: {:?}", results[index]);
+        };
+        (stdout.len(), stats.outcome.clone())
+    };
+    assert_eq!(outcome(0), (6000, TaskOutcome::Exited));
+    assert_eq!(outcome(1), (4000, TaskOutcome::OutputLimit));
+    assert_eq!(outcome(2), (0, TaskOutcome::OutputLimit));
+    assert_eq!(outcome(3), (0, TaskOutcome::Exited));
+}
+
+#[test]
 fn stdin_and_stdout_progress_concurrently_without_pipe_deadlock() {
     let _guard = lock_security_tests();
     let input = "x".repeat(256 * 1024);
