@@ -348,6 +348,9 @@ impl Container {
             details: "Failed to create proc directory".to_string(),
         })?;
 
+        // No logging here: this runs in the execution child, forked from the
+        // multithreaded service, where taking the subscriber's lock can
+        // deadlock.
         match mount(
             Some("/oldroot/proc"),
             proc_path,
@@ -355,11 +358,8 @@ impl Container {
             MsFlags::MS_BIND,
             None::<&str>,
         ) {
-            Ok(_) => {
-                tracing::debug!("Bind mounted /oldroot/proc to /proc");
-            }
-            Err(e) => {
-                tracing::debug!("Bind mount failed, attempting fresh proc mount: {:?}", e);
+            Ok(_) => {}
+            Err(_) => {
                 let proc_flags = MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC;
                 mount(
                     None::<&str>,
@@ -461,5 +461,20 @@ impl Container {
         })?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Container setup runs in a child forked from the multithreaded service;
+    /// logging there can deadlock on locks held by other threads at fork time.
+    #[test]
+    fn container_setup_does_not_log() {
+        let needle = concat!("tracing", "::");
+        let source = include_str!("core.rs");
+        assert!(
+            !source.contains(needle),
+            "container/core.rs runs in forked children and must not log"
+        );
     }
 }
