@@ -1,9 +1,4 @@
-use std::{
-    io::{PipeReader, PipeWriter, pipe},
-    os::fd::RawFd,
-};
-
-use nix::unistd::close;
+use std::io::{PipeReader, PipeWriter, pipe};
 
 use crate::prelude::*;
 
@@ -24,10 +19,4 @@ pub fn mk_pipe() -> Result<(PipeReader, PipeWriter)> {
         e,
         details: "Failed to create pipe".to_string(),
     })
-}
-
-pub fn close_fd(fd: RawFd) -> Result<()> {
-    close(fd).map_err(|e| FaberError::CloseFd { e })?;
-
-    Ok(())
 }

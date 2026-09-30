@@ -3,7 +3,7 @@ use std::{
     fs::OpenOptions,
     io::{PipeReader, PipeWriter, Read, Write},
     os::{
-        fd::{AsRawFd, FromRawFd, IntoRawFd},
+        fd::{AsRawFd, FromRawFd},
         unix::{ffi::OsStrExt, fs::OpenOptionsExt},
     },
     path::{Component, Path},
@@ -31,7 +31,7 @@ use crate::{
     prelude::*,
     result::{ExecutionStepResult, RuntimeResult, TaskOutcome, TaskResult, TaskResultStats},
     task::{ExecutionStep, SandboxProfile, Task, TaskGroup},
-    utils::{close_fd, mk_pipe},
+    utils::mk_pipe,
 };
 
 /// Set once by [`Runtime::shutdown`]; every running execution observes it and
@@ -225,7 +225,9 @@ impl Runtime {
                 Self::child_exit(0);
             }
             Ok(ForkResult::Parent { child }) => {
-                close_fd(writer.into_raw_fd())?;
+                // Nothing between here and read_runtime_result may return
+                // early: that function owns killing and reaping the child.
+                drop(writer);
                 let _ = setpgid(child, child);
 
                 let runtime_result = self.read_runtime_result(
@@ -257,9 +259,12 @@ impl Runtime {
     ) -> Result<RuntimeResult> {
         use std::time::Instant;
 
-        Self::set_nonblocking(reader.as_raw_fd()).map_err(|error| FaberError::Generic {
-            message: format!("Failed to make runtime result pipe nonblocking: {error}"),
-        })?;
+        if let Err(error) = Self::set_nonblocking(reader.as_raw_fd()) {
+            Self::terminate_request(child, request_cgroup, false);
+            return Err(FaberError::Generic {
+                message: format!("Failed to make runtime result pipe nonblocking: {error}"),
+            });
+        }
         let mut bytes = Vec::new();
         let mut pipe_open = true;
         let mut child_exited = false;
