@@ -118,7 +118,9 @@ impl HybridStore {
         let evicted = lru.evict_until_space(size);
 
         for evict_id in evicted {
-            self.memory_cache.remove(&FileId::from(evict_id.clone()));
+            if let Ok(evict_id) = FileId::new(evict_id.clone()) {
+                self.memory_cache.remove(&evict_id);
+            }
             debug!("Evicted from memory cache: {}", evict_id);
         }
 
@@ -168,7 +170,9 @@ impl FileStore for HybridStore {
             if size <= self.max_memory_size {
                 let evicted = lru.evict_until_space(size);
                 for evict_id in evicted {
-                    self.memory_cache.remove(&FileId::from(evict_id));
+                    if let Ok(evict_id) = FileId::new(evict_id) {
+                        self.memory_cache.remove(&evict_id);
+                    }
                 }
                 lru.insert(file_id.to_string(), size);
                 drop(lru);
@@ -195,7 +199,9 @@ impl FileStore for HybridStore {
             if size <= self.max_memory_size {
                 let evicted = lru.evict_until_space(size);
                 for evict_id in evicted {
-                    self.memory_cache.remove(&FileId::from(evict_id));
+                    if let Ok(evict_id) = FileId::new(evict_id) {
+                        self.memory_cache.remove(&evict_id);
+                    }
                 }
                 lru.insert(file_id.to_string(), size);
             }
@@ -302,7 +308,9 @@ impl FileStore for HybridStore {
                 while let Some(file_entry) = file_entries.next_entry().await? {
                     if file_entry.file_type().await?.is_file() {
                         if let Some(name) = file_entry.file_name().to_str() {
-                            let file_id = FileId::from(name);
+                            let Ok(file_id) = FileId::new(name) else {
+                                continue;
+                            };
                             if let Ok(metadata) = self.get_metadata(&file_id).await {
                                 results.push(FileInfo {
                                     id: file_id,

@@ -178,7 +178,9 @@ impl FileStore for FilesystemStore {
                 while let Some(file_entry) = file_entries.next_entry().await? {
                     if file_entry.file_type().await?.is_file() {
                         if let Some(name) = file_entry.file_name().to_str() {
-                            let file_id = FileId::from(name);
+                            let Ok(file_id) = FileId::new(name) else {
+                                continue;
+                            };
                             if let Ok(metadata) = self.get_metadata(&file_id).await {
                                 results.push(FileInfo {
                                     id: file_id,

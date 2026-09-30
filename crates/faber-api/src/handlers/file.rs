@@ -4,13 +4,24 @@ use axum::{
     response::{IntoResponse, Json},
 };
 use bytes::Bytes;
-use faber_store::{FileInfo, FileMetadata};
+use faber_store::{FileId, FileInfo, FileMetadata};
 use serde::Serialize;
 use tracing::{debug, error, warn};
 
 use crate::state::AppState;
 
 const MAX_FILE_SIZE: usize = 50 * 1024 * 1024;
+
+fn parse_file_id(id: String) -> Result<FileId, (StatusCode, Json<ErrorResponse>)> {
+    FileId::new(id).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Invalid file ID".to_string(),
+            }),
+        )
+    })
+}
 
 #[derive(Debug, Serialize)]
 pub struct UploadResponse {
@@ -138,7 +149,7 @@ pub async fn download_file(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
-    let file_id = faber_store::FileId::from(id);
+    let file_id = parse_file_id(id)?;
 
     let file = state.file_store.get(&file_id).await.map_err(|e| match e {
         faber_store::StoreError::NotFound(_) => {
@@ -210,7 +221,7 @@ pub async fn delete_file(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
-    let file_id = faber_store::FileId::from(id);
+    let file_id = parse_file_id(id)?;
 
     let deleted = state.file_store.delete(&file_id).await.map_err(|e| {
         error!("Failed to delete file: {}", e);
