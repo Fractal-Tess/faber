@@ -54,6 +54,10 @@ struct CollectedOutput {
 }
 
 impl Runtime {
+    pub fn initialize() -> Result<()> {
+        Cgroup::ensure_faber_cgroup_hierarchy()
+    }
+
     pub fn execute(&self) -> Result<RuntimeResult> {
         Cgroup::ensure_faber_cgroup_hierarchy()?;
 

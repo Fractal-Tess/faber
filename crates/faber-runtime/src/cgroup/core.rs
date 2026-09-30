@@ -1,14 +1,11 @@
 use std::fs::{create_dir_all, read_dir, read_to_string, remove_dir, write};
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::{debug, warn};
 
 use super::{config::CgroupConfig, task::TaskCgroup};
 use crate::prelude::*;
 
-static CGROUP_INITIALIZED: AtomicBool = AtomicBool::new(false);
-static CGROUP_INIT_ERROR: Mutex<Option<String>> = Mutex::new(None);
 static FABER_CGROUP_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 #[derive(Debug, Clone, Default)]
@@ -22,39 +19,29 @@ impl Cgroup {
     }
 
     pub fn ensure_faber_cgroup_hierarchy() -> Result<()> {
-        if CGROUP_INITIALIZED.load(Ordering::SeqCst) {
-            if let Ok(guard) = CGROUP_INIT_ERROR.lock() {
-                if let Some(error) = guard.as_ref() {
-                    return Err(FaberError::Generic {
-                        message: format!("Cgroup initialization previously failed: {}", error),
-                    });
-                }
-            }
+        let mut path = FABER_CGROUP_PATH.lock().map_err(|_| FaberError::Generic {
+            message: "Faber cgroup initialization lock was poisoned".to_string(),
+        })?;
+        if path.is_some() {
             return Ok(());
         }
 
-        if let Err(e) = Self::create_faber_cgroup_hierarchy() {
-            if let Ok(mut guard) = CGROUP_INIT_ERROR.lock() {
-                *guard = Some(e.to_string());
-            }
-            return Err(e);
-        }
-
-        CGROUP_INITIALIZED.store(true, Ordering::SeqCst);
+        *path = Some(Self::create_faber_cgroup_hierarchy()?);
         Ok(())
     }
 
     /// Returns the resolved faber cgroup path (e.g. /sys/fs/cgroup/.../faber).
     /// Must be called after ensure_faber_cgroup_hierarchy().
     pub fn get_faber_cgroup_path() -> Result<PathBuf> {
-        if let Ok(guard) = FABER_CGROUP_PATH.lock() {
-            if let Some(path) = guard.as_ref() {
-                return Ok(path.clone());
-            }
-        }
-        Err(FaberError::Generic {
-            message: "Faber cgroup hierarchy not initialized".to_string(),
-        })
+        FABER_CGROUP_PATH
+            .lock()
+            .map_err(|_| FaberError::Generic {
+                message: "Faber cgroup initialization lock was poisoned".to_string(),
+            })?
+            .clone()
+            .ok_or_else(|| FaberError::Generic {
+                message: "Faber cgroup hierarchy not initialized".to_string(),
+            })
     }
 
     fn controllers_already_enabled(subtree_control_path: &PathBuf) -> bool {
@@ -114,7 +101,7 @@ impl Cgroup {
         Ok(PathBuf::from("/sys/fs/cgroup"))
     }
 
-    pub fn create_faber_cgroup_hierarchy() -> Result<()> {
+    fn create_faber_cgroup_hierarchy() -> Result<PathBuf> {
         let base_cgroup_path = Self::detect_own_cgroup_path()?;
         let subtree_control_path = base_cgroup_path.join("cgroup.subtree_control");
 
@@ -157,17 +144,12 @@ impl Cgroup {
 
         Self::setup_faber_cgroup_limits(&faber_cgroup_path)?;
 
-        // Cache the resolved path for TaskCgroup to use
-        if let Ok(mut guard) = FABER_CGROUP_PATH.lock() {
-            *guard = Some(faber_cgroup_path.clone());
-        }
-
         debug!(
             "Faber cgroup hierarchy created at {}",
             faber_cgroup_path.display()
         );
 
-        Ok(())
+        Ok(faber_cgroup_path)
     }
 
     fn cleanup_stale_task_cgroups(faber_cgroup_path: &PathBuf) {

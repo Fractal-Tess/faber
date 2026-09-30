@@ -1,5 +1,6 @@
 use faber_api::axum;
 use faber_api::{ServeConfig, build_router, serve};
+use faber_runtime::Runtime;
 use faber_store::StoreConfig;
 
 mod config;
@@ -8,6 +9,7 @@ use config::{Config, StoreBackend};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = Config::from_env()?;
+    Runtime::initialize()?;
 
     let store_config = match &config.store_backend {
         StoreBackend::Memory => StoreConfig::builder().memory().build(),
