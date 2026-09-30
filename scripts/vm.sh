@@ -42,6 +42,8 @@ to allow outbound access. The repository is mounted read-only at /faber-src.
 Environment:
   FABER_VM_MEMORY_MB  Guest memory (default 8192)
   FABER_VM_CPUS       Guest CPUs (default: host CPUs, at most 8)
+  FABER_VM_KERNEL     nixpkgs kernel attribute for the guest, e.g.
+                      linuxPackages_latest or linuxPackages_6_6
   FABER_VM_TIMEOUT    Seconds before the guest is killed (default 3600;
                       up and shell have no limit)
   FABER_VM_STATE      Disk and run directory (default ~/.cache/faber-vm)
@@ -66,6 +68,7 @@ build_vm() {
     nix build \
         --extra-experimental-features 'nix-command flakes' \
         --no-link --print-out-paths \
+        --argstr kernel "${FABER_VM_KERNEL:-default}" \
         --file "$ROOT_DIR/nix/test-vm.nix"
 }
 

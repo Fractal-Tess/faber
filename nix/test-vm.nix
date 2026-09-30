@@ -7,6 +7,9 @@
 # revision pinned in flake.lock.
 {
   system ? builtins.currentSystem,
+  # Attribute of pkgs selecting the guest kernel, e.g. linuxPackages_latest or
+  # linuxPackages_6_6; "default" keeps the NixOS default.
+  kernel ? "default",
 }:
 let
   lock = builtins.fromJSON (builtins.readFile ../flake.lock);
@@ -19,6 +22,7 @@ let
 
       networking.hostName = "faber-vm";
       system.stateVersion = "25.05";
+      boot.kernelPackages = if kernel == "default" then pkgs.linuxPackages else pkgs.${kernel};
       documentation.enable = false;
 
       virtualisation = {
