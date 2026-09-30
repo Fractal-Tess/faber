@@ -231,3 +231,53 @@ async fn disconnecting_clients_cannot_exceed_the_concurrency_limit() {
     }
     panic!("sandboxes leaked: {:?}", sandbox_cgroups());
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn parallel_steps_reserve_one_slot_per_task() {
+    let router = build_router(
+        "test-key".to_string(),
+        false,
+        create_store(StoreConfig::default()),
+        ExecutionLimits {
+            max_concurrency: 4,
+            max_parallel_tasks: 4,
+            ..ExecutionLimits::default()
+        },
+    );
+    let post = |body: &'static str| {
+        Request::post("/execute")
+            .header("Authorization", "Bearer test-key")
+            .header("Content-Type", "application/json")
+            .body(Body::from(body))
+            .unwrap()
+    };
+
+    let wide = tokio::spawn(router.clone().oneshot(post(
+        r#"[[{"cmd":"/bin/sleep","args":["1"]},{"cmd":"/bin/sleep","args":["1"]},{"cmd":"/bin/sleep","args":["1"]},{"cmd":"/bin/sleep","args":["1"]}]]"#,
+    )));
+    for _ in 0..100 {
+        if !task_cgroups().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    let narrow = router
+        .clone()
+        .oneshot(post(r#"[{"cmd":"/bin/true"}]"#))
+        .await
+        .unwrap();
+    assert_eq!(
+        narrow.status(),
+        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+        "a 4-wide step must hold all 4 slots"
+    );
+
+    let wide = wide.await.unwrap().unwrap();
+    assert_eq!(wide.status(), axum::http::StatusCode::OK);
+    let narrow = router
+        .oneshot(post(r#"[{"cmd":"/bin/true"}]"#))
+        .await
+        .unwrap();
+    assert_eq!(narrow.status(), axum::http::StatusCode::OK);
+}

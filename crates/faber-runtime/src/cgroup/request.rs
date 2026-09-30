@@ -8,6 +8,13 @@ use crate::utils::generate_random_string;
 
 pub(crate) const REQUEST_CGROUP_PREFIX: &str = "req-";
 
+/// Limits for one request's cgroup subtree. `None` leaves the value at `max`.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct RequestLimits {
+    pub(crate) memory_max: Option<u64>,
+    pub(crate) pids_max: Option<u64>,
+}
+
 /// Parent cgroup for every task of one runtime execution.
 ///
 /// Task cgroups are created beneath it, so killing it with the recursive
@@ -18,7 +25,7 @@ pub(crate) struct RequestCgroup {
 }
 
 impl RequestCgroup {
-    pub(crate) fn new(faber_cgroup_path: &Path) -> Result<Self> {
+    pub(crate) fn new(faber_cgroup_path: &Path, limits: RequestLimits) -> Result<Self> {
         let path = faber_cgroup_path.join(format!(
             "{REQUEST_CGROUP_PREFIX}{}-{}",
             std::process::id(),
@@ -41,6 +48,19 @@ impl RequestCgroup {
             e,
             details: "Failed to enable controllers in the request cgroup".to_string(),
         })?;
+        for (file, value) in [
+            ("memory.max", limits.memory_max),
+            ("pids.max", limits.pids_max),
+        ] {
+            if let Some(value) = value {
+                write(request_cgroup.path.join(file), value.to_string()).map_err(|e| {
+                    FaberError::WriteFile {
+                        e,
+                        details: format!("Failed to set {file} on the request cgroup"),
+                    }
+                })?;
+            }
+        }
 
         Ok(request_cgroup)
     }

@@ -5,7 +5,7 @@ use tracing::{debug, warn};
 
 use super::{
     config::CgroupConfig,
-    request::{self, REQUEST_CGROUP_PREFIX, RequestCgroup},
+    request::{self, REQUEST_CGROUP_PREFIX, RequestCgroup, RequestLimits},
     task::{TaskCgroup, parse_memory_string},
 };
 use crate::prelude::*;
@@ -204,19 +204,24 @@ impl Cgroup {
         Ok(())
     }
 
+    /// Size the Faber cgroup for `task_slots` concurrently running tasks.
+    /// Every running request holds at least one slot, so there are at most
+    /// `task_slots` workspaces as well.
     pub fn configure_service_limits(
         per_task_memory: &str,
         per_task_pids: u32,
-        max_concurrency: usize,
+        task_slots: usize,
+        workspace_allowance: u64,
     ) -> Result<()> {
         let path = Self::get_faber_cgroup_path()?;
         let memory = parse_memory_string(per_task_memory)?
-            .checked_mul(max_concurrency as u64)
+            .checked_add(workspace_allowance)
+            .and_then(|per_slot| per_slot.checked_mul(task_slots as u64))
             .ok_or_else(|| FaberError::Generic {
                 message: "Aggregate service memory limit overflows u64".to_string(),
             })?;
         let pids = u64::from(per_task_pids)
-            .checked_mul(max_concurrency as u64)
+            .checked_mul(task_slots as u64)
             .ok_or_else(|| FaberError::Generic {
                 message: "Aggregate service PID limit overflows u64".to_string(),
             })?;
@@ -252,8 +257,32 @@ impl Cgroup {
         Ok(())
     }
 
-    pub(crate) fn create_request_cgroup(&self, faber_cgroup_path: &Path) -> Result<RequestCgroup> {
-        RequestCgroup::new(faber_cgroup_path)
+    /// Create the cgroup for one request whose widest step runs `width` tasks
+    /// at once. Its limits cover that many tasks at their per-task limits plus
+    /// the request's workspace tmpfs, whose pages are recharged to the request
+    /// cgroup once the task that wrote them is gone.
+    pub(crate) fn create_request_cgroup(
+        &self,
+        faber_cgroup_path: &Path,
+        width: usize,
+        workspace_allowance: Option<u64>,
+    ) -> Result<RequestCgroup> {
+        let width = width.max(1) as u64;
+        let memory_max = match self.config.memory_max.trim() {
+            "max" => None,
+            memory => parse_memory_string(memory)?
+                .checked_mul(width)
+                .zip(workspace_allowance)
+                .and_then(|(tasks, workspace)| tasks.checked_add(workspace)),
+        };
+        let pids_max = u64::from(self.config.pids_max).checked_mul(width);
+        RequestCgroup::new(
+            faber_cgroup_path,
+            RequestLimits {
+                memory_max,
+                pids_max,
+            },
+        )
     }
 
     pub fn create_task_cgroup(&self, request_cgroup_path: &Path) -> Result<TaskCgroup> {

@@ -10,6 +10,7 @@ export type TaskOutcome =
   | 'signaled'
   | 'timed_out'
   | 'out_of_memory'
+  | 'ancestor_out_of_memory'
   | 'pids_limit'
   | 'output_limit'
   | 'policy_violation'

@@ -80,6 +80,15 @@ impl Config {
             );
         }
 
+        let max_parallel_tasks = Self::load_env("MAX_PARALLEL_TASKS", 8)?;
+        let max_concurrency = Self::load_env("MAX_CONCURRENCY", 10)?;
+        if max_parallel_tasks > max_concurrency {
+            return Err(
+                "MAX_PARALLEL_TASKS must not exceed MAX_CONCURRENCY (task slots); a wider step could never be admitted"
+                    .into(),
+            );
+        }
+
         Ok(ExecutionLimits {
             memory_max,
             pids_max: Self::load_env("PIDS_MAX", 64)?,
@@ -89,8 +98,8 @@ impl Config {
             overall_timeout: Duration::from_millis(Self::load_env("OVERALL_TIMEOUT_MS", 30_000)?),
             output_limit: Self::load_env("OUTPUT_LIMIT_BYTES", 1024 * 1024)?,
             max_steps: Self::load_env("MAX_STEPS_PER_REQUEST", 64)?,
-            max_parallel_tasks: Self::load_env("MAX_PARALLEL_TASKS", 16)?,
-            max_concurrency: Self::load_env("MAX_CONCURRENCY", 10)?,
+            max_parallel_tasks,
+            max_concurrency,
             execute_body_limit: Self::load_env("EXECUTE_BODY_LIMIT_BYTES", 1024 * 1024)?,
             upload_file_limit: Self::load_env("UPLOAD_FILE_LIMIT_BYTES", 50 * 1024 * 1024)?,
             default_sandbox_profile,

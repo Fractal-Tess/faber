@@ -5,7 +5,7 @@ use axum::{
     response::{IntoResponse, Json, Response},
 };
 use faber_runtime::{
-    CancellationToken, CgroupConfigBuilder, ExecutionStep, FaberError, RuntimeBuilder,
+    CancellationToken, CgroupConfigBuilder, ExecutionStep, FaberError, Runtime, RuntimeBuilder,
     RuntimeResult, TaskGroup, TaskGroupResult,
 };
 use tokio::sync::OwnedSemaphorePermit;
@@ -122,10 +122,13 @@ pub async fn execute(
         None
     };
 
+    // One slot per task that can run at once; the aggregate cgroup limits are
+    // sized as per-task limits times the number of slots.
+    let slots = u32::try_from(Runtime::widest_step(&task_group)).unwrap_or(u32::MAX);
     let permit = app_state
         .execution_slots
         .clone()
-        .try_acquire_owned()
+        .try_acquire_many_owned(slots)
         .map_err(|_| ExecuteError {
             retry_after: Some(1),
             ..ExecuteError::new(

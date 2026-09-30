@@ -168,6 +168,9 @@ pub enum TaskOutcome {
     Signaled,
     TimedOut,
     OutOfMemory,
+    /// OOM-killed by a limit above the task's own: the request, the service,
+    /// the container, or the host.
+    AncestorOutOfMemory,
     PidsLimit,
     OutputLimit,
     PolicyViolation,

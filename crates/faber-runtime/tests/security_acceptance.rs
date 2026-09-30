@@ -1886,6 +1886,115 @@ fn pids_cgroup_enforces_the_process_limit() {
     assert!(stats.cleanup_succeeded);
 }
 
+/// Wait for this process's single live request cgroup to appear.
+fn wait_for_request_cgroup() -> PathBuf {
+    for _ in 0..200 {
+        if let Some(request) = sandbox_cgroups().into_iter().find(|path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with("req-"))
+        }) {
+            return request;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    panic!("request cgroup never appeared");
+}
+
+#[test]
+fn request_cgroup_limits_cover_its_widest_step() {
+    let _guard = lock_security_tests();
+    let runtime = std::thread::spawn(|| {
+        RuntimeBuilder::default()
+            .with_task_group(vec![
+                ExecutionStep::Single(task("/bin/sleep", &["0.5"])),
+                ExecutionStep::Parallel((0..3).map(|_| task("/bin/sleep", &["0.5"])).collect()),
+            ])
+            .with_cgroup_config(
+                CgroupConfigBuilder::new()
+                    .with_memory("32M".to_string())
+                    .with_pids(16)
+                    .build(),
+            )
+            .build()
+            .execute()
+    });
+
+    let request = wait_for_request_cgroup();
+    let read = |file: &str| {
+        std::fs::read_to_string(request.join(file))
+            .unwrap_or_else(|error| panic!("failed to read {file}: {error}"))
+            .trim()
+            .to_string()
+    };
+    // Three tasks at 32 MiB plus the default 128 MiB workspace and 128 MiB /tmp.
+    assert_eq!(
+        read("memory.max"),
+        (3 * 32 * 1024 * 1024 + 256 * 1024 * 1024).to_string()
+    );
+    assert_eq!(read("pids.max"), "48");
+
+    let result = runtime
+        .join()
+        .expect("runtime panicked")
+        .expect("runtime failed");
+    let RuntimeResult::Success(results) = result else {
+        panic!("container setup failed: {result:?}");
+    };
+    let ExecutionStepResult::Parallel(parallel) = &results[1] else {
+        panic!("expected parallel results");
+    };
+    for result in parallel {
+        let TaskResult::Completed { stats, .. } = result else {
+            panic!("parallel task failed: {result:?}");
+        };
+        assert_eq!(stats.outcome, TaskOutcome::Exited);
+    }
+    assert_no_task_cgroups();
+}
+
+#[test]
+fn oom_kills_from_an_ancestor_limit_are_reported_separately() {
+    let _guard = lock_security_tests();
+    let runtime = std::thread::spawn(|| {
+        RuntimeBuilder::default()
+            .with_task_group(vec![ExecutionStep::Single(task(
+                "/bin/sh",
+                &[
+                    "-c",
+                    "sleep 0.5; exec /bin/dd if=/dev/zero of=/faber/fill.bin bs=1M count=96",
+                ],
+            ))])
+            .with_cgroup_config(
+                CgroupConfigBuilder::new()
+                    .with_memory("256M".to_string())
+                    .build(),
+            )
+            .with_timeout(std::time::Duration::from_secs(5))
+            .build()
+            .execute()
+    });
+
+    // Lower the request's limit below what the task may use on its own, as
+    // pressure from the service or container would.
+    let request = wait_for_request_cgroup();
+    std::fs::write(request.join("memory.max"), (16 * 1024 * 1024).to_string())
+        .expect("failed to lower the request memory limit");
+
+    let result = runtime
+        .join()
+        .expect("runtime panicked")
+        .expect("runtime failed");
+    let RuntimeResult::Success(results) = result else {
+        panic!("container setup failed: {result:?}");
+    };
+    let TaskResult::Completed { stats, .. } = single_result(&results[0]) else {
+        panic!("fill task failed: {:?}", results[0]);
+    };
+    assert_eq!(stats.outcome, TaskOutcome::AncestorOutOfMemory, "{stats:?}");
+    assert!(stats.oom_kill_count > 0);
+    assert_no_task_cgroups();
+}
+
 #[test]
 fn memory_cgroup_kills_a_process_that_exceeds_memory_max() {
     let _guard = lock_security_tests();

@@ -25,7 +25,7 @@ kernel and CI environments; it is not a proof against unknown kernel defects.
 | File descriptors | Post-`exec` enumeration permits only stdin/stdout/stderr plus the probe’s own temporary directory descriptor |
 | Syscalls | Every syscall entry in `compile_v1` and `native_v1` is invoked directly and must terminate with `SIGSYS`/`policy_violation` |
 | Network | Interface inventory, IPv4/IPv6 route tables, external nonblocking connects, resolver-file absence, native socket denial, unique net namespace per runtime |
-| Memory and processes | Real OOM kill with `memory.events`, swap disabled, fork exhaustion with `pids.events`, peak values, cgroup cleanup |
+| Memory and processes | Real OOM kill with `memory.events`, own-limit versus ancestor-limit OOM classification, per-request cgroup sizing, swap disabled, fork exhaustion with `pids.events`, peak values, cgroup cleanup |
 | Timeout teardown | Atomic `cgroup.kill`, fork-successor stdout holders, bounded pipe grace, overall execution deadline scoped to its own request cgroup, no leaked request or task cgroups |
 | CPU and rlimits | `cpu.max` throttling counters, independent `RLIMIT_CPU`, `EMFILE`, `EFBIG`, stack signal, zero core files |
 | I/O | stdout/stderr floods, binary-size caps, truncation reporting, concurrent stdin/stdout, large parallel result transport, 16 MiB result transport-time bound |

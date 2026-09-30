@@ -77,6 +77,10 @@ pub struct TaskStats {
 
 #[derive(Debug, Clone, Default)]
 pub struct TaskCgroupEvents {
+    /// Times this task cgroup's own `memory.max` was reached and could not be
+    /// reclaimed. Zero with a nonzero `oom_kill_count` means an ancestor's
+    /// limit (request, service, container, or host) chose the victim.
+    pub own_oom_count: u64,
     pub oom_kill_count: u64,
     pub pids_limit_hit_count: u64,
 }

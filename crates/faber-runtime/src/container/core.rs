@@ -11,7 +11,7 @@ use nix::{
     unistd::sethostname,
 };
 
-use crate::{container::config::ContainerConfig, prelude::*};
+use crate::{cgroup::task::parse_memory_string, container::config::ContainerConfig, prelude::*};
 
 #[derive(Default)]
 pub struct Container {
@@ -59,6 +59,13 @@ impl Container {
         self.unmount_oldroot()?;
 
         Ok(())
+    }
+
+    /// Bytes the writable tmpfs mounts (workspace and /tmp) can hold.
+    pub(crate) fn workspace_allowance(&self) -> Option<u64> {
+        let tmp = parse_memory_string(&self.config.tmpdir_size).ok()?;
+        let work = parse_memory_string(&self.config.workdir_size).ok()?;
+        tmp.checked_add(work)
     }
 
     pub(crate) fn cleanup(&self) -> Result<()> {

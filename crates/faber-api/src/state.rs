@@ -16,9 +16,10 @@ pub struct ExecutionLimits {
     pub output_limit: usize,
     pub max_steps: usize,
     pub max_parallel_tasks: usize,
-    /// Executions that may run at once. Each running execution holds a
-    /// permit until its sandbox has actually finished, not merely until its
-    /// HTTP request ends.
+    /// Task slots: how many sandboxed tasks may run at once across all
+    /// requests. A request reserves as many slots as its widest step and
+    /// holds them until its sandbox has actually finished, not merely until
+    /// its HTTP request ends. Must be at least `max_parallel_tasks`.
     pub max_concurrency: usize,
     pub execute_body_limit: usize,
     pub upload_file_limit: usize,
@@ -37,7 +38,7 @@ impl Default for ExecutionLimits {
             overall_timeout: Duration::from_secs(30),
             output_limit: 1024 * 1024,
             max_steps: 64,
-            max_parallel_tasks: 16,
+            max_parallel_tasks: 8,
             max_concurrency: 10,
             execute_body_limit: 1024 * 1024,
             upload_file_limit: 50 * 1024 * 1024,

@@ -60,12 +60,37 @@ impl Runtime {
         Cgroup::ensure_faber_cgroup_hierarchy()
     }
 
+    /// Configure the aggregate Faber cgroup for `task_slots` concurrently
+    /// running tasks with the default container workspace sizes.
     pub fn configure_service_limits(
         per_task_memory: &str,
         per_task_pids: u32,
-        max_concurrency: usize,
+        task_slots: usize,
     ) -> Result<()> {
-        Cgroup::configure_service_limits(per_task_memory, per_task_pids, max_concurrency)
+        let workspace_allowance =
+            Container::default()
+                .workspace_allowance()
+                .ok_or_else(|| FaberError::Generic {
+                    message: "Default container workspace sizes are not byte sizes".to_string(),
+                })?;
+        Cgroup::configure_service_limits(
+            per_task_memory,
+            per_task_pids,
+            task_slots,
+            workspace_allowance,
+        )
+    }
+
+    /// The most tasks any step of this runtime runs at once.
+    pub fn widest_step(task_group: &[ExecutionStep]) -> usize {
+        task_group
+            .iter()
+            .map(|step| match step {
+                ExecutionStep::Single(_) => 1,
+                ExecutionStep::Parallel(tasks) => tasks.len(),
+            })
+            .max()
+            .unwrap_or(1)
     }
 
     pub fn shutdown() -> Result<()> {
@@ -78,7 +103,11 @@ impl Runtime {
         }
         Cgroup::ensure_faber_cgroup_hierarchy()?;
         let faber_cgroup_path = Cgroup::get_faber_cgroup_path()?;
-        let request_cgroup = self.cgroup.create_request_cgroup(&faber_cgroup_path)?;
+        let request_cgroup = self.cgroup.create_request_cgroup(
+            &faber_cgroup_path,
+            Self::widest_step(&self.task_group),
+            self.container.workspace_allowance(),
+        )?;
 
         let (reader, writer) = mk_pipe()?;
 
@@ -581,8 +610,10 @@ impl Runtime {
                     TaskOutcome::TimedOut
                 } else if collected.output_terminated {
                     TaskOutcome::OutputLimit
-                } else if events.oom_kill_count > 0 {
+                } else if events.oom_kill_count > 0 && events.own_oom_count > 0 {
                     TaskOutcome::OutOfMemory
+                } else if events.oom_kill_count > 0 {
+                    TaskOutcome::AncestorOutOfMemory
                 } else if events.pids_limit_hit_count > 0 {
                     TaskOutcome::PidsLimit
                 } else if collected.termination_signal == Some(libc::SIGSYS) {

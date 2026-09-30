@@ -114,7 +114,13 @@ impl TaskCgroup {
     }
 
     pub fn measure_events(&self) -> TaskCgroupEvents {
+        let own_events = if self.task_cgroup_path.join("memory.events.local").exists() {
+            "memory.events.local"
+        } else {
+            "memory.events"
+        };
         TaskCgroupEvents {
+            own_oom_count: self.event_value(own_events, "oom"),
             oom_kill_count: self.event_value("memory.events", "oom_kill"),
             pids_limit_hit_count: self.event_value("pids.events", "max"),
         }
