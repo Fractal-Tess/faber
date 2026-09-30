@@ -8,7 +8,6 @@ use nix::{
     mount::{MntFlags, MsFlags, mount, umount2},
     sched::CloneFlags,
     sched::unshare,
-    sys::stat::{Mode, SFlag, makedev, mknod},
     unistd::sethostname,
 };
 
@@ -300,53 +299,6 @@ impl Container {
         Ok(())
     }
 
-    fn create_dev_devices(&self) -> Result<()> {
-        let flags = SFlag::S_IFCHR;
-        let mode = Mode::S_IRUSR
-            | Mode::S_IWUSR
-            | Mode::S_IRGRP
-            | Mode::S_IWGRP
-            | Mode::S_IROTH
-            | Mode::S_IWOTH;
-
-        create_dir_all("/dev").map_err(|e| FaberError::CreateDir {
-            e,
-            details: ("Failed to create dev directory".to_string()),
-        })?;
-
-        let device_id = makedev(1, 3);
-        mknod("/dev/null", flags, mode, device_id).map_err(|e| FaberError::MkDevDevice {
-            detaills: "Failed to create null device".to_string(),
-            e,
-        })?;
-
-        let device_id = makedev(1, 5);
-        mknod("/dev/zero", flags, mode, device_id).map_err(|e| FaberError::MkDevDevice {
-            detaills: "Failed to create zero device".to_string(),
-            e,
-        })?;
-
-        let device_id = makedev(1, 7);
-        mknod("/dev/full", flags, mode, device_id).map_err(|e| FaberError::MkDevDevice {
-            detaills: "Failed to create full device".to_string(),
-            e,
-        })?;
-
-        let device_id = makedev(1, 8);
-        mknod("/dev/random", flags, mode, device_id).map_err(|e| FaberError::MkDevDevice {
-            detaills: "Failed to create random device".to_string(),
-            e,
-        })?;
-
-        let device_id = makedev(1, 9);
-        mknod("/dev/urandom", flags, mode, device_id).map_err(|e| FaberError::MkDevDevice {
-            detaills: "Failed to create urandom device".to_string(),
-            e,
-        })?;
-
-        Ok(())
-    }
-
     fn create_workdir(&self) -> Result<()> {
         create_dir_all(&self.config.workdir).map_err(|e| FaberError::CreateDir {
             e,
@@ -464,116 +416,6 @@ impl Container {
         .map_err(|e| FaberError::Mount {
             e,
             details: "Failed to mount a fresh cgroup v2 filesystem".to_string(),
-        })?;
-
-        Ok(())
-    }
-
-    fn create_proc_in_newroot(&self) -> Result<()> {
-        let proc_path = self.config.container_root_dir.join("proc");
-        let proc_fstype = "proc";
-        let proc_flags = MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC;
-
-        create_dir_all(&proc_path).map_err(|e| FaberError::CreateDir {
-            e,
-            details: "Failed to create proc directory in newroot".to_string(),
-        })?;
-
-        mount(
-            None::<&str>,
-            proc_path.as_os_str(),
-            Some(proc_fstype),
-            proc_flags,
-            None::<&str>,
-        )
-        .map_err(|e| FaberError::Mount {
-            e,
-            details: "Failed to mount proc filesystem in newroot".to_string(),
-        })?;
-
-        Ok(())
-    }
-
-    fn create_sys_in_newroot(&self) -> Result<()> {
-        let sys_path = self.config.container_root_dir.join("sys");
-        let sys_fstype = "sysfs";
-        let sys_flags = MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC;
-
-        create_dir_all(&sys_path).map_err(|e| FaberError::CreateDir {
-            e,
-            details: "Failed to create sys directory in newroot".to_string(),
-        })?;
-
-        mount(
-            None::<&str>,
-            sys_path.as_os_str(),
-            Some(sys_fstype),
-            sys_flags,
-            None::<&str>,
-        )
-        .map_err(|e| FaberError::Mount {
-            e,
-            details: "Failed to mount sys filesystem in newroot".to_string(),
-        })?;
-
-        Ok(())
-    }
-
-    fn create_cgroup_in_newroot(&self) -> Result<()> {
-        let cgroup_path = self.config.container_root_dir.join("sys/fs/cgroup");
-        let cgroup_fstype = "cgroup2";
-        let cgroup_flags =
-            MsFlags::MS_RELATIME | MsFlags::MS_NOSUID | MsFlags::MS_NODEV | MsFlags::MS_NOEXEC;
-
-        create_dir_all(&cgroup_path).map_err(|e| FaberError::CreateDir {
-            e,
-            details: "Failed to create cgroup directory in newroot".to_string(),
-        })?;
-
-        mount(
-            None::<&str>,
-            cgroup_path.as_os_str(),
-            Some(cgroup_fstype),
-            cgroup_flags,
-            None::<&str>,
-        )
-        .map_err(|e| FaberError::Mount {
-            e,
-            details: "Failed to mount cgroup2 filesystem in newroot".to_string(),
-        })?;
-
-        Ok(())
-    }
-
-    fn move_mounts_to_newroot(&self) -> Result<()> {
-        // After pivot_root, mounts under oldroot need to be moved to new root
-        // Use MS_MOVE to relocate them without unmounting
-        let move_flags = MsFlags::MS_MOVE;
-
-        // Move proc mount
-        mount(
-            Some("/oldroot/proc"),
-            "/proc",
-            None::<&str>,
-            move_flags,
-            None::<&str>,
-        )
-        .map_err(|e| FaberError::Mount {
-            e,
-            details: "Failed to move proc mount to new root".to_string(),
-        })?;
-
-        // Move sys mount
-        mount(
-            Some("/oldroot/sys"),
-            "/sys",
-            None::<&str>,
-            move_flags,
-            None::<&str>,
-        )
-        .map_err(|e| FaberError::Mount {
-            e,
-            details: "Failed to move sys mount to new root".to_string(),
         })?;
 
         Ok(())

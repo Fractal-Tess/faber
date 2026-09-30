@@ -17,7 +17,6 @@ pub struct HybridStore {
     memory_cache: DashMap<FileId, StoredFile>,
     lru: Mutex<LruCache>,
     base_path: PathBuf,
-    max_memory_entries: usize,
     max_memory_size: u64,
     config: StoreConfig,
 }
@@ -33,7 +32,6 @@ impl HybridStore {
             memory_cache: DashMap::new(),
             lru: Mutex::new(LruCache::new(max_memory_entries, max_memory_size)),
             base_path: PathBuf::from(path),
-            max_memory_entries,
             max_memory_size,
             config,
         }

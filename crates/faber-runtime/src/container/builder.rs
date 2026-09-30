@@ -19,11 +19,6 @@ impl ContainerConfigBuilder {
         self
     }
 
-    pub fn with_w_bind_mounts(mut self, w_bind_mounts: Vec<&'static str>) -> Self {
-        self.config.bind_mounts_rw = w_bind_mounts;
-        self
-    }
-
     pub fn with_tmpdir_size(mut self, tmpdir_size: String) -> Self {
         self.config.tmpdir_size = tmpdir_size;
         self

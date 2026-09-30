@@ -130,7 +130,6 @@ case "${1:-}" in
         compose run --rm --no-TTY faber cargo fmt --all -- --check
         compose run --rm --no-TTY faber cargo clippy --workspace --all-targets -- \
             -D warnings \
-            -A dead-code \
             -A clippy::collapsible-if \
             -A clippy::io-other-error \
             -A clippy::len-without-is-empty \
