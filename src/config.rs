@@ -12,6 +12,7 @@ pub struct Config {
     pub cache_enabled: bool,
     pub store_backend: StoreBackend,
     pub execution_limits: ExecutionLimits,
+    pub shutdown_timeout: Duration,
 }
 
 #[derive(Debug, Clone)]
@@ -36,6 +37,7 @@ impl Config {
             cache_enabled: Self::load_cache_enabled(),
             store_backend: Self::load_store_backend(),
             execution_limits: Self::load_execution_limits()?,
+            shutdown_timeout: Duration::from_millis(Self::load_env("SHUTDOWN_TIMEOUT_MS", 5_000)?),
         })
     }
 

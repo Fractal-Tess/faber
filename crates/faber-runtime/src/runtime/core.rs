@@ -7,6 +7,7 @@ use std::{
         unix::{ffi::OsStrExt, fs::OpenOptionsExt},
     },
     path::{Component, Path},
+    sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
 
@@ -32,6 +33,10 @@ use crate::{
     task::{ExecutionStep, SandboxProfile, Task, TaskGroup},
     utils::{close_fd, mk_pipe},
 };
+
+/// Set once by [`Runtime::shutdown`]; every running execution observes it and
+/// tears itself down, and no new execution starts.
+static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
 
 pub struct Runtime {
     pub(crate) task_group: TaskGroup,
@@ -93,11 +98,23 @@ impl Runtime {
             .unwrap_or(1)
     }
 
+    /// Stop the runtime for service shutdown. New executions are refused;
+    /// running ones kill their execution child, PID namespace and request
+    /// cgroup within one poll interval and return [`FaberError::ShuttingDown`].
+    /// Every request cgroup is also killed here directly.
     pub fn shutdown() -> Result<()> {
+        SHUTTING_DOWN.store(true, Ordering::SeqCst);
         Cgroup::kill_active_tasks()
     }
 
+    pub fn is_shutting_down() -> bool {
+        SHUTTING_DOWN.load(Ordering::SeqCst)
+    }
+
     pub fn execute(&self) -> Result<RuntimeResult> {
+        if Self::is_shutting_down() {
+            return Err(FaberError::ShuttingDown);
+        }
         if self.cancellation.is_cancelled() {
             return Err(FaberError::Cancelled);
         }
@@ -189,6 +206,10 @@ impl Runtime {
             if self.cancellation.is_cancelled() {
                 Self::terminate_request(child, request_cgroup, child_exited);
                 return Err(FaberError::Cancelled);
+            }
+            if Self::is_shutting_down() {
+                Self::terminate_request(child, request_cgroup, child_exited);
+                return Err(FaberError::ShuttingDown);
             }
 
             let now = Instant::now();

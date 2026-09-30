@@ -50,6 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         port: config.port,
         host: config.host,
         router,
+        shutdown_timeout: config.shutdown_timeout,
     };
 
     serve(serve_config).await?;

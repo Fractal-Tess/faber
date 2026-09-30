@@ -104,6 +104,9 @@ pub enum FaberError {
     #[error("Execution was cancelled before it completed")]
     Cancelled,
 
+    #[error("The runtime is shutting down")]
+    ShuttingDown,
+
     #[error("Task exceeded timeout limit:\n Timeout: {timeout_duration:?}\nDetails: {details}")]
     TaskTimeout {
         timeout_duration: std::time::Duration,

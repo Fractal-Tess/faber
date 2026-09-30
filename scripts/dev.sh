@@ -146,13 +146,13 @@ case "${1:-}" in
         setup_cgroups
         compose build faber
         compose run --rm --no-TTY faber bash -lc \
-            'cargo test -p faber-runtime --test security_acceptance -- --test-threads=1 && cargo test -p faber-api --test cancellation -- --test-threads=1'
+            'cargo test -p faber-runtime --test security_acceptance -- --test-threads=1 && cargo test -p faber-runtime --test shutdown && cargo test -p faber-api --test cancellation -- --test-threads=1'
         ;;
     test-stress)
         setup_cgroups
         compose build faber
         compose run --rm --no-TTY -e STRESS_ROUNDS="${STRESS_ROUNDS:-3}" faber bash -lc \
-            'set -Eeuo pipefail; for round in $(seq 1 "$STRESS_ROUNDS"); do echo "=== adversarial round $round/$STRESS_ROUNDS ==="; cargo test -p faber-runtime --test security_acceptance -- --test-threads=1; cargo test -p faber-api --test cancellation -- --test-threads=1; done'
+            'set -Eeuo pipefail; for round in $(seq 1 "$STRESS_ROUNDS"); do echo "=== adversarial round $round/$STRESS_ROUNDS ==="; cargo test -p faber-runtime --test security_acceptance -- --test-threads=1; cargo test -p faber-runtime --test shutdown; cargo test -p faber-api --test cancellation -- --test-threads=1; done'
         ;;
     status)
         compose ps

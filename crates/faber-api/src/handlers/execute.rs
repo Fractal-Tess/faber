@@ -191,6 +191,10 @@ async fn execute_uncached(
                 "Sandbox setup failed",
             ))
         }
+        Err(FaberError::ShuttingDown) => Err(ExecuteError {
+            retry_after: Some(1),
+            ..ExecuteError::new(StatusCode::SERVICE_UNAVAILABLE, "Faber is shutting down")
+        }),
         Err(FaberError::Cancelled) => {
             tracing::info!("execution cancelled");
             Err(ExecuteError::new(
