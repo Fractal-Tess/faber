@@ -1086,7 +1086,8 @@ fn security_probe_records_identity_namespaces_mounts_and_limits() {
         ("fsize", 64 * 1024 * 1024),
         ("nofile", 256),
         ("stack", 8 * 1024 * 1024),
-        ("core", 0),
+        // Exactly 1: the value that also stops a piped core_pattern helper.
+        ("core", 1),
     ] {
         let limit = &state.rlimits[resource];
         assert_eq!((limit.soft, limit.hard), (expected, expected));

@@ -1600,13 +1600,19 @@ impl Runtime {
         const FILE_SIZE_LIMIT: u64 = 64 * 1024 * 1024;
         const OPEN_FILE_LIMIT: u64 = 256;
         const STACK_LIMIT: u64 = 8 * 1024 * 1024;
+        // 1, not 0: when the host's core_pattern is a pipe, the kernel runs
+        // the helper (apport on Ubuntu, as root, outside every namespace) for
+        // a crashing task regardless of a zero limit; a limit of exactly 1 is
+        // the documented way to prevent that. Below the page size no core
+        // file is written either.
+        const CORE_LIMIT: u64 = 1;
 
         let cpu_seconds = cpu_time_limit.as_secs().max(1);
         Self::set_resource_limit(libc::RLIMIT_CPU, cpu_seconds)?;
         Self::set_resource_limit(libc::RLIMIT_FSIZE, FILE_SIZE_LIMIT)?;
         Self::set_resource_limit(libc::RLIMIT_NOFILE, OPEN_FILE_LIMIT)?;
         Self::set_resource_limit(libc::RLIMIT_STACK, STACK_LIMIT)?;
-        Self::set_resource_limit(libc::RLIMIT_CORE, 0)
+        Self::set_resource_limit(libc::RLIMIT_CORE, CORE_LIMIT)
     }
 
     fn clear_capability_set(capability_set: CapSet, name: &str) -> std::io::Result<()> {
