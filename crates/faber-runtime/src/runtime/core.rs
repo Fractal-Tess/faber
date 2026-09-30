@@ -517,6 +517,62 @@ impl Runtime {
         const RESOLVE_NO_SYMLINKS: u64 = 0x04;
         const RESOLVE_BENEATH: u64 = 0x08;
 
+        let mut parent = Path::new("").to_path_buf();
+        if let Some(components) = path.parent() {
+            for component in components.components() {
+                let Component::Normal(component) = component else {
+                    unreachable!("task path was normalized above");
+                };
+                parent.push(component);
+                let parent_cstr = CString::new(parent.as_os_str().as_bytes()).map_err(|_| {
+                    FaberError::InvalidTaskFilePath {
+                        path: file_path.to_string(),
+                        details: "paths cannot contain NUL bytes".to_string(),
+                    }
+                })?;
+                let mkdir_result = unsafe {
+                    libc::mkdirat(workspace.as_raw_fd(), parent_cstr.as_ptr(), 0o755)
+                };
+                if mkdir_result < 0
+                    && std::io::Error::last_os_error().kind()
+                        != std::io::ErrorKind::AlreadyExists
+                {
+                    return Err(FaberError::WriteFile {
+                        e: std::io::Error::last_os_error(),
+                        details: format!("Failed to create task directory '{}'", parent.display()),
+                    });
+                }
+
+                let directory_how = OpenHow {
+                    flags: (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64,
+                    mode: 0,
+                    resolve: RESOLVE_NO_XDEV
+                        | RESOLVE_NO_MAGICLINKS
+                        | RESOLVE_NO_SYMLINKS
+                        | RESOLVE_BENEATH,
+                };
+                let directory_fd = unsafe {
+                    libc::syscall(
+                        libc::SYS_openat2,
+                        workspace.as_raw_fd(),
+                        parent_cstr.as_ptr(),
+                        &directory_how,
+                        std::mem::size_of::<OpenHow>(),
+                    )
+                };
+                if directory_fd < 0 {
+                    return Err(FaberError::WriteFile {
+                        e: std::io::Error::last_os_error(),
+                        details: format!(
+                            "Refused task directory '{}' because it is not safely beneath the workspace",
+                            parent.display()
+                        ),
+                    });
+                }
+                unsafe { libc::close(directory_fd as i32) };
+            }
+        }
+
         let how = OpenHow {
             flags: (libc::O_WRONLY
                 | libc::O_CREAT

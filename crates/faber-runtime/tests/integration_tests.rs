@@ -1,4 +1,6 @@
-use faber_runtime::{RuntimeBuilder, Task, TaskGroup};
+use faber_runtime::{
+    ExecutionStep, ExecutionStepResult, RuntimeBuilder, RuntimeResult, Task, TaskGroup, TaskResult,
+};
 use std::collections::HashMap;
 
 fn create_test_task(cmd: &str, args: Vec<&str>) -> Task {
@@ -339,6 +341,38 @@ fn test_file_operations() {
         },
         other => panic!("Expected success result, got {:?}", other),
     }
+}
+
+#[test]
+fn test_nested_submitted_file_paths() {
+    let mut files = HashMap::new();
+    files.insert("src/generated/main.txt".to_string(), "nested content".to_string());
+    let task = Task {
+        cmd: "/bin/cat".to_string(),
+        args: Some(vec!["src/generated/main.txt".to_string()]),
+        env: None,
+        stdin: None,
+        files: Some(files),
+        working_dir: None,
+        sandbox_profile: None,
+    };
+
+    let result = RuntimeBuilder::default()
+        .with_task_group(vec![ExecutionStep::Single(task)])
+        .build()
+        .execute()
+        .expect("runtime execution failed");
+    let RuntimeResult::Success(results) = result else {
+        panic!("container setup failed: {result:?}");
+    };
+    let ExecutionStepResult::Single(TaskResult::Completed {
+        stdout, exit_code, ..
+    }) = &results[0]
+    else {
+        panic!("nested file task did not complete: {:?}", results[0]);
+    };
+    assert_eq!(*exit_code, 0);
+    assert_eq!(stdout, "nested content");
 }
 
 #[test]
