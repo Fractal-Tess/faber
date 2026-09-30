@@ -1,7 +1,7 @@
 # Faber Project Knowledge Base
 
 **Project**: Secure task execution runtime with container isolation  
-**Stack**: Rust (backend) + TypeScript (SDK) + Next.js (docs)  
+**Stack**: Rust (backend) + TypeScript (SDK) + Astro/Starlight (docs)
 **Repo**: https://github.com/Fractal-Tess/faber
 
 ---
@@ -13,8 +13,9 @@ Faber runs commands in isolated Linux containers using namespaces and cgroups v2
 **Key Components:**
 - `faber-runtime` — Container isolation, cgroup management, task execution
 - `faber-api` — HTTP API server (Axum), routing, caching
+- `faber-store` — Content-addressed memory, filesystem, and hybrid artifact storage
 - `sdks/js` — TypeScript SDK with TaskBuilder and testing framework
-- `docs` — Fumadocs documentation site
+- `docs` — Astro/Starlight documentation site
 
 ---
 
@@ -28,7 +29,7 @@ Faber runs commands in isolated Linux containers using namespaces and cgroups v2
 │   └── faber-runtime/     # Core runtime crate
 ├── sdks/
 │   └── js/                # TypeScript SDK (@faber/runtime-sdk)
-├── docs/                  # Documentation site (Next.js + Fumadocs)
+├── docs/                  # Documentation site (Astro + Starlight)
 ├── docker/                # Production & dev Docker configs
 ├── scripts/               # Integration test scripts
 └── research/              # Experiments (cgroup-demo)
@@ -46,7 +47,7 @@ Faber runs commands in isolated Linux containers using namespaces and cgroups v2
 | SDK client | `sdks/js/src/client/` | FaberClient implementation |
 | SDK types | `sdks/js/src/types/` | TypeScript definitions |
 | SDK tests | `sdks/js/test/` | Unit + integration tests |
-| Docs content | `docs/content/docs/` | MDX documentation |
+| Docs content | `docs/src/content/docs/` | Markdown/MDX documentation |
 
 ---
 
@@ -58,7 +59,7 @@ Faber runs commands in isolated Linux containers using namespaces and cgroups v2
 |--------|------|----------|------|
 | `Runtime` | struct | `faber-runtime/src/runtime/core.rs` | Main execution engine |
 | `Container` | struct | `faber-runtime/src/container/core.rs` | Namespace isolation |
-| `CgroupManager` | struct | `faber-runtime/src/cgroup/core.rs` | Resource limits |
+| `Cgroup` | struct | `faber-runtime/src/cgroup/core.rs` | Resource limits and hierarchy |
 | `ExecutionStep` | enum | `faber-runtime/src/task.rs` | Task vs parallel tasks |
 | `build_router` | fn | `faber-api/src/router.rs` | Axum route setup |
 | `auth_middleware` | fn | `faber-api/src/middleware.rs` | API key validation |
@@ -172,7 +173,7 @@ sudo docker run --privileged --cgroupns=host -p 3000:3000 faber
 ./scripts/test-docker.sh # Full integration test
 
 # Docs (cd docs)
-npm run dev              # Next.js dev server
+npm run dev              # Astro dev server
 npm run build            # Static site
 ```
 
@@ -183,7 +184,7 @@ npm run build            # Static site
 ### Cgroup Setup (Required Before Running)
 ```bash
 sudo mkdir -p /sys/fs/cgroup/faber
-sudo chmod 777 /sys/fs/cgroup/faber
+sudo chmod 0755 /sys/fs/cgroup/faber
 echo "+cpu +memory +pids" | sudo tee /sys/fs/cgroup/faber/cgroup.subtree_control
 ```
 
@@ -204,7 +205,7 @@ echo "+cpu +memory +pids" | sudo tee /sys/fs/cgroup/faber/cgroup.subtree_control
 
 ## Notes
 
-- **Authentication**: Header-based (`Authorization: Bearer <key>`) or query param
+- **Authentication**: Header-based (`Authorization: Bearer <key>` or raw key)
 - **Cache**: SHA256-based in-memory caching (optional, `CACHE_ENABLED`)
 - **Parallel execution**: Use arrays in task group: `[{cmd:...}, {cmd:...}]`
 - **Resource stats**: Memory, CPU, PIDs, execution time tracked per task

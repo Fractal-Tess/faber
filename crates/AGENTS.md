@@ -1,6 +1,6 @@
 # Faber Rust Backend
 
-**Crates**: `faber-runtime`, `faber-api`  
+**Crates**: `faber-runtime`, `faber-api`, `faber-store`
 **Purpose**: Container isolation, task execution, HTTP API
 
 ---
@@ -11,6 +11,7 @@ The Rust backend consists of two crates in a Cargo workspace:
 
 - **`faber-runtime`**: Core execution engine with Linux namespace isolation and cgroup v2 resource management
 - **`faber-api`**: HTTP API server built with Axum, handling routing, auth, and caching
+- **`faber-store`**: Content-addressed memory, filesystem, and hybrid file storage
 
 ---
 
@@ -34,17 +35,16 @@ crates/
     └── src/
         ├── lib.rs           # Public API exports
         ├── cgroup/          # Cgroups v2 resource limits
-        │   ├── core.rs      # CgroupManager
+        │   ├── core.rs      # Cgroup hierarchy and aggregate limits
         │   └── task.rs      # Per-task cgroup management
         ├── container/       # Namespace isolation
         │   ├── core.rs      # Container struct, pivot_root
-        │   └── setup.rs     # Namespace setup
         ├── runtime/         # Task execution engine
         │   ├── core.rs      # Runtime, RuntimeBuilder
         │   └── builder.rs   # Builder pattern
         ├── task.rs          # Task, ExecutionStep definitions
         ├── result.rs        # TaskResult, RuntimeResult
-        ├── error.rs         # RuntimeError types
+        ├── error.rs         # FaberError types
         └── utils.rs         # Helper functions
 ```
 
@@ -55,7 +55,7 @@ crates/
 | Task | Location | Notes |
 |------|----------|-------|
 | Add API endpoint | `faber-api/src/handlers/` | Add handler + router |
-| Change auth | `faber-api/src/middleware.rs` | Header/query validation |
+| Change auth | `faber-api/src/middleware.rs` | Authorization header validation |
 | Modify caching | `faber-api/src/cache.rs` | SHA256 keys |
 | Container setup | `faber-runtime/src/container/core.rs` | pivot_root, mounts |
 | Resource limits | `faber-runtime/src/cgroup/` | CPU, memory, PIDs |
@@ -77,9 +77,9 @@ let runtime = RuntimeBuilder::new()
 
 ### Error Handling
 ```rust
-pub type Result<T> = std::result::Result<T, RuntimeError>;
+pub type Result<T> = std::result::Result<T, FaberError>;
 
-pub enum RuntimeError {
+pub enum FaberError {
     ContainerSetup(String),
     CgroupError(String),
     ExecutionFailed(String),
@@ -133,8 +133,6 @@ Authorization: Bearer <api_key>
 // Header format (alternative)
 Authorization: <api_key>
 
-// Query param (also supported)
-?api_key=<key>
 ```
 
 ---
@@ -155,7 +153,7 @@ cargo run
 **Cgroup Setup Required:**
 ```bash
 sudo mkdir -p /sys/fs/cgroup/faber
-sudo chmod 777 /sys/fs/cgroup/faber
+sudo chmod 0755 /sys/fs/cgroup/faber
 echo "+cpu +memory +pids" | sudo tee /sys/fs/cgroup/faber/cgroup.subtree_control
 ```
 
