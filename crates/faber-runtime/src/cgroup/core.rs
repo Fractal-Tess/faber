@@ -12,6 +12,10 @@ use crate::prelude::*;
 
 static FABER_CGROUP_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
 
+/// Root processes that run alongside each task: its supervisor and the init
+/// of its PID namespace.
+const SUPERVISOR_PROCESSES_PER_TASK: u64 = 2;
+
 #[derive(Debug, Clone, Default)]
 pub struct Cgroup {
     config: CgroupConfig,
@@ -91,13 +95,7 @@ impl Cgroup {
         let content = read_to_string("/proc/self/cgroup").map_err(|e| FaberError::Generic {
             message: format!("Failed to read /proc/self/cgroup: {}", e),
         })?;
-        let relative_path = content
-            .lines()
-            .find_map(|line| line.strip_prefix("0::"))
-            .ok_or_else(|| FaberError::Generic {
-                message: "This process is not in a cgroup v2 hierarchy".to_string(),
-            })?;
-        let own_path = PathBuf::from("/sys/fs/cgroup").join(relative_path.trim_start_matches('/'));
+        let own_path = Self::own_cgroup_path(&content)?;
 
         // /proc/self/cgroup is relative to the cgroup namespace while the
         // mount may be the host's whole tree. When the two disagree the
@@ -121,6 +119,17 @@ impl Cgroup {
         let base_path = Self::service_base(&own_path).to_path_buf();
         debug!("Detected base cgroup path: {}", base_path.display());
         Ok(base_path)
+    }
+
+    /// The cgroup v2 path in /proc/self/cgroup, resolved under /sys/fs/cgroup.
+    fn own_cgroup_path(proc_self_cgroup: &str) -> Result<PathBuf> {
+        let relative_path = proc_self_cgroup
+            .lines()
+            .find_map(|line| line.strip_prefix("0::"))
+            .ok_or_else(|| FaberError::Generic {
+                message: "This process is not in a cgroup v2 hierarchy".to_string(),
+            })?;
+        Ok(PathBuf::from("/sys/fs/cgroup").join(relative_path.trim_start_matches('/')))
     }
 
     fn lists_process(cgroup_procs: &str, pid: u32) -> bool {
@@ -240,22 +249,26 @@ impl Cgroup {
 
     /// Size the Faber cgroup for `task_slots` concurrently running tasks.
     /// Every running request holds at least one slot, so there are at most
-    /// `task_slots` workspaces as well.
+    /// `task_slots` jailers with their workspace and supervisor allowance
+    /// (which includes the workspace) as well.
     pub fn configure_service_limits(
         per_task_memory: &str,
         per_task_pids: u32,
         task_slots: usize,
-        workspace_allowance: u64,
+        supervisor_allowance: u64,
     ) -> Result<()> {
         let path = Self::get_faber_cgroup_path()?;
         let memory = parse_memory_string(per_task_memory)?
-            .checked_add(workspace_allowance)
+            .checked_add(supervisor_allowance)
             .and_then(|per_slot| per_slot.checked_mul(task_slots as u64))
             .ok_or_else(|| FaberError::Generic {
                 message: "Aggregate service memory limit overflows u64".to_string(),
             })?;
+        // Per task: its supervisor and PID namespace init; per request, which
+        // holds at least one slot: the jailer.
         let pids = u64::from(per_task_pids)
-            .checked_mul(task_slots as u64)
+            .checked_add(SUPERVISOR_PROCESSES_PER_TASK + 1)
+            .and_then(|per_slot| per_slot.checked_mul(task_slots as u64))
             .ok_or_else(|| FaberError::Generic {
                 message: "Aggregate service PID limit overflows u64".to_string(),
             })?;
@@ -293,28 +306,35 @@ impl Cgroup {
 
     /// Create the cgroup for one request whose widest step runs `width` tasks
     /// at once. Its limits cover that many tasks at their per-task limits plus
-    /// the request's workspace tmpfs, whose pages are recharged to the request
-    /// cgroup once the task that wrote them is gone.
+    /// the supervisor allowance, which includes the request's workspace tmpfs
+    /// (its pages are recharged to the request cgroup once the task that
+    /// wrote them is gone) and the jailer and supervisors in the
+    /// `supervisor` leaf.
     pub(crate) fn create_request_cgroup(
         &self,
         faber_cgroup_path: &Path,
         width: usize,
         workspace_allowance: Option<u64>,
+        supervisor_allowance: u64,
     ) -> Result<RequestCgroup> {
         let width = width.max(1) as u64;
         let memory_max = match self.config.memory_max.trim() {
             "max" => None,
             memory => parse_memory_string(memory)?
                 .checked_mul(width)
-                .zip(workspace_allowance)
-                .and_then(|(tasks, workspace)| tasks.checked_add(workspace)),
+                .filter(|_| workspace_allowance.is_some())
+                .and_then(|tasks| tasks.checked_add(supervisor_allowance)),
         };
-        let pids_max = u64::from(self.config.pids_max).checked_mul(width);
+        let pids_max = u64::from(self.config.pids_max)
+            .checked_add(SUPERVISOR_PROCESSES_PER_TASK)
+            .and_then(|per_task| per_task.checked_mul(width))
+            .and_then(|tasks| tasks.checked_add(1));
         RequestCgroup::new(
             faber_cgroup_path,
             RequestLimits {
                 memory_max,
                 pids_max,
+                supervisor_memory_max: Some(supervisor_allowance),
             },
         )
     }
@@ -338,6 +358,23 @@ mod tests {
             Cgroup::service_base(Path::new("/sys/fs/cgroup")),
             Path::new("/sys/fs/cgroup")
         );
+    }
+
+    #[test]
+    fn own_cgroup_path_comes_from_the_v2_entry() {
+        assert_eq!(
+            Cgroup::own_cgroup_path("1:name=systemd:/x\n0::/system.slice/docker-a.scope\n")
+                .unwrap(),
+            Path::new("/sys/fs/cgroup/system.slice/docker-a.scope")
+        );
+        // A private cgroup namespace shows the root; with the host tree
+        // mounted that resolves to the host root, which the membership check
+        // then refuses.
+        assert_eq!(
+            Cgroup::own_cgroup_path("0::/\n").unwrap(),
+            Path::new("/sys/fs/cgroup")
+        );
+        assert!(Cgroup::own_cgroup_path("1:cpu:/legacy\n").is_err());
     }
 
     #[test]

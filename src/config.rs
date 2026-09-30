@@ -16,6 +16,9 @@ pub struct Config {
     pub store_limits: StoreLimits,
     pub execution_limits: ExecutionLimits,
     pub shutdown_timeout: Duration,
+    /// First host UID/GID leased to sandboxes, and how many.
+    pub sandbox_identity_base: u32,
+    pub sandbox_identity_count: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -114,6 +117,8 @@ impl Config {
             },
             execution_limits: Self::load_execution_limits(&settings)?,
             shutdown_timeout: Duration::from_millis(settings.parse("SHUTDOWN_TIMEOUT_MS", 5_000)?),
+            sandbox_identity_base: settings.positive("SANDBOX_IDENTITY_BASE", 100_000)?,
+            sandbox_identity_count: settings.positive("SANDBOX_IDENTITY_COUNT", 65_536)?,
         })
     }
 
@@ -135,10 +140,10 @@ impl Config {
 
         let default_sandbox_profile = Self::load_sandbox_profile(
             "DEFAULT_SANDBOX_PROFILE",
-            &settings.string("DEFAULT_SANDBOX_PROFILE", "compile_v1"),
+            &settings.string("DEFAULT_SANDBOX_PROFILE", "compile_v2"),
         )?;
         let allowed_sandbox_profiles = settings
-            .string("ALLOWED_SANDBOX_PROFILES", "compile_v1,native_v1")
+            .string("ALLOWED_SANDBOX_PROFILES", "compile_v2,native_v2")
             .split(',')
             .map(|value| Self::load_sandbox_profile("ALLOWED_SANDBOX_PROFILES", value.trim()))
             .collect::<Result<Vec<_>, _>>()?;
@@ -184,6 +189,8 @@ impl Config {
         match value {
             "compile_v1" => Ok(SandboxProfile::CompileV1),
             "native_v1" => Ok(SandboxProfile::NativeV1),
+            "compile_v2" => Ok(SandboxProfile::CompileV2),
+            "native_v2" => Ok(SandboxProfile::NativeV2),
             _ => Err(format!("{name}: unknown sandbox profile {value:?}").into()),
         }
     }

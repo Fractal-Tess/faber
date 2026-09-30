@@ -175,7 +175,7 @@ interface Task {
   stdin?: string;                   // Optional: Data to write to stdin
   files?: Record<string, string>;   // Optional: Files to create before execution
   working_dir?: string;             // Optional: Working directory (default: /faber)
-  sandbox_profile?: "compile_v1" | "native_v1"; // Optional seccomp profile
+  sandbox_profile?: "compile_v1" | "native_v1" | "compile_v2" | "native_v2"; // Optional seccomp profile
 }
 ```
 
@@ -284,7 +284,7 @@ The container root is created via `pivot_root` with:
 2. **Capability drop**: Effective, permitted, inheritable, ambient, and bounding sets are cleared
 3. **Privilege lock**: `NoNewPrivs` prevents privilege gain across `execve`
 4. **Workspace paths**: Submitted files must use normalized workspace-relative paths and cannot traverse symlinks
-5. **Seccomp**: Versioned `compile_v1` and `native_v1` denylists kill the process on a policy violation (reported as `SIGSYS`)
+5. **Seccomp**: Versioned profiles kill the process on a policy violation (reported as `SIGSYS`); the default `v2` profiles are allowlists that answer unlisted syscalls with `ENOSYS`, `v1` are denylists
 
 ---
 

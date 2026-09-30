@@ -19,7 +19,7 @@ type Task = {
   stdin?: string;
   files?: Record<string, string>;
   working_dir?: string;
-  sandbox_profile?: "compile_v1" | "native_v1";
+  sandbox_profile?: "compile_v1" | "native_v1" | "compile_v2" | "native_v2";
 };
 ```
 
@@ -33,7 +33,7 @@ type Task = {
 | `stdin` | `string` | No | Standard input content |
 | `files` | `Record<string, string>` | No | Workspace-relative files to create; absolute paths, `..`, symlinks, and mount traversal are rejected |
 | `working_dir` | `string` | No | Working directory |
-| `sandbox_profile` | `compile_v1 \| native_v1` | No | Versioned seccomp policy; defaults to `compile_v1` |
+| `sandbox_profile` | `compile_v1 \| native_v1 \| compile_v2 \| native_v2` | No | Versioned seccomp policy; defaults to `compile_v2`. `v2` profiles are allowlists, `v1` the older denylists; the service decides which are allowed |
 
 ### Example
 
@@ -46,7 +46,7 @@ type Task = {
     "hello.c": "#include <stdio.h>\nint main() { printf(\"Hello!\\n\"); return 0; }"
   },
   "working_dir": "/tmp",
-  "sandbox_profile": "compile_v1"
+  "sandbox_profile": "compile_v2"
 }
 ```
 
@@ -302,7 +302,7 @@ The SDK automatically converts between snake_case (API) and camelCase (SDK).
         "stdin": { "type": "string" },
         "files": { "type": "object", "additionalProperties": { "type": "string" } },
         "working_dir": { "type": "string" },
-        "sandbox_profile": { "enum": ["compile_v1", "native_v1"] }
+        "sandbox_profile": { "enum": ["compile_v1", "native_v1", "compile_v2", "native_v2"] }
       }
     },
     "TaskResult": {

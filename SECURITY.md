@@ -35,7 +35,7 @@ namespace flag is not sufficient evidence.
 | Network | Tasks have no host or external connectivity over IPv4 or IPv6, no resolver configuration, and independent runtimes never reuse a network namespace. `compile_v1` allows only socket families scoped by the network namespace (Unix, IPv4, IPv6, route netlink); `AF_VSOCK` and the rest are policy violations | Interface, route-table, IPv4/IPv6 nonblocking-connect, DNS visibility, socket-family and native socket-policy probes, and namespace-uniqueness tests | Verified baseline |
 | User identity | Each task has a fresh user namespace mapping only inner 65534:65534 to one outer UID/GID leased to its request (100000–165535, distinct for every running request); supplementary groups are empty. The namespace is created by that identity, so per-user kernel limits are charged to the request and not to root or to other requests | Controller compares namespace inodes, verifies exact one-entry UID/GID maps from the probe, reads the namespace owner with `NS_GET_OWNER_UID`, and compares the identities of concurrent requests | Verified baseline |
 | Privileges | Capability and identity regain, namespace-map rewriting, chroot, hostname changes, and device access fail; no setup FDs survive `exec` | Kernel-state and active privilege-escape probes | Verified baseline |
-| Syscalls | Every task installs a versioned seccomp policy before `exec`; violations kill the process (`SECCOMP_RET_KILL_PROCESS`, reported as `SIGSYS`) and cannot be caught | Probe verifies mode 2; the matrix test invokes every blocked syscall under each applicable profile, including with a `SIGSYS` handler installed, and verifies `policy_violation` | Verified denylist baseline |
+| Syscalls | Every task installs a versioned seccomp policy before `exec`; violations kill the process (`SECCOMP_RET_KILL_PROCESS`, reported as `SIGSYS`) and cannot be caught. The default `v2` profiles are allowlists: a syscall that is neither listed nor denied fails with `ENOSYS` | Probe verifies mode 2; the matrix test invokes every blocked syscall under each profile, including with a `SIGSYS` handler installed, verifies `policy_violation`, and checks that an unlisted syscall returns `ENOSYS` under `v2` | Verified baseline |
 | Memory | The complete task process tree cannot exceed `memory.max`; a kill caused by the task's own limit (`out_of_memory`) is reported separately from one caused by an ancestor limit (`ancestor_out_of_memory`) | OOM acceptance test, ancestor-limit test, and reported `memory.events:oom_kill` / `memory.events.local:oom` evidence | Verified baseline |
 | Request fan-out | Requests cannot exceed the configured step or parallel-task counts. `MAX_CONCURRENCY` counts task slots and a request reserves one per task of its widest step, so the service cgroup's aggregate (`(memory.max + workspace tmpfs) × slots`, `pids.max × slots`) covers every admitted task at its own limit. Each request cgroup is capped at its widest step times the per-task limits plus its workspace, so one request's pressure cannot pick a victim in another | API rejection and slot-reservation tests, request-cgroup sizing test, startup cgroup configuration | Verified baseline |
 | Syscall policy | Service-configured profiles deny namespace creation, modern mount APIs, privileged handles, and x32 syscall-number bypasses | Per-syscall policy probes, clone namespace probe, clone3 fallback probe, and x32 probe | Verified denylist baseline |
@@ -55,9 +55,11 @@ services on one kernel can hand out the same one.
 
 Each request is run by a jailer: the service executable started again as a
 fresh single-threaded process that receives only the request as its input. The
-jailer, the per-task supervisors and the PID namespace inits run as root
-outside the request cgroup and hold none of the service's memory, environment
-or descriptors. They are killed with their parent if the service dies.
+jailer, the per-task supervisors and the PID namespace inits run as root in
+the `supervisor` leaf of the request cgroup, so their memory is charged to the
+request within a fixed allowance and they are the OOM killer's last choice
+there. They hold none of the service's memory, environment or descriptors and
+are killed with their parent if the service dies.
 
 “Verified baseline” describes the behavior covered by the current test and is
 not a claim that the whole isolation area is complete. Tests must be expanded

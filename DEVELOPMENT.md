@@ -127,14 +127,16 @@ boundary. It needs Nix and `/dev/kvm`, and no sudo or host Docker.
 ```bash
 ./scripts/vm.sh prepare        # once, and after dependency or Dockerfile changes
 ./scripts/vm.sh test-security  # also: check, test, test-stress
+./scripts/vm.sh test-docker    # production image smoke test
 ./scripts/vm.sh up             # dev API on 127.0.0.1:$FABER_PORT, Ctrl-C to stop
+./scripts/vm.sh demo           # demo backend on 127.0.0.1:${FABER_PORT:-3300}
 ./scripts/vm.sh exec probe.sh  # run a host script as root inside the guest
 ./scripts/vm.sh shell          # root console; poweroff to leave
 ./scripts/vm.sh reset          # delete the guest disk and caches
 ```
 
-`prepare` is the only step with network access: it builds the dev image and
-compiles the tests, and runs no Faber code. Everything else boots with guest
+`prepare` is the only step with network access: it builds the dev and
+production images and compiles the tests, and runs no Faber code. Everything else boots with guest
 networking cut off (`--online` opts back in), so code under test cannot reach
 the host's loopback services or the LAN. The repository is exported read-only;
 the guest disk with the Docker image and Cargo caches lives in
@@ -154,7 +156,8 @@ sudo env \
 ```
 
 Production and development Compose configurations both use the host cgroup
-namespace, disable Docker's outer PID limit, and mount `/sys/fs/cgroup`
-read-write. These settings are required by the current nested-runtime design.
-They are not a substitute for the inner sandbox controls described in the
-project roadmap.
+namespace and mount `/sys/fs/cgroup` read-write, which the nested-runtime
+design requires. Both also cap the container's memory and process count above
+Faber's own aggregate limits, as a backstop for the host should those limits
+fail. They are not a substitute for the inner sandbox controls described in
+the project roadmap.

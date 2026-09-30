@@ -91,6 +91,7 @@ enum SetupStage {
     WorkingDirectory = 4,
     InvalidString = 5,
     Exec = 6,
+    OomScore = 7,
 }
 
 impl SetupStage {
@@ -102,6 +103,7 @@ impl SetupStage {
             4 => Self::WorkingDirectory,
             5 => Self::InvalidString,
             6 => Self::Exec,
+            7 => Self::OomScore,
             _ => return None,
         })
     }
@@ -134,6 +136,9 @@ impl SetupFailure {
                     .to_string()
             }
             SetupStage::Exec => format!("failed to execute '{}'", task.cmd),
+            SetupStage::OomScore => {
+                "Sandbox setup failed while restoring the task's OOM score".to_string()
+            }
         };
         if self.errno == 0 {
             context
@@ -163,11 +168,13 @@ impl Runtime {
     }
 
     /// Configure the aggregate Faber cgroup for `task_slots` concurrently
-    /// running tasks with the default container workspace sizes.
+    /// running tasks with the default container workspace sizes, each
+    /// request keeping at most `request_output_limit` bytes of output.
     pub fn configure_service_limits(
         per_task_memory: &str,
         per_task_pids: u32,
         task_slots: usize,
+        request_output_limit: usize,
     ) -> Result<()> {
         let workspace_allowance =
             Container::default()
@@ -179,8 +186,27 @@ impl Runtime {
             per_task_memory,
             per_task_pids,
             task_slots,
-            workspace_allowance,
+            Self::supervisor_allowance(request_output_limit, workspace_allowance),
         )
+    }
+
+    /// Host UIDs/GIDs leased to requests: `count` of them starting at
+    /// `first`. Call before the first execution; the defaults are
+    /// 100000–165535. Services sharing a kernel should use disjoint ranges.
+    pub fn configure_identities(first: u32, count: u32) -> Result<()> {
+        SandboxIdentity::configure(first, count)
+    }
+
+    /// Memory the jailer and its supervisors may use on top of the tasks:
+    /// their own footprint, two copies of the request's output (collected,
+    /// then serialized) and the workspace files they write for the tasks.
+    pub fn supervisor_allowance(request_output_limit: usize, workspace_allowance: u64) -> u64 {
+        const BASE: u64 = 64 * 1024 * 1024;
+        const OUTPUT_CAP: u64 = 1024 * 1024 * 1024;
+        let output = u64::try_from(request_output_limit)
+            .unwrap_or(u64::MAX)
+            .min(OUTPUT_CAP);
+        BASE + 2 * output + workspace_allowance
     }
 
     /// The most tasks any step of this runtime runs at once.
@@ -217,10 +243,12 @@ impl Runtime {
         }
         Cgroup::ensure_faber_cgroup_hierarchy()?;
         let faber_cgroup_path = Cgroup::get_faber_cgroup_path()?;
+        let workspace_allowance = self.container.workspace_allowance();
         let request_cgroup = self.cgroup.create_request_cgroup(
             &faber_cgroup_path,
             Self::widest_step(&self.task_group),
-            self.container.workspace_allowance(),
+            workspace_allowance,
+            Self::supervisor_allowance(self.request_output_limit, workspace_allowance.unwrap_or(0)),
         )?;
 
         let identity = SandboxIdentity::acquire()?;
@@ -231,6 +259,7 @@ impl Runtime {
             container: self.container.config().clone(),
             cgroup: self.cgroup.config().clone(),
             request_cgroup_path: request_cgroup.path().to_path_buf(),
+            supervisor_cgroup_path: request_cgroup.supervisor_path(),
             timeout: self.timeout,
             cpu_time_limit: self.cpu_time_limit,
             output_limit: self.output_limit,
@@ -349,6 +378,15 @@ impl Runtime {
                 (std::ptr::null_mut(), 0, 1)
             };
             unsafe { libc::poll(poll_fds, count, timeout.max(1)) };
+        }
+
+        // A jailer killed through its request cgroup by a shutdown or a
+        // cancellation closes the pipe before this loop sees the flag.
+        if Self::is_shutting_down() {
+            return Err(FaberError::ShuttingDown);
+        }
+        if self.cancellation.is_cancelled() {
+            return Err(FaberError::Cancelled);
         }
 
         serde_json::from_slice(&bytes).map_err(|e| FaberError::ParseResult {
@@ -675,6 +713,12 @@ impl Runtime {
                         _ => 0,
                     };
                     fail(SetupStage::CgroupJoin, errno);
+                }
+
+                // The supervisors are marked as the last processes to OOM-kill;
+                // the task must not inherit that.
+                if let Err(error) = std::fs::write("/proc/self/oom_score_adj", "0") {
+                    fail(SetupStage::OomScore, error.raw_os_error().unwrap_or(0));
                 }
 
                 let proc_pid = match std::fs::read_link("/proc/self")
@@ -1604,7 +1648,7 @@ impl Runtime {
         #[cfg(target_arch = "x86_64")]
         Self::apply_x32_seccomp_guard()?;
 
-        if profile == SandboxProfile::CompileV1 {
+        if profile.allows_processes() {
             let architecture = std::env::consts::ARCH.try_into().map_err(|error| {
                 std::io::Error::other(format!("unsupported seccomp architecture: {error}"))
             })?;
@@ -1664,7 +1708,7 @@ impl Runtime {
             libc::SYS_unshare,
             libc::SYS_userfaultfd,
         ];
-        if profile == SandboxProfile::NativeV1 {
+        if !profile.allows_processes() {
             blocked_syscalls.extend([
                 libc::SYS_clone,
                 libc::SYS_clone3,
@@ -1675,7 +1719,7 @@ impl Runtime {
             blocked_syscalls.extend([libc::SYS_fork, libc::SYS_vfork]);
         }
 
-        if profile == SandboxProfile::CompileV1 {
+        let rules: BTreeMap<i64, Vec<SeccompRule>> = if profile.allows_processes() {
             let clone_rules = [
                 libc::CLONE_NEWCGROUP,
                 libc::CLONE_NEWIPC,
@@ -1739,14 +1783,434 @@ impl Runtime {
                 .collect();
             rules.insert(libc::SYS_clone, clone_rules);
             rules.insert(libc::SYS_socket, socket_rules);
-            return Self::compile_and_apply_seccomp(rules);
-        }
+            rules
+        } else {
+            blocked_syscalls
+                .into_iter()
+                .map(|syscall| (syscall, Vec::new()))
+                .collect()
+        };
+        Self::compile_and_apply_seccomp(rules)?;
 
-        let rules: BTreeMap<i64, Vec<SeccompRule>> = blocked_syscalls
-            .into_iter()
-            .map(|syscall| (syscall, Vec::new()))
+        // Last, so that installing it is not itself refused.
+        if profile.has_allowlist() {
+            Self::apply_syscall_allowlist()?;
+        }
+        Ok(())
+    }
+
+    /// Syscalls the `v2` profiles allow. Anything not listed here and not
+    /// denied outright fails with `ENOSYS`, which programs treat like an
+    /// older kernel. Derived from the Docker default profile with the
+    /// interfaces Faber denies removed. Names unknown to this architecture
+    /// are skipped.
+    const ALLOWED_SYSCALLS: &'static [&'static str] = &[
+        "accept",
+        "accept4",
+        "access",
+        "adjtimex",
+        "alarm",
+        "arch_prctl",
+        "bind",
+        "brk",
+        "cachestat",
+        "capget",
+        "capset",
+        "chdir",
+        "chmod",
+        "chown",
+        "chown32",
+        "clock_adjtime",
+        "clock_adjtime64",
+        "clock_getres",
+        "clock_getres_time64",
+        "clock_gettime",
+        "clock_gettime64",
+        "clock_nanosleep",
+        "clock_nanosleep_time64",
+        "clone",
+        "close",
+        "close_range",
+        "connect",
+        "copy_file_range",
+        "creat",
+        "dup",
+        "dup2",
+        "dup3",
+        "epoll_create",
+        "epoll_create1",
+        "epoll_ctl",
+        "epoll_ctl_old",
+        "epoll_pwait",
+        "epoll_pwait2",
+        "epoll_wait",
+        "epoll_wait_old",
+        "eventfd",
+        "eventfd2",
+        "execve",
+        "execveat",
+        "exit",
+        "exit_group",
+        "faccessat",
+        "faccessat2",
+        "fadvise64",
+        "fadvise64_64",
+        "fallocate",
+        "fchdir",
+        "fchmod",
+        "fchmodat",
+        "fchmodat2",
+        "fchown",
+        "fchown32",
+        "fchownat",
+        "fcntl",
+        "fcntl64",
+        "fdatasync",
+        "fgetxattr",
+        "flistxattr",
+        "flock",
+        "fork",
+        "fremovexattr",
+        "fsetxattr",
+        "fstat",
+        "fstat64",
+        "fstatat64",
+        "fstatfs",
+        "fstatfs64",
+        "fsync",
+        "ftruncate",
+        "ftruncate64",
+        "futex",
+        "futex_requeue",
+        "futex_time64",
+        "futex_wait",
+        "futex_waitv",
+        "futex_wake",
+        "futimesat",
+        "getcpu",
+        "getcwd",
+        "getdents",
+        "getdents64",
+        "getegid",
+        "getegid32",
+        "geteuid",
+        "geteuid32",
+        "getgid",
+        "getgid32",
+        "getgroups",
+        "getgroups32",
+        "getitimer",
+        "get_mempolicy",
+        "getpeername",
+        "getpgid",
+        "getpgrp",
+        "getpid",
+        "getppid",
+        "getpriority",
+        "getrandom",
+        "getresgid",
+        "getresgid32",
+        "getresuid",
+        "getresuid32",
+        "getrlimit",
+        "get_robust_list",
+        "getrusage",
+        "getsid",
+        "getsockname",
+        "getsockopt",
+        "get_thread_area",
+        "gettid",
+        "gettimeofday",
+        "getuid",
+        "getuid32",
+        "getxattr",
+        "inotify_add_watch",
+        "inotify_init",
+        "inotify_init1",
+        "inotify_rm_watch",
+        "io_cancel",
+        "ioctl",
+        "io_destroy",
+        "io_getevents",
+        "io_pgetevents",
+        "io_pgetevents_time64",
+        "ioprio_get",
+        "ioprio_set",
+        "io_setup",
+        "io_submit",
+        "ipc",
+        "kill",
+        "landlock_add_rule",
+        "landlock_create_ruleset",
+        "landlock_restrict_self",
+        "lchown",
+        "lchown32",
+        "lgetxattr",
+        "link",
+        "linkat",
+        "listen",
+        "listxattr",
+        "llistxattr",
+        "_llseek",
+        "lremovexattr",
+        "lseek",
+        "lsetxattr",
+        "lstat",
+        "lstat64",
+        "madvise",
+        "map_shadow_stack",
+        "membarrier",
+        "memfd_create",
+        "mincore",
+        "mkdir",
+        "mkdirat",
+        "mknod",
+        "mknodat",
+        "mlock",
+        "mlock2",
+        "mlockall",
+        "mmap",
+        "mmap2",
+        "mprotect",
+        "mq_getsetattr",
+        "mq_notify",
+        "mq_open",
+        "mq_timedreceive",
+        "mq_timedreceive_time64",
+        "mq_timedsend",
+        "mq_timedsend_time64",
+        "mq_unlink",
+        "mremap",
+        "mseal",
+        "msgctl",
+        "msgget",
+        "msgrcv",
+        "msgsnd",
+        "msync",
+        "munlock",
+        "munlockall",
+        "munmap",
+        "nanosleep",
+        "newfstatat",
+        "_newselect",
+        "open",
+        "openat",
+        "openat2",
+        "pause",
+        "pidfd_open",
+        "pidfd_send_signal",
+        "pipe",
+        "pipe2",
+        "pkey_alloc",
+        "pkey_free",
+        "pkey_mprotect",
+        "poll",
+        "ppoll",
+        "ppoll_time64",
+        "prctl",
+        "pread64",
+        "preadv",
+        "preadv2",
+        "prlimit64",
+        "process_mrelease",
+        "pselect6",
+        "pselect6_time64",
+        "pwrite64",
+        "pwritev",
+        "pwritev2",
+        "read",
+        "readahead",
+        "readlink",
+        "readlinkat",
+        "readv",
+        "recv",
+        "recvfrom",
+        "recvmmsg",
+        "recvmmsg_time64",
+        "recvmsg",
+        "remap_file_pages",
+        "removexattr",
+        "rename",
+        "renameat",
+        "renameat2",
+        "restart_syscall",
+        "rmdir",
+        "rseq",
+        "rt_sigaction",
+        "rt_sigpending",
+        "rt_sigprocmask",
+        "rt_sigqueueinfo",
+        "rt_sigreturn",
+        "rt_sigsuspend",
+        "rt_sigtimedwait",
+        "rt_sigtimedwait_time64",
+        "rt_tgsigqueueinfo",
+        "sched_getaffinity",
+        "sched_getattr",
+        "sched_getparam",
+        "sched_get_priority_max",
+        "sched_get_priority_min",
+        "sched_getscheduler",
+        "sched_rr_get_interval",
+        "sched_rr_get_interval_time64",
+        "sched_setaffinity",
+        "sched_setattr",
+        "sched_setparam",
+        "sched_setscheduler",
+        "sched_yield",
+        "seccomp",
+        "select",
+        "semctl",
+        "semget",
+        "semop",
+        "semtimedop",
+        "semtimedop_time64",
+        "send",
+        "sendfile",
+        "sendfile64",
+        "sendmmsg",
+        "sendmsg",
+        "sendto",
+        "setfsgid",
+        "setfsgid32",
+        "setfsuid",
+        "setfsuid32",
+        "setgid",
+        "setgid32",
+        "setgroups",
+        "setgroups32",
+        "setitimer",
+        "setpgid",
+        "setpriority",
+        "setregid",
+        "setregid32",
+        "setresgid",
+        "setresgid32",
+        "setresuid",
+        "setresuid32",
+        "setreuid",
+        "setreuid32",
+        "setrlimit",
+        "set_robust_list",
+        "setsid",
+        "setsockopt",
+        "set_thread_area",
+        "set_tid_address",
+        "setuid",
+        "setuid32",
+        "setxattr",
+        "shmat",
+        "shmctl",
+        "shmdt",
+        "shmget",
+        "shutdown",
+        "sigaltstack",
+        "signalfd",
+        "signalfd4",
+        "sigprocmask",
+        "sigreturn",
+        "socket",
+        "socketcall",
+        "socketpair",
+        "splice",
+        "stat",
+        "stat64",
+        "statfs",
+        "statfs64",
+        "statx",
+        "symlink",
+        "symlinkat",
+        "sync",
+        "sync_file_range",
+        "syncfs",
+        "sysinfo",
+        "tee",
+        "tgkill",
+        "time",
+        "timer_create",
+        "timer_delete",
+        "timer_getoverrun",
+        "timer_gettime",
+        "timer_gettime64",
+        "timer_settime",
+        "timer_settime64",
+        "timerfd_create",
+        "timerfd_gettime",
+        "timerfd_gettime64",
+        "timerfd_settime",
+        "timerfd_settime64",
+        "times",
+        "tkill",
+        "truncate",
+        "truncate64",
+        "ugetrlimit",
+        "umask",
+        "uname",
+        "unlink",
+        "unlinkat",
+        "utime",
+        "utimensat",
+        "utimensat_time64",
+        "utimes",
+        "vfork",
+        "vmsplice",
+        "wait4",
+        "waitid",
+        "waitpid",
+        "write",
+        "writev",
+    ];
+
+    fn apply_syscall_allowlist() -> std::io::Result<()> {
+        use seccompiler::{
+            BpfProgram, SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition,
+            SeccompFilter, SeccompRule,
+        };
+        use std::collections::BTreeMap;
+        use syscalls::Sysno;
+
+        let mut rules: BTreeMap<i64, Vec<SeccompRule>> = Self::ALLOWED_SYSCALLS
+            .iter()
+            .filter_map(|name| name.parse::<Sysno>().ok())
+            .map(|syscall| (i64::from(syscall.id()), Vec::new()))
             .collect();
-        Self::compile_and_apply_seccomp(rules)
+
+        // personality(2) only to query, or to select the Linux personalities
+        // with or without address space randomization.
+        let personalities = [0_u64, 0x0008, 0x0002_0000, 0x0002_0008, 0xffff_ffff]
+            .into_iter()
+            .map(|value| {
+                SeccompRule::new(vec![SeccompCondition::new(
+                    0,
+                    SeccompCmpArgLen::Dword,
+                    SeccompCmpOp::Eq,
+                    value,
+                )?])
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|error| {
+                std::io::Error::other(format!("failed to build personality rules: {error}"))
+            })?;
+        rules.insert(libc::SYS_personality, personalities);
+
+        let architecture = std::env::consts::ARCH.try_into().map_err(|error| {
+            std::io::Error::other(format!("unsupported seccomp architecture: {error}"))
+        })?;
+        let filter = SeccompFilter::new(
+            rules,
+            SeccompAction::Errno(libc::ENOSYS as u32),
+            SeccompAction::Allow,
+            architecture,
+        )
+        .map_err(|error| {
+            std::io::Error::other(format!("failed to compile the syscall allowlist: {error}"))
+        })?;
+        let program: BpfProgram = filter.try_into().map_err(|error| {
+            std::io::Error::other(format!("failed to compile the allowlist BPF: {error}"))
+        })?;
+        seccompiler::apply_filter(&program).map_err(|error| {
+            std::io::Error::other(format!("failed to apply the syscall allowlist: {error}"))
+        })
     }
 
     fn compile_and_apply_seccomp(

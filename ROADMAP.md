@@ -84,7 +84,7 @@ suite because privileged Docker shares the host kernel.
 
 - [x] Filesystem object types, magic links, hard links, and symlink-swap races
 - [x] Identity, capability-regain, procfs, PID 1, and inherited-FD escape probes
-- [x] Every blocked syscall in `compile_v1` and `native_v1`
+- [x] Every blocked syscall in every profile, and the `v2` allowlists
 - [x] IPv4, IPv6, route, DNS, socket, and cross-runtime network isolation
 - [x] Runtime enforcement of file-size, descriptor, CPU, stack, and core limits
 - [x] API cancellation and container setup-failure cleanup paths

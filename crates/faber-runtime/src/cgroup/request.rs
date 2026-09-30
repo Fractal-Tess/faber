@@ -13,7 +13,14 @@ pub(crate) const REQUEST_CGROUP_PREFIX: &str = "req-";
 pub(crate) struct RequestLimits {
     pub(crate) memory_max: Option<u64>,
     pub(crate) pids_max: Option<u64>,
+    /// Limit of the `supervisor` leaf holding the jailer and supervisors.
+    pub(crate) supervisor_memory_max: Option<u64>,
 }
+
+/// Leaf cgroup for the jailer, task supervisors and PID namespace inits: they
+/// are charged to the request and killed with it, but the request cgroup has
+/// controllers enabled and so cannot hold processes itself.
+const SUPERVISOR_CGROUP: &str = "supervisor";
 
 /// Parent cgroup for every task of one runtime execution.
 ///
@@ -62,11 +69,32 @@ impl RequestCgroup {
             }
         }
 
+        let supervisor = request_cgroup.supervisor_path();
+        create_dir(&supervisor).map_err(|e| FaberError::CreateDir {
+            e,
+            details: format!(
+                "Failed to create supervisor cgroup at {}",
+                supervisor.display()
+            ),
+        })?;
+        if let Some(value) = limits.supervisor_memory_max {
+            write(supervisor.join("memory.max"), value.to_string()).map_err(|e| {
+                FaberError::WriteFile {
+                    e,
+                    details: "Failed to set memory.max on the supervisor cgroup".to_string(),
+                }
+            })?;
+        }
+
         Ok(request_cgroup)
     }
 
     pub(crate) fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub(crate) fn supervisor_path(&self) -> PathBuf {
+        self.path.join(SUPERVISOR_CGROUP)
     }
 
     /// Kill every process in this request's cgroup subtree.

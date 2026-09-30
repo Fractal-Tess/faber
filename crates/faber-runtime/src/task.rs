@@ -46,12 +46,33 @@ impl<'de> serde::Deserialize<'de> for ExecutionStep {
     }
 }
 
+/// Versioned seccomp policy for a task.
+///
+/// `v1` profiles are denylists: known dangerous syscalls kill the task and
+/// everything else is allowed. `v2` profiles add an allowlist on top: a
+/// syscall that is neither listed nor denied fails with `ENOSYS`, as it
+/// would on an older kernel. `compile` profiles may create processes and
+/// namespace-scoped sockets; `native` profiles may do neither.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxProfile {
-    #[default]
     CompileV1,
     NativeV1,
+    #[default]
+    CompileV2,
+    NativeV2,
+}
+
+impl SandboxProfile {
+    /// Whether tasks may fork, exec helpers and open namespace-scoped sockets.
+    pub fn allows_processes(self) -> bool {
+        matches!(self, Self::CompileV1 | Self::CompileV2)
+    }
+
+    /// Whether unlisted syscalls are refused rather than allowed.
+    pub fn has_allowlist(self) -> bool {
+        matches!(self, Self::CompileV2 | Self::NativeV2)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

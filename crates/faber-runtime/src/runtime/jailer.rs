@@ -40,6 +40,8 @@ pub(crate) struct JailerJob {
     pub(crate) container: ContainerConfig,
     pub(crate) cgroup: CgroupConfig,
     pub(crate) request_cgroup_path: PathBuf,
+    /// Leaf of the request cgroup the jailer and its supervisors run in.
+    pub(crate) supervisor_cgroup_path: PathBuf,
     pub(crate) timeout: Duration,
     pub(crate) cpu_time_limit: Duration,
     pub(crate) output_limit: usize,
@@ -118,6 +120,11 @@ fn run() -> ! {
             if nix::unistd::getppid().as_raw() as u32 != job.controller_pid {
                 Runtime::child_exit(125);
             }
+            if let Err(error) = join_supervisor_cgroup(&job.supervisor_cgroup_path) {
+                return RuntimeResult::ContainerSetupFailed {
+                    error: format!("The jailer could not join the request cgroup: {error}"),
+                };
+            }
             let deadline = Instant::now() + job.remaining;
             let runtime = Runtime {
                 task_group: job.task_group,
@@ -135,6 +142,14 @@ fn run() -> ! {
     );
     Runtime::write_child_result(&mut stdout, &result);
     Runtime::child_exit(0)
+}
+
+/// Charge the jailer and everything it forks to the request, and make them
+/// the last choice of the OOM killer within it: a task over the limit is
+/// killed before the process supervising it.
+fn join_supervisor_cgroup(cgroup: &std::path::Path) -> std::io::Result<()> {
+    std::fs::write(cgroup.join("cgroup.procs"), std::process::id().to_string())?;
+    std::fs::write("/proc/self/oom_score_adj", "-999")
 }
 
 fn read_job() -> std::io::Result<JailerJob> {

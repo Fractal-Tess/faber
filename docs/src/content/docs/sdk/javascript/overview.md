@@ -138,7 +138,7 @@ type Task = {
   stdin?: string;
   files?: Record<string, string>;
   working_dir?: string;
-  sandbox_profile?: 'compile_v1' | 'native_v1';
+  sandbox_profile?: 'compile_v1' | 'native_v1' | 'compile_v2' | 'native_v2';
 };
 ```
 

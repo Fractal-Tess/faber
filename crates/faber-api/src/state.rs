@@ -47,8 +47,8 @@ impl Default for ExecutionLimits {
             execute_body_limit: 1024 * 1024,
             upload_file_limit: 50 * 1024 * 1024,
             max_concurrent_uploads: 4,
-            default_sandbox_profile: SandboxProfile::CompileV1,
-            allowed_sandbox_profiles: vec![SandboxProfile::CompileV1, SandboxProfile::NativeV1],
+            default_sandbox_profile: SandboxProfile::CompileV2,
+            allowed_sandbox_profiles: vec![SandboxProfile::CompileV2, SandboxProfile::NativeV2],
         }
     }
 }

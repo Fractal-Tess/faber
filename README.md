@@ -192,8 +192,10 @@ is malformed or out of range; the error names the variable.
 | `OUTPUT_LIMIT_BYTES` | `1048576` | Bytes kept per output stream per task |
 | `REQUEST_OUTPUT_LIMIT_BYTES` | `16777216` | Output bytes kept across every task of a request |
 | `EXECUTE_BODY_LIMIT_BYTES` | `1048576` | Maximum `/execute` request body |
-| `DEFAULT_SANDBOX_PROFILE` | `compile_v1` | Seccomp profile for tasks that do not name one |
-| `ALLOWED_SANDBOX_PROFILES` | `compile_v1,native_v1` | Profiles a request may select |
+| `DEFAULT_SANDBOX_PROFILE` | `compile_v2` | Seccomp profile for tasks that do not name one |
+| `ALLOWED_SANDBOX_PROFILES` | `compile_v2,native_v2` | Profiles a request may select. `v2` profiles are allowlists (unlisted syscalls fail with `ENOSYS`); `v1` are the older denylists |
+| `SANDBOX_IDENTITY_BASE` | `100000` | First host UID/GID leased to requests |
+| `SANDBOX_IDENTITY_COUNT` | `65536` | Size of that range; give each Faber service on a kernel its own |
 
 ### File store
 
@@ -213,10 +215,15 @@ is malformed or out of range; the error names the variable.
 ### How the limits relate
 
 - **Aggregate resources.** The `faber` cgroup is capped at
-  `(MEMORY_MAX + 256 MiB of workspace and /tmp tmpfs) × MAX_CONCURRENCY` bytes
-  and `PIDS_MAX × MAX_CONCURRENCY` processes, which covers every admitted task
-  at its own limit. Each request runs in its own cgroup capped at its widest
-  step times the per-task limits plus its workspace.
+  `(MEMORY_MAX + supervisor allowance) × MAX_CONCURRENCY` bytes and
+  `(PIDS_MAX + 3) × MAX_CONCURRENCY` processes, which covers every admitted
+  task at its own limit together with the root processes that run it. The
+  supervisor allowance is `64 MiB + 2 × REQUEST_OUTPUT_LIMIT_BYTES` (the
+  output capped at 1 GiB) plus the 256 MiB of workspace and `/tmp` tmpfs.
+  Each request runs in its own cgroup capped at its widest step times the
+  per-task limits plus that allowance; its jailer and supervisors sit in a
+  `supervisor` leaf of it, capped at the allowance and marked as the OOM
+  killer's last choice.
 - **Deadlines.** Each step's wall timeout is clipped to what is left of
   `OVERALL_TIMEOUT_MS`, and steps that cannot start are returned with the
   `not_started` outcome alongside every completed result. With the defaults a

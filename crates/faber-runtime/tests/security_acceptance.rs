@@ -198,6 +198,11 @@ int main(int argc, char **argv) {
         long result = syscall(SYS_clone3, 0, 0);
         return result == -1 && errno == ENOSYS ? 0 : 3;
     }
+    if (strcmp(argv[1], "unlisted_enosys") == 0) {
+        errno = 0;
+        long result = syscall(SYS_vhangup);
+        return result == -1 && errno == ENOSYS ? 0 : 3;
+    }
 #ifdef __x86_64__
     if (strcmp(argv[1], "x32") == 0) {
         syscall(SYS_getpid | 0x40000000UL);
@@ -2014,12 +2019,15 @@ fn namespace_init_reaps_orphaned_task_descendants() {
             "orphan_probe.c",
             ORPHAN_PROBE_SOURCE,
         ),
-        task("./orphan_probe", &[]),
+        // The orphan outlives its parent inside this task: adopted by the
+        // namespace init (PPid 1), and gone with the task cgroup afterwards,
+        // which assert_no_task_cgroups() in execute() would otherwise catch.
         task(
             "/bin/sh",
             &[
                 "-c",
-                "sleep 0.1; pid=$(cat orphan.pid); test ! -e /proc/$pid",
+                "./orphan_probe && sleep 0.1 && pid=$(cat orphan.pid) && \
+                 grep -q '^PPid:.1$' /proc/$pid/status",
             ],
         ),
     ]);
@@ -2120,46 +2128,54 @@ fn every_seccomp_profile_rule_reports_a_policy_violation() {
         SECCOMP_PROBE_SOURCE,
     )];
     let mut expected = Vec::new();
-    for (profile, syscall) in COMMON_BLOCKED
-        .iter()
-        .map(|syscall| (SandboxProfile::CompileV1, *syscall))
-        .chain(
-            COMMON_BLOCKED
-                .iter()
-                .chain(NATIVE_ONLY_BLOCKED)
-                .map(|syscall| (SandboxProfile::NativeV1, *syscall)),
-        )
-    {
+    let mut deny = |profile: SandboxProfile, syscall: &'static str| {
         let mut probe = task("./seccomp_probe", &[syscall]);
         probe.sandbox_profile = Some(profile);
         tasks.push(probe);
         expected.push((profile, syscall));
-    }
-    // Rules that depend on arguments, and a violation the task tries to
-    // survive by handling SIGSYS.
-    for syscall in [
-        "clone_newuser",
-        "socket_vsock",
-        "socket_netlink_audit",
-        "handled_violation",
+    };
+    for profile in [
+        SandboxProfile::CompileV1,
+        SandboxProfile::NativeV1,
+        SandboxProfile::CompileV2,
+        SandboxProfile::NativeV2,
     ] {
-        let mut probe = task("./seccomp_probe", &[syscall]);
-        probe.sandbox_profile = Some(SandboxProfile::CompileV1);
-        tasks.push(probe);
-        expected.push((SandboxProfile::CompileV1, syscall));
+        for syscall in COMMON_BLOCKED {
+            deny(profile, syscall);
+        }
+        if profile.allows_processes() {
+            // Rules that depend on arguments, and a violation the task tries
+            // to survive by handling SIGSYS.
+            for syscall in [
+                "clone_newuser",
+                "socket_vsock",
+                "socket_netlink_audit",
+                "handled_violation",
+            ] {
+                deny(profile, syscall);
+            }
+            #[cfg(target_arch = "x86_64")]
+            deny(profile, "x32");
+        } else {
+            for syscall in NATIVE_ONLY_BLOCKED {
+                deny(profile, syscall);
+            }
+        }
     }
-    #[cfg(target_arch = "x86_64")]
-    {
-        let mut probe = task("./seccomp_probe", &["x32"]);
-        probe.sandbox_profile = Some(SandboxProfile::CompileV1);
-        tasks.push(probe);
-        expected.push((SandboxProfile::CompileV1, "x32"));
-    }
-    // Calls the compile profile must keep working, last in the task list.
-    const COMPILE_ALLOWED: &[&str] = &["sockets_allowed", "clone3_enosys"];
-    for probe_name in COMPILE_ALLOWED {
+    // Calls that must keep working, last in the task list: the compile
+    // profiles keep their sockets and the clone3 fallback, and the v2
+    // allowlists answer an unlisted syscall with ENOSYS instead of a kill.
+    const MUST_WORK: &[(SandboxProfile, &str)] = &[
+        (SandboxProfile::CompileV1, "sockets_allowed"),
+        (SandboxProfile::CompileV1, "clone3_enosys"),
+        (SandboxProfile::CompileV2, "sockets_allowed"),
+        (SandboxProfile::CompileV2, "clone3_enosys"),
+        (SandboxProfile::CompileV2, "unlisted_enosys"),
+        (SandboxProfile::NativeV2, "unlisted_enosys"),
+    ];
+    for (profile, probe_name) in MUST_WORK {
         let mut probe = task("./seccomp_probe", &[probe_name]);
-        probe.sandbox_profile = Some(SandboxProfile::CompileV1);
+        probe.sandbox_profile = Some(*profile);
         tasks.push(probe);
     }
 
@@ -2191,16 +2207,20 @@ fn every_seccomp_profile_rule_reports_a_policy_violation() {
         assert!(stats.cleanup_succeeded);
     }
 
-    let allowed_results = &results[results.len() - COMPILE_ALLOWED.len()..];
-    for (result, probe_name) in allowed_results.iter().zip(COMPILE_ALLOWED) {
+    let allowed_results = &results[results.len() - MUST_WORK.len()..];
+    for (result, (profile, probe_name)) in allowed_results.iter().zip(MUST_WORK) {
         let TaskResult::Completed {
             exit_code, stats, ..
         } = single_result(result)
         else {
-            panic!("compile {probe_name} probe produced no result");
+            panic!("{profile:?} {probe_name} probe produced no result");
         };
-        assert_eq!(*exit_code, 0, "{probe_name}");
-        assert_eq!(stats.outcome, TaskOutcome::Exited, "{probe_name}");
+        assert_eq!(*exit_code, 0, "{profile:?} {probe_name}");
+        assert_eq!(
+            stats.outcome,
+            TaskOutcome::Exited,
+            "{profile:?} {probe_name}"
+        );
     }
 }
 
@@ -2505,12 +2525,28 @@ fn request_cgroup_limits_cover_its_widest_step() {
             .trim()
             .to_string()
     };
-    // Three tasks at 32 MiB plus the default 128 MiB workspace and 128 MiB /tmp.
+    // Three tasks at 32 MiB plus the supervisor allowance: 64 MiB, two copies
+    // of the (here uncapped, so 1 GiB) request output, and the default
+    // 128 MiB workspace and 128 MiB /tmp.
+    const MIB: u64 = 1024 * 1024;
+    let supervisor_allowance = 64 * MIB + 2 * 1024 * MIB + 256 * MIB;
     assert_eq!(
         read("memory.max"),
-        (3 * 32 * 1024 * 1024 + 256 * 1024 * 1024).to_string()
+        (3 * 32 * MIB + supervisor_allowance).to_string()
     );
-    assert_eq!(read("pids.max"), "48");
+    assert_eq!(
+        read("supervisor/memory.max"),
+        supervisor_allowance.to_string()
+    );
+    // 16 per task plus its supervisor and init, plus the jailer.
+    assert_eq!(read("pids.max"), "55");
+    assert!(
+        !std::fs::read_to_string(request.join("supervisor/cgroup.procs"))
+            .expect("failed to read the supervisor cgroup")
+            .trim()
+            .is_empty(),
+        "the jailer is not in the request's supervisor cgroup"
+    );
 
     let result = runtime
         .join()

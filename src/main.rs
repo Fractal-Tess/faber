@@ -34,7 +34,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         &config.execution_limits.memory_max,
         config.execution_limits.pids_max,
         config.execution_limits.max_concurrency,
+        config.execution_limits.request_output_limit,
     )?;
+    Runtime::configure_identities(config.sandbox_identity_base, config.sandbox_identity_count)?;
 
     let mut store_config = match &config.store_backend {
         StoreBackend::Memory => StoreConfig::builder().memory().build(),
