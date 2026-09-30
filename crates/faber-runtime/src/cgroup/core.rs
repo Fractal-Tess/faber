@@ -236,6 +236,7 @@ impl Cgroup {
 
     pub fn kill_active_tasks() -> Result<()> {
         let path = Self::get_faber_cgroup_path()?;
+        let mut task_paths = Vec::new();
         for entry in read_dir(path).map_err(|e| FaberError::Generic {
             message: format!("Failed to enumerate active task cgroups: {e}"),
         })? {
@@ -245,6 +246,7 @@ impl Cgroup {
             if entry.file_type().is_ok_and(|kind| kind.is_dir())
                 && entry.file_name().to_string_lossy().starts_with("task-")
             {
+                task_paths.push(entry.path());
                 let kill_path = entry.path().join("cgroup.kill");
                 if let Err(error) = write(&kill_path, "1")
                     && error.kind() != std::io::ErrorKind::NotFound
@@ -254,6 +256,22 @@ impl Cgroup {
                         details: format!("Failed to kill task cgroup at {}", kill_path.display()),
                     });
                 }
+            }
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        for task_path in task_paths {
+            while std::time::Instant::now() < deadline {
+                let populated = read_to_string(task_path.join("cgroup.events"))
+                    .is_ok_and(|contents| contents.lines().any(|line| line == "populated 1"));
+                if !populated {
+                    if let Err(error) = remove_dir(&task_path)
+                        && error.kind() != std::io::ErrorKind::NotFound
+                    {
+                        debug!(path = %task_path.display(), %error, "task cgroup cleanup deferred");
+                    }
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
             }
         }
         Ok(())

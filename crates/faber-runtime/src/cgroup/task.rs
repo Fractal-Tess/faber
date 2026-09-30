@@ -147,33 +147,63 @@ impl TaskCgroup {
     }
 
     pub(crate) fn kill_all_processes(&self) -> Result<()> {
-        let procs_path = self.task_cgroup_path.join("cgroup.procs");
-
-        if let Ok(file) = File::open(&procs_path) {
-            let reader = BufReader::new(file);
-            for line in reader.lines().map_while(|line| line.ok()) {
-                if let Ok(pid) = line.trim().parse::<i32>() {
-                    let _ = nix::sys::signal::kill(
-                        nix::unistd::Pid::from_raw(pid),
-                        nix::sys::signal::Signal::SIGKILL,
-                    );
-                }
-            }
+        let kill_path = self.task_cgroup_path.join("cgroup.kill");
+        if write(&kill_path, "1").is_ok()
+            && self.wait_until_empty(Duration::from_millis(500)).is_ok()
+        {
+            return Ok(());
         }
 
-        let mut attempts = 0;
-        while attempts < 50 {
+        let procs_path = self.task_cgroup_path.join("cgroup.procs");
+        let deadline = std::time::Instant::now() + Duration::from_millis(500);
+        while std::time::Instant::now() < deadline {
+            if !self.is_populated() {
+                return Ok(());
+            }
             if let Ok(file) = File::open(&procs_path) {
                 let reader = BufReader::new(file);
-                let count = reader.lines().count();
-                if count == 0 {
-                    break;
+                for line in reader.lines().map_while(|line| line.ok()) {
+                    if let Ok(pid) = line.trim().parse::<i32>() {
+                        let _ = nix::sys::signal::kill(
+                            nix::unistd::Pid::from_raw(pid),
+                            nix::sys::signal::Signal::SIGKILL,
+                        );
+                    }
                 }
             }
             thread::sleep(Duration::from_millis(10));
-            attempts += 1;
         }
+        Ok(())
+    }
 
+    pub(crate) fn is_populated(&self) -> bool {
+        read_to_string(self.task_cgroup_path.join("cgroup.events"))
+            .ok()
+            .and_then(|contents| {
+                contents.lines().find_map(|line| {
+                    let mut fields = line.split_whitespace();
+                    (fields.next() == Some("populated")).then(|| fields.next() == Some("1"))
+                })
+            })
+            .unwrap_or_else(|| {
+                read_to_string(self.task_cgroup_path.join("cgroup.procs"))
+                    .is_ok_and(|contents| !contents.trim().is_empty())
+            })
+    }
+
+    fn wait_until_empty(&self, timeout: Duration) -> Result<()> {
+        let deadline = std::time::Instant::now() + timeout;
+        while self.is_populated() {
+            if std::time::Instant::now() >= deadline {
+                return Err(FaberError::Generic {
+                    message: format!(
+                        "Task cgroup remained populated after kill: {}",
+                        self.task_cgroup_path.display()
+                    ),
+                });
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
         Ok(())
     }
 

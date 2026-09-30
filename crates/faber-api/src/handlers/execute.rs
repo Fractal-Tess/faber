@@ -79,6 +79,7 @@ async fn execute_uncached(
         .with_timeout(limits.wall_timeout)
         .with_cpu_time_limit(limits.cpu_time_limit)
         .with_output_limit(limits.output_limit)
+        .with_overall_timeout(limits.overall_timeout)
         .build();
     let result = tokio::task::spawn_blocking(move || runtime.execute())
         .await

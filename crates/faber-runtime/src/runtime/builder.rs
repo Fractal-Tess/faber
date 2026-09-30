@@ -14,6 +14,7 @@ pub struct RuntimeBuilder {
     timeout: Duration,
     cpu_time_limit: Duration,
     output_limit: usize,
+    overall_timeout: Duration,
 }
 
 impl Default for RuntimeBuilder {
@@ -25,6 +26,7 @@ impl Default for RuntimeBuilder {
             timeout: Duration::from_secs(5),
             cpu_time_limit: Duration::from_secs(5),
             output_limit: 1024 * 1024,
+            overall_timeout: Duration::from_secs(300),
         }
     }
 }
@@ -60,6 +62,11 @@ impl RuntimeBuilder {
         self
     }
 
+    pub fn with_overall_timeout(mut self, overall_timeout: Duration) -> Self {
+        self.overall_timeout = overall_timeout;
+        self
+    }
+
     pub fn build(self) -> Runtime {
         Runtime {
             task_group: self.task_group,
@@ -68,6 +75,7 @@ impl RuntimeBuilder {
             timeout: self.timeout,
             cpu_time_limit: self.cpu_time_limit,
             output_limit: self.output_limit,
+            overall_timeout: self.overall_timeout,
         }
     }
 }

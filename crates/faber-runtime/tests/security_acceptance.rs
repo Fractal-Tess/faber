@@ -115,6 +115,24 @@ int main(void) {
 }
 "#;
 
+const STDOUT_HOLDER_PROBE_SOURCE: &str = r#"
+#include <stdlib.h>
+#include <unistd.h>
+
+int main(void) {
+    for (;;) {
+        pid_t child = fork();
+        if (child < 0) {
+            return 1;
+        }
+        if (child > 0) {
+            _exit(0);
+        }
+        usleep(1000);
+    }
+}
+"#;
+
 const SECCOMP_PROBE_SOURCE: &str = r#"
 #include <errno.h>
 #include <sched.h>
@@ -1410,6 +1428,36 @@ fn namespace_init_reaps_orphaned_task_descendants() {
         };
         assert_eq!(*exit_code, 0, "orphan lifecycle step {index}: {stderr}");
     }
+}
+
+#[test]
+fn timeout_kills_fork_successors_that_hold_output_open() {
+    let _guard = lock_security_tests();
+    let compile = task_with_file(
+        "/usr/bin/gcc",
+        &["stdout_holder.c", "-o", "stdout_holder"],
+        "stdout_holder.c",
+        STDOUT_HOLDER_PROBE_SOURCE,
+    );
+    let run = task("./stdout_holder", &[]);
+    let started = std::time::Instant::now();
+    let result = RuntimeBuilder::default()
+        .with_task_group(vec![ExecutionStep::Single(compile), ExecutionStep::Single(run)])
+        .with_timeout(std::time::Duration::from_secs(2))
+        .with_overall_timeout(std::time::Duration::from_secs(5))
+        .build()
+        .execute()
+        .expect("runtime execution failed");
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    let RuntimeResult::Success(results) = result else {
+        panic!("container setup failed: {result:?}");
+    };
+    let TaskResult::Completed { stats, .. } = single_result(&results[1]) else {
+        panic!("timeout probe failed: {:?}", results[1]);
+    };
+    assert_eq!(stats.outcome, TaskOutcome::TimedOut);
+    assert!(stats.cleanup_succeeded);
+    assert_no_task_cgroups();
 }
 
 #[test]

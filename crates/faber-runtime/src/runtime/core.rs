@@ -15,7 +15,7 @@ use nix::{
     libc,
     sched::{CloneFlags, unshare},
     sys::wait::{WaitPidFlag, WaitStatus, waitpid},
-    unistd::{ForkResult, Pid, chdir, execvpe, fork, pipe, setgid, setgroups, setuid},
+    unistd::{ForkResult, Pid, chdir, execvpe, fork, pipe, setgid, setgroups, setpgid, setuid},
 };
 
 #[cfg(target_env = "gnu")]
@@ -39,6 +39,7 @@ pub struct Runtime {
     pub(crate) timeout: Duration,
     pub(crate) cpu_time_limit: Duration,
     pub(crate) output_limit: usize,
+    pub(crate) overall_timeout: Duration,
 }
 
 struct CollectedOutput {
@@ -78,6 +79,7 @@ impl Runtime {
         match unsafe { fork() } {
             Ok(ForkResult::Child) => {
                 drop(reader);
+                let _ = setpgid(Pid::from_raw(0), Pid::from_raw(0));
 
                 let runtime_result = self.execution_child(&faber_cgroup_path);
                 let _ = serde_json::to_writer(writer, &runtime_result);
@@ -85,23 +87,73 @@ impl Runtime {
             }
             Ok(ForkResult::Parent { child }) => {
                 close_fd(writer.into_raw_fd())?;
+                let _ = setpgid(child, child);
 
-                // Read while the child serializes. Waiting first can deadlock
-                // when a bounded task result is larger than the pipe buffer.
-                let runtime_result = serde_json::from_reader(reader);
-                waitpid(child, None).map_err(|e| FaberError::WaitPid { e })?;
+                let runtime_result = self.read_runtime_result(child, reader);
 
                 if let Err(error) = self.container.cleanup() {
                     tracing::error!(%error, "failed to cleanup container");
                 }
 
-                runtime_result.map_err(|e| FaberError::ParseResult {
-                    e,
-                    details: "Failed to parse results from child process".to_string(),
-                })
+                runtime_result
             }
             Err(e) => Err(FaberError::Fork { e }),
         }
+    }
+
+    fn read_runtime_result(&self, child: Pid, mut reader: PipeReader) -> Result<RuntimeResult> {
+        use std::time::Instant;
+
+        Self::set_nonblocking(reader.as_raw_fd()).map_err(|error| FaberError::Generic {
+            message: format!("Failed to make runtime result pipe nonblocking: {error}"),
+        })?;
+        let deadline = Instant::now() + self.overall_timeout;
+        let mut bytes = Vec::new();
+        let mut pipe_open = true;
+        let mut child_exited = false;
+
+        while pipe_open || !child_exited {
+            let mut chunk = [0_u8; 8192];
+            match reader.read(&mut chunk) {
+                Ok(0) => pipe_open = false,
+                Ok(read) => bytes.extend_from_slice(&chunk[..read]),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => {
+                    return Err(FaberError::Generic {
+                        message: format!("Failed to read runtime result: {error}"),
+                    });
+                }
+            }
+            if !child_exited {
+                match waitpid(child, Some(WaitPidFlag::WNOHANG)) {
+                    Ok(WaitStatus::StillAlive) => {}
+                    Ok(_) | Err(nix::errno::Errno::ECHILD) => child_exited = true,
+                    Err(error) => return Err(FaberError::WaitPid { e: error }),
+                }
+            }
+            if Instant::now() >= deadline {
+                let _ = nix::sys::signal::kill(
+                    Pid::from_raw(-child.as_raw()),
+                    nix::sys::signal::Signal::SIGKILL,
+                );
+                let _ = nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL);
+                let _ = Cgroup::kill_active_tasks();
+                let _ = waitpid(child, None);
+                return Err(FaberError::TaskTimeout {
+                    timeout_duration: self.overall_timeout,
+                    details: "Execution exceeded the hard overall deadline".to_string(),
+                });
+            }
+            if pipe_open || !child_exited {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+
+        serde_json::from_slice(&bytes).map_err(|e| FaberError::ParseResult {
+            e,
+            details: "Failed to parse results from child process".to_string(),
+        })
     }
 
     fn execution_child(&self, faber_cgroup_path: &Path) -> RuntimeResult {
@@ -809,6 +861,7 @@ impl Runtime {
         let mut output_terminated = false;
         let mut timed_out = false;
         let mut termination_signal = None;
+        let mut kill_started_at: Option<Instant> = None;
 
         loop {
             if stdin_offset == stdin.len() {
@@ -895,6 +948,7 @@ impl Runtime {
                 task_cgroup.kill_all_processes()?;
                 stdin_writer = None;
                 output_terminated = true;
+                kill_started_at = Some(Instant::now());
             }
 
             if exit_code.is_none() {
@@ -915,10 +969,29 @@ impl Runtime {
                 break;
             }
 
+            if kill_started_at.is_some()
+                && (!task_cgroup.is_populated()
+                    || kill_started_at.is_some_and(|started| {
+                        started.elapsed() >= Duration::from_millis(500)
+                    }))
+            {
+                if exit_code.is_none() {
+                    let _ = nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL);
+                    if let Ok(status) = waitpid(child, None)
+                        && let Some((code, signal)) = Self::wait_status_result(status)
+                    {
+                        exit_code = Some(code);
+                        termination_signal = signal;
+                    }
+                }
+                break;
+            }
+
             if !timed_out && start_time.elapsed() > timeout {
                 task_cgroup.kill_all_processes()?;
                 stdin_writer = None;
                 timed_out = true;
+                kill_started_at = Some(Instant::now());
             }
         }
 
