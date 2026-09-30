@@ -80,7 +80,10 @@ async fn api_rejects_parallel_fanout_before_execution() {
         Json(vec![ExecutionStep::Parallel(vec![task.clone(), task])]),
     )
     .await;
-    assert!(matches!(response, Err(axum::http::StatusCode::UNPROCESSABLE_ENTITY)));
+    assert!(matches!(
+        response,
+        Err((axum::http::StatusCode::UNPROCESSABLE_ENTITY, _))
+    ));
     assert!(task_cgroups().is_empty());
 }
 

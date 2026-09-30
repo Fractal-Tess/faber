@@ -7,7 +7,7 @@ description = "REST API server for Faber"
 [dependencies]
 faber-runtime = { path = "../faber-runtime" }
 faber-store = { path = "../faber-store", features = ["memory"] }
-tokio = { version = "1.47" }
+tokio = { version = "1.47", features = ["net", "signal"] }
 axum = { version = "0.8", features = ["json", "multipart"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

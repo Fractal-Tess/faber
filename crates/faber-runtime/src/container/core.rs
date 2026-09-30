@@ -137,7 +137,6 @@ impl Container {
     fn bind_mounts(&self) -> Result<()> {
         for source in &self.config.bind_mounts_ro {
             if !Path::new(source).exists() {
-                println!("⚠️  Skipping mount for non-existent path: {}", source);
                 continue;
             }
 

@@ -8,6 +8,13 @@ use config::{Config, StoreBackend};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "faber=info,faber_api=info,faber_runtime=info".into()),
+        )
+        .try_init()?;
+
     let config = Config::from_env()?;
     Runtime::initialize()?;
     Runtime::configure_service_limits(

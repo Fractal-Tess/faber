@@ -234,6 +234,31 @@ impl Cgroup {
         Ok(())
     }
 
+    pub fn kill_active_tasks() -> Result<()> {
+        let path = Self::get_faber_cgroup_path()?;
+        for entry in read_dir(path).map_err(|e| FaberError::Generic {
+            message: format!("Failed to enumerate active task cgroups: {e}"),
+        })? {
+            let entry = entry.map_err(|e| FaberError::Generic {
+                message: format!("Failed to inspect active task cgroup: {e}"),
+            })?;
+            if entry.file_type().is_ok_and(|kind| kind.is_dir())
+                && entry.file_name().to_string_lossy().starts_with("task-")
+            {
+                let kill_path = entry.path().join("cgroup.kill");
+                if let Err(error) = write(&kill_path, "1")
+                    && error.kind() != std::io::ErrorKind::NotFound
+                {
+                    return Err(FaberError::WriteFile {
+                        e: error,
+                        details: format!("Failed to kill task cgroup at {}", kill_path.display()),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn create_task_cgroup(&self, faber_cgroup_path: &Path) -> Result<TaskCgroup> {
         TaskCgroup::new(self.config.clone(), faber_cgroup_path)
     }

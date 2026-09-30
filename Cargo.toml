@@ -12,6 +12,8 @@ faber-api = { path = "crates/faber-api" }
 faber-runtime = { path = "crates/faber-runtime" }
 faber-store = { path = "crates/faber-store", features = ["full"] }
 tokio = { version = "1.47", features = ["rt-multi-thread", "macros"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [profile.release]
 opt-level = 3

@@ -65,6 +65,10 @@ impl Runtime {
         Cgroup::configure_service_limits(per_task_memory, per_task_pids, max_concurrency)
     }
 
+    pub fn shutdown() -> Result<()> {
+        Cgroup::kill_active_tasks()
+    }
+
     pub fn execute(&self) -> Result<RuntimeResult> {
         Cgroup::ensure_faber_cgroup_hierarchy()?;
         let faber_cgroup_path = Cgroup::get_faber_cgroup_path()?;
@@ -87,8 +91,8 @@ impl Runtime {
                 let runtime_result = serde_json::from_reader(reader);
                 waitpid(child, None).map_err(|e| FaberError::WaitPid { e })?;
 
-                if let Err(e) = self.container.cleanup() {
-                    eprintln!("Failed to cleanup container: {}", e);
+                if let Err(error) = self.container.cleanup() {
+                    tracing::error!(%error, "failed to cleanup container");
                 }
 
                 runtime_result.map_err(|e| FaberError::ParseResult {

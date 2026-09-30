@@ -146,4 +146,29 @@ mod tests {
             .unwrap();
         assert_eq!(health.status(), StatusCode::OK);
     }
+
+    #[tokio::test]
+    async fn execute_validation_errors_use_json_shape() {
+        let router = build_router(
+            "test-key".to_string(),
+            false,
+            create_store(StoreConfig::default()),
+            ExecutionLimits::default(),
+            1,
+        );
+        let request = Request::post("/execute")
+            .header("Authorization", "Bearer test-key")
+            .header("Content-Type", "application/json")
+            .body(Body::from("[]"))
+            .unwrap();
+        let response = router.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({"error": "Task group cannot be empty"})
+        );
+    }
 }
