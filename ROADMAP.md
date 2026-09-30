@@ -36,7 +36,8 @@ Not production-ready:
 
 - seccomp profiles are denylist-based rather than exhaustive syscall allowlists
 - API cancellation and disposable-VM race/concurrency stress remain incomplete
-- memory and PID ceilings are configurable rather than mandatory service policy
+- library callers may opt out of memory ceilings, while the API service enforces
+  finite memory, PID, CPU, wall-time, CPU-time, and output defaults
 - the in-memory execution cache has no TTL, bound, persistence, single-flight,
   tenant scope, or cacheability contract
 - resource enforcement, timeout, cleanup, and breakout behavior lack adversarial
@@ -162,8 +163,8 @@ groups, and empty capability sets. Seccomp remains an independent slice.
 
 - Distinguish CPU bandwidth (`cpu.max`) from total CPU time (rlimit and sampled
   `cpu.stat`).
-- Make memory and PID limits mandatory per service policy rather than defaulting
-  memory to unlimited.
+- [x] Make memory and PID limits mandatory per service policy while retaining an
+  explicit unlimited default for embedded runtime callers.
 - Read `memory.events`, `pids.events`, PSI, and signal status before cgroup
   cleanup so results explain why a task ended.
 - Use cancellation-safe RAII for containers, mounts, cgroups, pipes, and child

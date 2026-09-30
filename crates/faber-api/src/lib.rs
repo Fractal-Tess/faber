@@ -8,6 +8,6 @@ mod state;
 pub use cache::ExecutionCache;
 pub use router::build_router;
 pub use serve::{ServeConfig, serve};
-pub use state::AppState;
+pub use state::{AppState, ExecutionLimits};
 
 pub use axum;

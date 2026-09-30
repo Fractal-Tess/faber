@@ -25,7 +25,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let file_store = faber_store::create_store(store_config);
 
-    let router = build_router(config.api_key.clone(), config.cache_enabled, file_store);
+    let router = build_router(
+        config.api_key.clone(),
+        config.cache_enabled,
+        file_store,
+        config.execution_limits,
+    );
     let router = axum::Router::new().nest("/api/v1", router);
 
     let serve_config = ServeConfig {

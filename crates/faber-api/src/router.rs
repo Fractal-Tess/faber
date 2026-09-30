@@ -2,14 +2,19 @@ use axum::{Router, middleware, routing::get, routing::post};
 use faber_store::FileStore;
 use std::sync::Arc;
 
-use crate::{handlers, middleware::api_key_middleware, state::AppState};
+use crate::{
+    handlers,
+    middleware::api_key_middleware,
+    state::{AppState, ExecutionLimits},
+};
 
 pub fn build_router(
     api_key: String,
     cache_enabled: bool,
     file_store: Arc<dyn FileStore>,
+    execution_limits: ExecutionLimits,
 ) -> Router {
-    let state = AppState::new(api_key, cache_enabled, file_store);
+    let state = AppState::new(api_key, cache_enabled, file_store, execution_limits);
 
     let public_routes = Router::new()
         .route("/health", get(handlers::health))

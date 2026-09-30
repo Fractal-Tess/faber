@@ -1,4 +1,7 @@
 use std::env;
+use std::time::Duration;
+
+use faber_api::ExecutionLimits;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -8,6 +11,7 @@ pub struct Config {
     pub api_key: String,
     pub cache_enabled: bool,
     pub store_backend: StoreBackend,
+    pub execution_limits: ExecutionLimits,
 }
 
 #[derive(Debug, Clone)]
@@ -32,6 +36,7 @@ impl Config {
             api_key: Self::load_api_key()?,
             cache_enabled: Self::load_cache_enabled(),
             store_backend: Self::load_store_backend(),
+            execution_limits: Self::load_execution_limits()?,
         })
     }
 
@@ -58,6 +63,34 @@ impl Config {
         env::var("CACHE_ENABLED")
             .map(|v| v.to_lowercase() == "true" || v == "1")
             .unwrap_or(false)
+    }
+
+    fn load_execution_limits(
+    ) -> Result<ExecutionLimits, Box<dyn std::error::Error + Send + Sync>> {
+        let memory_max = env::var("MEMORY_MAX").unwrap_or_else(|_| "256M".to_string());
+        if memory_max.trim().eq_ignore_ascii_case("max") {
+            return Err("MEMORY_MAX must be finite for the API service".into());
+        }
+
+        Ok(ExecutionLimits {
+            memory_max,
+            pids_max: Self::load_env("PIDS_MAX", 64)?,
+            cpu_max: env::var("CPU_MAX").unwrap_or_else(|_| "50000 100000".to_string()),
+            wall_timeout: Duration::from_millis(Self::load_env("WALL_TIMEOUT_MS", 5_000)?),
+            cpu_time_limit: Duration::from_secs(Self::load_env("CPU_TIME_LIMIT_SECS", 5)?),
+            output_limit: Self::load_env("OUTPUT_LIMIT_BYTES", 1024 * 1024)?,
+        })
+    }
+
+    fn load_env<T>(name: &str, default: T) -> Result<T, Box<dyn std::error::Error + Send + Sync>>
+    where
+        T: std::str::FromStr,
+        T::Err: std::error::Error + Send + Sync + 'static,
+    {
+        match env::var(name) {
+            Ok(value) => value.parse::<T>().map_err(Into::into),
+            Err(_) => Ok(default),
+        }
     }
 
     fn load_store_backend() -> StoreBackend {

@@ -220,16 +220,14 @@ impl TaskCgroup {
             ),
         })?;
 
-        if memory_max_value != "max" {
-            let memory_swap_max_path = self.task_cgroup_path.join("memory.swap.max");
-            write(&memory_swap_max_path, "0").map_err(|e| FaberError::WriteFile {
-                e,
-                details: format!(
-                    "Failed to disable task swap at {}",
-                    memory_swap_max_path.display()
-                ),
-            })?;
-        }
+        let memory_swap_max_path = self.task_cgroup_path.join("memory.swap.max");
+        write(&memory_swap_max_path, "0").map_err(|e| FaberError::WriteFile {
+            e,
+            details: format!(
+                "Failed to disable task swap at {}",
+                memory_swap_max_path.display()
+            ),
+        })?;
 
         let pids_max_path = self.task_cgroup_path.join("pids.max");
         let pids_max_value = self.config.pids_max.to_string();

@@ -1,6 +1,7 @@
 use axum::{Json, extract::State};
-use faber_api::{AppState, handlers::execute};
+use faber_api::{AppState, ExecutionLimits, handlers::execute};
 use faber_runtime::{ExecutionStep, Task};
+use faber_runtime::{ExecutionStepResult, TaskOutcome, TaskResult};
 use faber_store::{StoreConfig, create_store};
 use std::{path::PathBuf, time::Duration};
 
@@ -15,6 +16,41 @@ fn faber_cgroup_path() -> Option<PathBuf> {
         .ancestors()
         .map(|ancestor| ancestor.join("faber"))
         .find(|candidate| candidate.is_dir())
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn api_memory_limit_reports_out_of_memory() {
+    let state = AppState::new(
+        "test-key".to_string(),
+        false,
+        create_store(StoreConfig::default()),
+        ExecutionLimits {
+            memory_max: "8M".to_string(),
+            ..ExecutionLimits::default()
+        },
+    );
+    let task = Task {
+        cmd: "/bin/dd".to_string(),
+        args: Some(vec![
+            "if=/dev/zero".to_string(),
+            "of=/faber/oom.bin".to_string(),
+            "bs=1M".to_string(),
+            "count=64".to_string(),
+        ]),
+        env: None,
+        stdin: None,
+        files: None,
+        working_dir: None,
+        sandbox_profile: None,
+    };
+
+    let Json(results) = execute(State(state), Json(vec![ExecutionStep::Single(task)]))
+        .await
+        .expect("API execution failed");
+    let ExecutionStepResult::Single(TaskResult::Completed { stats, .. }) = &results[0] else {
+        panic!("unexpected task result: {:?}", results[0]);
+    };
+    assert_eq!(stats.outcome, TaskOutcome::OutOfMemory);
 }
 
 fn task_cgroups() -> Vec<PathBuf> {
@@ -38,6 +74,7 @@ async fn aborting_an_api_request_still_cleans_the_detached_runtime() {
         "test-key".to_string(),
         false,
         create_store(StoreConfig::default()),
+        ExecutionLimits::default(),
     );
     let task = Task {
         cmd: "/bin/sh".to_string(),

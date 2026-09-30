@@ -1,6 +1,8 @@
 use crate::{ExecutionCache, state::AppState};
 use axum::{extract::State, http::StatusCode, response::Json};
-use faber_runtime::{RuntimeBuilder, RuntimeResult, TaskGroup, TaskGroupResult};
+use faber_runtime::{
+    CgroupConfigBuilder, RuntimeBuilder, RuntimeResult, TaskGroup, TaskGroupResult,
+};
 
 pub async fn execute(
     State(app_state): State<AppState>,
@@ -18,17 +20,34 @@ pub async fn execute(
         if let Some(cached_result) = app_state.cache.try_from_hash(&task_hash) {
             return Ok(Json(cached_result));
         }
-        return execute_uncached(task_group, Some((app_state.cache, task_hash))).await;
+        return execute_uncached(
+            task_group,
+            app_state.execution_limits,
+            Some((app_state.cache, task_hash)),
+        )
+        .await;
     }
 
-    execute_uncached(task_group, None).await
+    execute_uncached(task_group, app_state.execution_limits, None).await
 }
 
 async fn execute_uncached(
     task_group: TaskGroup,
+    limits: crate::ExecutionLimits,
     cache: Option<(ExecutionCache, String)>,
 ) -> Result<Json<TaskGroupResult>, StatusCode> {
-    let runtime = RuntimeBuilder::default().with_task_group(task_group).build();
+    let cgroup_config = CgroupConfigBuilder::new()
+        .with_memory(limits.memory_max)
+        .with_pids(limits.pids_max)
+        .with_cpu(limits.cpu_max)
+        .build();
+    let runtime = RuntimeBuilder::default()
+        .with_task_group(task_group)
+        .with_cgroup_config(cgroup_config)
+        .with_timeout(limits.wall_timeout)
+        .with_cpu_time_limit(limits.cpu_time_limit)
+        .with_output_limit(limits.output_limit)
+        .build();
     let result = tokio::task::spawn_blocking(move || runtime.execute())
         .await
         .map_err(|error| {
