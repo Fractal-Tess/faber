@@ -10,8 +10,6 @@ use tracing::{debug, error, warn};
 
 use crate::state::AppState;
 
-const MAX_FILE_SIZE: usize = 50 * 1024 * 1024;
-
 fn parse_file_id(id: String) -> Result<FileId, (StatusCode, Json<ErrorResponse>)> {
     FileId::new(id).map_err(|_| {
         (
@@ -76,14 +74,17 @@ pub async fn upload_file(
                     )
                 })? {
                     buffer.extend_from_slice(&chunk);
-                    if buffer.len() > MAX_FILE_SIZE {
-                        warn!("File upload rejected: size exceeds {} bytes", MAX_FILE_SIZE);
+                    if buffer.len() > state.execution_limits.upload_file_limit {
+                        warn!(
+                            "File upload rejected: size exceeds {} bytes",
+                            state.execution_limits.upload_file_limit
+                        );
                         return Err((
                             StatusCode::PAYLOAD_TOO_LARGE,
                             Json(ErrorResponse {
                                 error: format!(
                                     "File too large. Maximum size is {} bytes",
-                                    MAX_FILE_SIZE
+                                    state.execution_limits.upload_file_limit
                                 ),
                             }),
                         ));

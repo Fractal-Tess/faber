@@ -226,6 +226,7 @@ name = "faber"
 version = "0.1.1"
 dependencies = [
  "faber-api",
+ "faber-runtime",
  "faber-store",
  "tokio",
 ]

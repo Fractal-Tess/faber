@@ -16,7 +16,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         config.max_concurrency,
     )?;
 
-    let store_config = match &config.store_backend {
+    let mut store_config = match &config.store_backend {
         StoreBackend::Memory => StoreConfig::builder().memory().build(),
         StoreBackend::Filesystem { path } => StoreConfig::builder().filesystem(path).build(),
         StoreBackend::Hybrid {
@@ -27,6 +27,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .hybrid(path, *max_memory_entries, *max_memory_size)
             .build(),
     };
+    store_config.max_file_size = config.execution_limits.upload_file_limit as u64;
 
     let file_store = faber_store::create_store(store_config);
 

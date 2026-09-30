@@ -81,6 +81,8 @@ impl Config {
             output_limit: Self::load_env("OUTPUT_LIMIT_BYTES", 1024 * 1024)?,
             max_steps: Self::load_env("MAX_STEPS_PER_REQUEST", 64)?,
             max_parallel_tasks: Self::load_env("MAX_PARALLEL_TASKS", 16)?,
+            execute_body_limit: Self::load_env("EXECUTE_BODY_LIMIT_BYTES", 1024 * 1024)?,
+            upload_file_limit: Self::load_env("UPLOAD_FILE_LIMIT_BYTES", 50 * 1024 * 1024)?,
         })
     }
 

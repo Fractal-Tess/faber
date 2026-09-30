@@ -13,6 +13,8 @@ pub struct ExecutionLimits {
     pub output_limit: usize,
     pub max_steps: usize,
     pub max_parallel_tasks: usize,
+    pub execute_body_limit: usize,
+    pub upload_file_limit: usize,
 }
 
 impl Default for ExecutionLimits {
@@ -26,6 +28,8 @@ impl Default for ExecutionLimits {
             output_limit: 1024 * 1024,
             max_steps: 64,
             max_parallel_tasks: 16,
+            execute_body_limit: 1024 * 1024,
+            upload_file_limit: 50 * 1024 * 1024,
         }
     }
 }

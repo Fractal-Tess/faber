@@ -145,6 +145,14 @@ Execute a sequence of tasks. Each step can be:
 
 **Response:** Array of task results with `stdout`, `stderr`, `exit_code`, and `stats` (resource usage metrics).
 
+### Stored files and task files
+
+The `/file` endpoints are a content-addressed artifact store. Stored file IDs are
+not currently accepted by `/execute`; use a task's inline `files` map to
+materialize inputs in its workspace. Connecting store objects to executions
+requires an explicit task-reference and authorization design and is intentionally
+not implied by uploading an object.
+
 ## 🏗️ Architecture
 
 Faber consists of three main components:
