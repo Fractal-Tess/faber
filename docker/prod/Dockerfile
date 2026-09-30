@@ -1,5 +1,5 @@
 # --- Builder stage ---
-FROM rust:1.89.0-slim AS chef
+FROM rust:1.89.0-slim-bookworm AS chef
 
 WORKDIR /faber
 
