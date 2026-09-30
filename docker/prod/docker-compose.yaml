@@ -9,14 +9,28 @@ services:
     environment:
       - PORT=3000
       - HOST=0.0.0.0
-      - MAX_CONCURRENCY=50
       - API_KEY=${API_KEY:?Set API_KEY before starting Faber}
       - CACHE_ENABLED=${CACHE_ENABLED:-false}
+      # Task slots; the faber cgroup is sized (MEMORY_MAX + 256M) x slots.
+      - MAX_CONCURRENCY=${MAX_CONCURRENCY:-10}
+      - MAX_PARALLEL_TASKS=${MAX_PARALLEL_TASKS:-8}
+      - MEMORY_MAX=${MEMORY_MAX:-256M}
+      - PIDS_MAX=${PIDS_MAX:-64}
+      - CPU_MAX=${CPU_MAX:-50000 100000}
+      - WALL_TIMEOUT_MS=${WALL_TIMEOUT_MS:-5000}
+      - OVERALL_TIMEOUT_MS=${OVERALL_TIMEOUT_MS:-30000}
+      - OUTPUT_LIMIT_BYTES=${OUTPUT_LIMIT_BYTES:-1048576}
+      - REQUEST_OUTPUT_LIMIT_BYTES=${REQUEST_OUTPUT_LIMIT_BYTES:-16777216}
+      - FABER_STORE_MAX_TOTAL_BYTES=${FABER_STORE_MAX_TOTAL_BYTES:-536870912}
+      - FABER_STORE_TTL_SECS=${FABER_STORE_TTL_SECS:-3600}
+      # Must stay below stop_grace_period.
+      - SHUTDOWN_TIMEOUT_MS=${SHUTDOWN_TIMEOUT_MS:-5000}
     privileged: true
     cgroup: host
     pids_limit: -1
     volumes:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    stop_grace_period: 10s
     restart: unless-stopped
     healthcheck:
       test:

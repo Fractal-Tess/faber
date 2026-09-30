@@ -161,6 +161,74 @@ above `UPLOAD_FILE_LIMIT_BYTES` with `413`, and more than
 treated as absent on read and removed by a sweep every
 `FABER_STORE_TTL_CHECK_SECS`.
 
+## ⚙️ Configuration
+
+Faber reads its settings from environment variables and refuses to start if one
+is malformed or out of range; the error names the variable.
+
+### Service
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `API_KEY` | required | Key expected in the `Authorization` header (`Bearer <key>` or the raw key) |
+| `HOST` | `0.0.0.0` | Listen address |
+| `PORT` | `3000` | Listen port |
+| `CACHE_ENABLED` | `false` | Experimental whole-request memoization (`true`/`false`/`1`/`0`) |
+| `SHUTDOWN_TIMEOUT_MS` | `5000` | How long in-flight requests may drain after SIGTERM; keep it below the container stop grace period (10 s for Docker) |
+
+### Execution limits
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `MAX_CONCURRENCY` | `10` | Task slots: sandboxed tasks that may run at once across all requests. A request reserves one slot per task of its widest step and holds them until its sandbox has finished; requests that do not fit get `503` |
+| `MAX_PARALLEL_TASKS` | `8` | Tasks in one parallel step; must not exceed `MAX_CONCURRENCY` |
+| `MAX_STEPS_PER_REQUEST` | `64` | Steps in one request |
+| `MEMORY_MAX` | `256M` | Per-task `memory.max` (bytes or `K`/`M`/`G`/`T`); must be finite and at least `1M` |
+| `PIDS_MAX` | `64` | Per-task `pids.max` |
+| `CPU_MAX` | `50000 100000` | Per-task `cpu.max`: `<quota> [<period>]`, quota `max` or at least 1000 µs, period 1000–1000000 µs |
+| `WALL_TIMEOUT_MS` | `5000` | Wall-clock limit per task |
+| `CPU_TIME_LIMIT_SECS` | `5` | `RLIMIT_CPU` per task process |
+| `OVERALL_TIMEOUT_MS` | `30000` | Deadline for a whole request (see below) |
+| `OUTPUT_LIMIT_BYTES` | `1048576` | Bytes kept per output stream per task |
+| `REQUEST_OUTPUT_LIMIT_BYTES` | `16777216` | Output bytes kept across every task of a request |
+| `EXECUTE_BODY_LIMIT_BYTES` | `1048576` | Maximum `/execute` request body |
+| `DEFAULT_SANDBOX_PROFILE` | `compile_v1` | Seccomp profile for tasks that do not name one |
+| `ALLOWED_SANDBOX_PROFILES` | `compile_v1,native_v1` | Profiles a request may select |
+
+### File store
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `FABER_STORE_BACKEND` | `memory` | `memory`, `filesystem` or `hybrid` |
+| `FABER_STORE_PATH` | `/var/lib/faber/store` | Directory for the `filesystem` and `hybrid` backends |
+| `FABER_STORE_MAX_TOTAL_BYTES` | `536870912` | Total bytes of stored files; uploads beyond it get `507` |
+| `FABER_STORE_MAX_ENTRIES` | `1000` | Number of stored files; uploads beyond it get `507` |
+| `FABER_STORE_TTL_SECS` | `3600` | Files expire this long after their last upload or read; `0` disables expiry |
+| `FABER_STORE_TTL_CHECK_SECS` | `60` | Interval of the sweep that removes expired files |
+| `FABER_STORE_MAX_MEMORY_ENTRIES` | `1000` | `hybrid` only: files cached in memory |
+| `FABER_STORE_MAX_MEMORY_SIZE` | `104857600` | `hybrid` only: bytes cached in memory |
+| `UPLOAD_FILE_LIMIT_BYTES` | `52428800` | Maximum size of one uploaded file (`413` above it) |
+| `MAX_CONCURRENT_UPLOADS` | `4` | Uploads buffered at once (`503` above it) |
+
+### How the limits relate
+
+- **Aggregate resources.** The `faber` cgroup is capped at
+  `(MEMORY_MAX + 256 MiB of workspace and /tmp tmpfs) × MAX_CONCURRENCY` bytes
+  and `PIDS_MAX × MAX_CONCURRENCY` processes, which covers every admitted task
+  at its own limit. Each request runs in its own cgroup capped at its widest
+  step times the per-task limits plus its workspace.
+- **Deadlines.** Each step's wall timeout is clipped to what is left of
+  `OVERALL_TIMEOUT_MS`, and steps that cannot start are returned with the
+  `not_started` outcome alongside every completed result. With the defaults a
+  request of 64 slow steps (64 × 5 s) cannot finish within 30 s; Faber logs a
+  warning at startup when `MAX_STEPS_PER_REQUEST × WALL_TIMEOUT_MS` exceeds
+  `OVERALL_TIMEOUT_MS`.
+- **Memory per request.** A response holds at most
+  `REQUEST_OUTPUT_LIMIT_BYTES` of task output. JSON escaping can grow control
+  bytes up to six times, and the result exists in the sandbox controller, the
+  API process and (with `CACHE_ENABLED`) the cache, so budget roughly
+  `6 × REQUEST_OUTPUT_LIMIT_BYTES` per copy per concurrent request.
+
 ## 🏗️ Architecture
 
 Faber consists of three main components:

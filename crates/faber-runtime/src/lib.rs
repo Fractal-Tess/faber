@@ -18,3 +18,9 @@ pub use result::{
 };
 pub use runtime::{Runtime, RuntimeBuilder};
 pub use task::{ExecutionStep, SandboxProfile, Task, TaskGroup};
+
+/// Parse a cgroup memory size such as `4096`, `512K` or `256M`. `max` yields
+/// `u64::MAX`.
+pub fn parse_memory_limit(value: &str) -> std::result::Result<u64, FaberError> {
+    cgroup::task::parse_memory_string(value)
+}
