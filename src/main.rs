@@ -36,6 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         config.cache_enabled,
         file_store,
         config.execution_limits,
+        config.max_concurrency,
     );
     let router = axum::Router::new().nest("/api/v1", router);
 
@@ -43,7 +44,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         port: config.port,
         host: config.host,
         router,
-        max_concurrency: Some(config.max_concurrency),
     };
 
     serve(serve_config).await?;

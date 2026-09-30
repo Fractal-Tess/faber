@@ -11,7 +11,7 @@ tokio = { version = "1.47" }
 axum = { version = "0.8", features = ["json", "multipart"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tower = { version = "0.5.2", features = ["limit", "util"] }
+tower = { version = "0.5.2", features = ["limit", "load-shed", "util"] }
 sha2 = "0.10"
 dashmap = "6.0"
 bytes = "1.5"
