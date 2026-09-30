@@ -29,6 +29,7 @@ Implemented:
 - UID/GID drop and effective/permitted/inheritable capability clearing
 - cgroup v2 CPU bandwidth, memory, PID limits, metrics, and `Drop` cleanup
 - wall-clock task timeout, sequential and parallel task groups
+- bounded request step/parallel fan-out and aggregate service memory/PID ceilings
 - content-addressed memory, filesystem, and hybrid file stores
 - Docker-only hot reload, testing, health checks, and debugger attachment
 

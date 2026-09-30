@@ -79,6 +79,8 @@ impl Config {
             wall_timeout: Duration::from_millis(Self::load_env("WALL_TIMEOUT_MS", 5_000)?),
             cpu_time_limit: Duration::from_secs(Self::load_env("CPU_TIME_LIMIT_SECS", 5)?),
             output_limit: Self::load_env("OUTPUT_LIMIT_BYTES", 1024 * 1024)?,
+            max_steps: Self::load_env("MAX_STEPS_PER_REQUEST", 64)?,
+            max_parallel_tasks: Self::load_env("MAX_PARALLEL_TASKS", 16)?,
         })
     }
 

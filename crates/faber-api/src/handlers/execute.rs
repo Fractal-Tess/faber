@@ -1,7 +1,7 @@
 use crate::{ExecutionCache, state::AppState};
 use axum::{extract::State, http::StatusCode, response::Json};
 use faber_runtime::{
-    CgroupConfigBuilder, RuntimeBuilder, RuntimeResult, TaskGroup, TaskGroupResult,
+    CgroupConfigBuilder, ExecutionStep, RuntimeBuilder, RuntimeResult, TaskGroup, TaskGroupResult,
 };
 
 pub async fn execute(
@@ -10,6 +10,13 @@ pub async fn execute(
 ) -> Result<Json<TaskGroupResult>, StatusCode> {
     if task_group.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
+    }
+    if task_group.len() > app_state.execution_limits.max_steps
+        || task_group.iter().any(|step| {
+            matches!(step, ExecutionStep::Parallel(tasks) if tasks.len() > app_state.execution_limits.max_parallel_tasks)
+        })
+    {
+        return Err(StatusCode::UNPROCESSABLE_ENTITY);
     }
 
     if app_state.cache_enabled {

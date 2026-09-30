@@ -11,6 +11,8 @@ pub struct ExecutionLimits {
     pub wall_timeout: Duration,
     pub cpu_time_limit: Duration,
     pub output_limit: usize,
+    pub max_steps: usize,
+    pub max_parallel_tasks: usize,
 }
 
 impl Default for ExecutionLimits {
@@ -22,6 +24,8 @@ impl Default for ExecutionLimits {
             wall_timeout: Duration::from_secs(5),
             cpu_time_limit: Duration::from_secs(5),
             output_limit: 1024 * 1024,
+            max_steps: 64,
+            max_parallel_tasks: 16,
         }
     }
 }

@@ -37,6 +37,7 @@ namespace flag is not sufficient evidence.
 | Privileges | Capability and identity regain, namespace-map rewriting, chroot, hostname changes, and device access fail; no setup FDs survive `exec` | Kernel-state and active privilege-escape probes | Verified baseline |
 | Syscalls | Every task installs a versioned seccomp policy before `exec`; violations terminate with `SIGSYS` | Probe verifies mode 2; the matrix test invokes every blocked syscall under each applicable profile and verifies `policy_violation` | Verified denylist baseline |
 | Memory | The complete task process tree cannot exceed `memory.max` | OOM acceptance test and reported `memory.events:oom_kill` evidence | Verified baseline |
+| Request fan-out | Requests cannot exceed the configured step or parallel-task counts, and the service cgroup has aggregate memory and PID ceilings | API rejection test plus startup cgroup configuration | Verified baseline |
 | Process count | The complete task process tree cannot exceed `pids.max` | PID acceptance test and reported `pids.events:max` evidence | Verified baseline |
 | CPU | CPU bandwidth, CPU time, and wall time are independently bounded | Busy-loop test verifies `cpu.max` throttling counters and a shorter `RLIMIT_CPU` terminates before wall timeout | Verified baseline |
 | Rlimits | CPU time, file size, descriptors, stack, and core dumps have finite enforced policy limits | Probe verifies configured values; active tests hit `EMFILE`, `EFBIG`, stack/core signals, absent core files, and CPU kill | Verified baseline |

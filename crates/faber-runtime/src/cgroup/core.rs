@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tracing::{debug, warn};
 
-use super::{config::CgroupConfig, task::TaskCgroup};
+use super::{config::CgroupConfig, task::{TaskCgroup, parse_memory_string}};
 use crate::prelude::*;
 
 static FABER_CGROUP_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
@@ -197,6 +197,40 @@ impl Cgroup {
             );
         }
 
+        Ok(())
+    }
+
+    pub fn configure_service_limits(
+        per_task_memory: &str,
+        per_task_pids: u32,
+        max_concurrency: usize,
+    ) -> Result<()> {
+        let path = Self::get_faber_cgroup_path()?;
+        let memory = parse_memory_string(per_task_memory)?
+            .checked_mul(max_concurrency as u64)
+            .ok_or_else(|| FaberError::Generic {
+                message: "Aggregate service memory limit overflows u64".to_string(),
+            })?;
+        let pids = u64::from(per_task_pids)
+            .checked_mul(max_concurrency as u64)
+            .ok_or_else(|| FaberError::Generic {
+                message: "Aggregate service PID limit overflows u64".to_string(),
+            })?;
+
+        write(path.join("memory.max"), memory.to_string()).map_err(|e| {
+            FaberError::WriteFile {
+                e,
+                details: "Failed to set aggregate service memory limit".to_string(),
+            }
+        })?;
+        write(path.join("memory.swap.max"), "0").map_err(|e| FaberError::WriteFile {
+            e,
+            details: "Failed to disable aggregate service swap".to_string(),
+        })?;
+        write(path.join("pids.max"), pids.to_string()).map_err(|e| FaberError::WriteFile {
+            e,
+            details: "Failed to set aggregate service PID limit".to_string(),
+        })?;
         Ok(())
     }
 

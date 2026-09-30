@@ -57,6 +57,14 @@ impl Runtime {
         Cgroup::ensure_faber_cgroup_hierarchy()
     }
 
+    pub fn configure_service_limits(
+        per_task_memory: &str,
+        per_task_pids: u32,
+        max_concurrency: usize,
+    ) -> Result<()> {
+        Cgroup::configure_service_limits(per_task_memory, per_task_pids, max_concurrency)
+    }
+
     pub fn execute(&self) -> Result<RuntimeResult> {
         Cgroup::ensure_faber_cgroup_hierarchy()?;
         let faber_cgroup_path = Cgroup::get_faber_cgroup_path()?;

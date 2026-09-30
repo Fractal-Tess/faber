@@ -207,7 +207,7 @@ impl TaskCgroup {
         let memory_max_value = if self.config.memory_max == "max" {
             "max".to_string()
         } else {
-            self.parse_memory_string(&self.config.memory_max)?
+            parse_memory_string(&self.config.memory_max)?
                 .to_string()
         };
 
@@ -242,73 +242,62 @@ impl TaskCgroup {
 
         Ok(())
     }
+}
 
-    fn parse_memory_string(&self, memory_str: &str) -> Result<u64> {
-        let memory_str = memory_str.trim();
+pub(crate) fn parse_memory_string(memory_str: &str) -> Result<u64> {
+    let memory_str = memory_str.trim();
 
-        if memory_str == "max" {
-            return Ok(u64::MAX);
-        }
-
-        if let Ok(bytes) = memory_str.parse::<u64>() {
-            return Ok(bytes);
-        }
-
-        let Some((unit_index, unit)) = memory_str.char_indices().next_back() else {
-            return Err(FaberError::Generic {
-                message: "Memory limit cannot be empty".to_string(),
-            });
-        };
-        let number_str = &memory_str[..unit_index];
-        let number: u64 = number_str.parse().map_err(|_| FaberError::Generic {
-            message: format!("Invalid memory format: {}", memory_str),
-        })?;
-
-        let multiplier = match unit.to_ascii_uppercase() {
-            'K' => 1024,
-            'M' => 1024 * 1024,
-            'G' => 1024 * 1024 * 1024,
-            'T' => 1024_u64 * 1024 * 1024 * 1024,
-            _ => {
-                return Err(FaberError::Generic {
-                    message: format!("Unknown memory unit: {}", unit),
-                });
-            }
-        };
-
-        number
-            .checked_mul(multiplier)
-            .ok_or_else(|| FaberError::Generic {
-                message: format!("Memory limit overflows u64: {memory_str}"),
-            })
+    if memory_str == "max" {
+        return Ok(u64::MAX);
     }
+
+    if let Ok(bytes) = memory_str.parse::<u64>() {
+        return Ok(bytes);
+    }
+
+    let Some((unit_index, unit)) = memory_str.char_indices().next_back() else {
+        return Err(FaberError::Generic {
+            message: "Memory limit cannot be empty".to_string(),
+        });
+    };
+    let number_str = &memory_str[..unit_index];
+    let number: u64 = number_str.parse().map_err(|_| FaberError::Generic {
+        message: format!("Invalid memory format: {}", memory_str),
+    })?;
+
+    let multiplier = match unit.to_ascii_uppercase() {
+        'K' => 1024,
+        'M' => 1024 * 1024,
+        'G' => 1024 * 1024 * 1024,
+        'T' => 1024_u64 * 1024 * 1024 * 1024,
+        _ => {
+            return Err(FaberError::Generic {
+                message: format!("Unknown memory unit: {}", unit),
+            });
+        }
+    };
+
+    number
+        .checked_mul(multiplier)
+        .ok_or_else(|| FaberError::Generic {
+            message: format!("Memory limit overflows u64: {memory_str}"),
+        })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::TaskCgroup;
-    use crate::cgroup::CgroupConfig;
-
-    fn task_cgroup_for_parsing() -> TaskCgroup {
-        TaskCgroup {
-            task_cgroup_path: "/unused".into(),
-            config: CgroupConfig::default(),
-            cleaned: true,
-        }
-    }
+    use super::parse_memory_string;
 
     #[test]
     fn parse_memory_string_rejects_empty_unicode_and_overflow() {
-        let cgroup = task_cgroup_for_parsing();
-        assert!(cgroup.parse_memory_string("").is_err());
-        assert!(cgroup.parse_memory_string("1💥").is_err());
-        assert!(cgroup.parse_memory_string("18446744073709551615T").is_err());
+        assert!(parse_memory_string("").is_err());
+        assert!(parse_memory_string("1💥").is_err());
+        assert!(parse_memory_string("18446744073709551615T").is_err());
     }
 
     #[test]
     fn parse_memory_string_accepts_bytes_and_binary_units() {
-        let cgroup = task_cgroup_for_parsing();
-        assert_eq!(cgroup.parse_memory_string("4096").unwrap(), 4096);
-        assert_eq!(cgroup.parse_memory_string("2M").unwrap(), 2 * 1024 * 1024);
+        assert_eq!(parse_memory_string("4096").unwrap(), 4096);
+        assert_eq!(parse_memory_string("2M").unwrap(), 2 * 1024 * 1024);
     }
 }

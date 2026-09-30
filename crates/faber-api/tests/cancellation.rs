@@ -53,6 +53,37 @@ async fn api_memory_limit_reports_out_of_memory() {
     assert_eq!(stats.outcome, TaskOutcome::OutOfMemory);
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn api_rejects_parallel_fanout_before_execution() {
+    let state = AppState::new(
+        "test-key".to_string(),
+        false,
+        create_store(StoreConfig::default()),
+        ExecutionLimits {
+            max_steps: 1,
+            max_parallel_tasks: 1,
+            ..ExecutionLimits::default()
+        },
+    );
+    let task = Task {
+        cmd: "/bin/true".to_string(),
+        args: None,
+        env: None,
+        stdin: None,
+        files: None,
+        working_dir: None,
+        sandbox_profile: None,
+    };
+
+    let response = execute(
+        State(state),
+        Json(vec![ExecutionStep::Parallel(vec![task.clone(), task])]),
+    )
+    .await;
+    assert!(matches!(response, Err(axum::http::StatusCode::UNPROCESSABLE_ENTITY)));
+    assert!(task_cgroups().is_empty());
+}
+
 fn task_cgroups() -> Vec<PathBuf> {
     let Some(faber_path) = faber_cgroup_path() else {
         return Vec::new();

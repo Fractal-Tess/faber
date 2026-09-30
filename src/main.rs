@@ -10,6 +10,11 @@ use config::{Config, StoreBackend};
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = Config::from_env()?;
     Runtime::initialize()?;
+    Runtime::configure_service_limits(
+        &config.execution_limits.memory_max,
+        config.execution_limits.pids_max,
+        config.max_concurrency,
+    )?;
 
     let store_config = match &config.store_backend {
         StoreBackend::Memory => StoreConfig::builder().memory().build(),
