@@ -118,6 +118,12 @@ export class FaberClient {
    * Convert a single API result to TaskResult
    */
   private normalizeTaskResult(result: ApiTaskResult): TaskResult {
+    if (typeof result.error === 'string') {
+      return {
+        error: result.error,
+        stats: result.stats,
+      };
+    }
     return {
       stdout: result.stdout,
       stderr: result.stderr,

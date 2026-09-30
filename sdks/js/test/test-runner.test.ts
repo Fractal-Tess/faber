@@ -11,6 +11,19 @@ describe('runTests', () => {
   });
 
   describe('empty tests', () => {
+    it('should count an API task failure as a failed test', () => {
+      const task: TaskWithTests = { cmd: 'missing' };
+      const testResults = runTests(task, { error: 'failed to exec task' });
+
+      expect(testResults).toEqual([
+        expect.objectContaining({
+          name: 'task execution',
+          passed: false,
+          message: expect.stringContaining('failed to exec task'),
+        }),
+      ]);
+    });
+
     it('should return empty array when task has no tests', () => {
       const task: TaskWithTests = { cmd: 'echo', args: ['hello'] };
       const result = mockTaskResult();

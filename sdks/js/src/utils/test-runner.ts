@@ -9,6 +9,15 @@ import type {
 } from '../types/tests';
 
 export function runTests(task: TaskWithTests, result: TaskResult): TaskTestResult[] {
+  if (typeof result.error === 'string') {
+    return [{
+      name: 'task execution',
+      passed: false,
+      message: `Task failed before completing: ${result.error}`,
+      actual: result.error,
+    }];
+  }
+
   if (!task.tests || task.tests.length === 0) {
     return [];
   }

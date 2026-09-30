@@ -34,25 +34,30 @@ export type ExecutionStats = {
 /**
  * Task execution result
  */
-export type TaskResult = {
+export type CompletedTaskResult = {
   stdout: string;
   stderr: string;
   exitCode: number;
+  error?: never;
   stats?: ExecutionStats;
 };
+
+export type FailedTaskResult = {
+  error: string;
+  stdout?: never;
+  stderr?: never;
+  exitCode?: never;
+  stats?: ExecutionStats;
+};
+
+export type TaskResult = CompletedTaskResult | FailedTaskResult;
 
 /**
  * Raw execution result from the API
  */
-export type ExecutionResult = {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-  stats?: ExecutionStats;
-};
+export type ExecutionResult = TaskResult;
 
 /**
  * Final result type that maintains single/parallel structure
  */
 export type TaskGroupResult = (ExecutionResult | ExecutionResult[])[];
-
