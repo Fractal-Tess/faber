@@ -1,6 +1,7 @@
 mod builder;
 mod config;
 mod core;
+pub(crate) mod request;
 pub(crate) mod task;
 
 pub(crate) use config::CgroupConfig;

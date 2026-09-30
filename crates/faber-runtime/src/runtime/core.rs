@@ -24,7 +24,7 @@ type RlimitResource = libc::__rlimit_resource_t;
 type RlimitResource = libc::c_int;
 
 use crate::{
-    cgroup::{Cgroup, task::TaskCgroup},
+    cgroup::{Cgroup, request::RequestCgroup, task::TaskCgroup},
     container::Container,
     prelude::*,
     result::{ExecutionStepResult, RuntimeResult, TaskOutcome, TaskResult, TaskResultStats},
@@ -73,6 +73,7 @@ impl Runtime {
     pub fn execute(&self) -> Result<RuntimeResult> {
         Cgroup::ensure_faber_cgroup_hierarchy()?;
         let faber_cgroup_path = Cgroup::get_faber_cgroup_path()?;
+        let request_cgroup = self.cgroup.create_request_cgroup(&faber_cgroup_path)?;
 
         let (reader, writer) = mk_pipe()?;
 
@@ -81,7 +82,7 @@ impl Runtime {
                 drop(reader);
                 let _ = setpgid(Pid::from_raw(0), Pid::from_raw(0));
 
-                let runtime_result = self.execution_child(&faber_cgroup_path);
+                let runtime_result = self.execution_child(request_cgroup.path());
                 let _ = serde_json::to_writer(writer, &runtime_result);
                 Self::child_exit(0);
             }
@@ -89,10 +90,13 @@ impl Runtime {
                 close_fd(writer.into_raw_fd())?;
                 let _ = setpgid(child, child);
 
-                let runtime_result = self.read_runtime_result(child, reader);
+                let runtime_result = self.read_runtime_result(child, reader, &request_cgroup);
 
                 if let Err(error) = self.container.cleanup() {
                     tracing::error!(%error, "failed to cleanup container");
+                }
+                if let Err(error) = request_cgroup.cleanup() {
+                    tracing::error!(%error, "failed to cleanup request cgroup");
                 }
 
                 runtime_result
@@ -101,7 +105,12 @@ impl Runtime {
         }
     }
 
-    fn read_runtime_result(&self, child: Pid, mut reader: PipeReader) -> Result<RuntimeResult> {
+    fn read_runtime_result(
+        &self,
+        child: Pid,
+        mut reader: PipeReader,
+        request_cgroup: &RequestCgroup,
+    ) -> Result<RuntimeResult> {
         use std::time::Instant;
 
         Self::set_nonblocking(reader.as_raw_fd()).map_err(|error| FaberError::Generic {
@@ -133,12 +142,16 @@ impl Runtime {
                 }
             }
             if Instant::now() >= deadline {
+                // Killing the execution child's process group and its PID
+                // namespace init tears down this request's processes; the
+                // request cgroup kill catches anything that left the group.
+                // Other requests live in other request cgroups.
                 let _ = nix::sys::signal::kill(
                     Pid::from_raw(-child.as_raw()),
                     nix::sys::signal::Signal::SIGKILL,
                 );
                 let _ = nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL);
-                let _ = Cgroup::kill_active_tasks();
+                request_cgroup.kill();
                 let _ = waitpid(child, None);
                 return Err(FaberError::TaskTimeout {
                     timeout_duration: self.overall_timeout,
@@ -156,7 +169,7 @@ impl Runtime {
         })
     }
 
-    fn execution_child(&self, faber_cgroup_path: &Path) -> RuntimeResult {
+    fn execution_child(&self, request_cgroup_path: &Path) -> RuntimeResult {
         if let Err(e) = self.container.setup() {
             return RuntimeResult::ContainerSetupFailed {
                 error: format!("Container setup failed: {}", e),
@@ -183,9 +196,11 @@ impl Runtime {
 
         for step in &self.task_group {
             let result = match step {
-                ExecutionStep::Single(task) => self.execute_single(task.clone(), faber_cgroup_path),
+                ExecutionStep::Single(task) => {
+                    self.execute_single(task.clone(), request_cgroup_path)
+                }
                 ExecutionStep::Parallel(tasks) => {
-                    self.execute_parallel(tasks.clone(), faber_cgroup_path)
+                    self.execute_parallel(tasks.clone(), request_cgroup_path)
                 }
             };
             results.push(result);
@@ -214,14 +229,14 @@ impl Runtime {
         }
     }
 
-    fn execute_single(&self, task: Task, faber_cgroup_path: &Path) -> ExecutionStepResult {
+    fn execute_single(&self, task: Task, request_cgroup_path: &Path) -> ExecutionStepResult {
         match Self::execute_single_task(
             task,
             &self.cgroup,
             self.timeout,
             self.cpu_time_limit,
             self.output_limit,
-            faber_cgroup_path,
+            request_cgroup_path,
         ) {
             Ok(task_result) => ExecutionStepResult::Single(task_result),
             Err(e) => ExecutionStepResult::Single(TaskResult::Failed {
@@ -231,7 +246,11 @@ impl Runtime {
         }
     }
 
-    fn execute_parallel(&self, tasks: Vec<Task>, faber_cgroup_path: &Path) -> ExecutionStepResult {
+    fn execute_parallel(
+        &self,
+        tasks: Vec<Task>,
+        request_cgroup_path: &Path,
+    ) -> ExecutionStepResult {
         // Cannot use std::thread::spawn after unshare(CLONE_NEWPID) because
         // the kernel rejects CLONE_THREAD when pid_ns_for_children differs
         // from the active PID namespace (EINVAL). Use fork + pipes instead.
@@ -258,7 +277,7 @@ impl Runtime {
                         self.timeout,
                         self.cpu_time_limit,
                         self.output_limit,
-                        faber_cgroup_path,
+                        request_cgroup_path,
                     ) {
                         Ok(task_result) => task_result,
                         Err(e) => TaskResult::Failed {
@@ -305,14 +324,14 @@ impl Runtime {
         timeout: std::time::Duration,
         cpu_time_limit: std::time::Duration,
         output_limit: usize,
-        faber_cgroup_path: &Path,
+        request_cgroup_path: &Path,
     ) -> Result<TaskResult> {
         use std::time::Instant;
 
         let start_time = Instant::now();
 
         // Create task cgroup before fork
-        let task_cgroup = cgroup.create_task_cgroup(faber_cgroup_path)?;
+        let task_cgroup = cgroup.create_task_cgroup(request_cgroup_path)?;
 
         // Materialize files relative to the workspace without following links.
         // This happens before privilege dropping, so path resolution must fail closed.

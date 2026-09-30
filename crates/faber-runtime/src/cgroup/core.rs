@@ -1,10 +1,11 @@
-use std::fs::{create_dir_all, read_dir, read_to_string, remove_dir, write};
+use std::fs::{create_dir_all, read_dir, read_to_string, write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tracing::{debug, warn};
 
 use super::{
     config::CgroupConfig,
+    request::{self, REQUEST_CGROUP_PREFIX, RequestCgroup},
     task::{TaskCgroup, parse_memory_string},
 };
 use crate::prelude::*;
@@ -155,32 +156,32 @@ impl Cgroup {
         Ok(faber_cgroup_path)
     }
 
-    fn cleanup_stale_task_cgroups(faber_cgroup_path: &PathBuf) {
-        if let Ok(entries) = read_dir(faber_cgroup_path) {
-            for entry in entries.filter_map(|e| e.ok()) {
-                let path = entry.path();
-                if path.is_dir() {
-                    if let Some(name) = path.file_name() {
-                        if name.to_string_lossy().starts_with("task-") {
-                            let procs_path = path.join("cgroup.procs");
-                            if let Ok(procs) = read_to_string(&procs_path) {
-                                if procs.trim().is_empty() {
-                                    if let Err(e) = remove_dir(&path) {
-                                        warn!(
-                                            "Failed to cleanup stale cgroup {}: {}",
-                                            path.display(),
-                                            e
-                                        );
-                                    } else {
-                                        debug!("Cleaned up stale cgroup: {}", path.display());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+    fn cleanup_stale_task_cgroups(faber_cgroup_path: &Path) {
+        for path in Self::sandbox_cgroups(faber_cgroup_path) {
+            if request::is_populated(&path) {
+                continue;
+            }
+            match request::remove_cgroup_tree(&path) {
+                Ok(()) => debug!("Cleaned up stale cgroup: {}", path.display()),
+                Err(e) => warn!("Failed to cleanup stale cgroup {}: {}", path.display(), e),
             }
         }
+    }
+
+    /// Top-level request and legacy task cgroups beneath the Faber cgroup.
+    fn sandbox_cgroups(faber_cgroup_path: &Path) -> Vec<PathBuf> {
+        read_dir(faber_cgroup_path)
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                entry.file_type().is_ok_and(|kind| kind.is_dir())
+                    && (name.starts_with(REQUEST_CGROUP_PREFIX) || name.starts_with("task-"))
+            })
+            .map(|entry| entry.path())
+            .collect()
     }
 
     fn setup_faber_cgroup_limits(faber_cgroup_path: &PathBuf) -> Result<()> {
@@ -235,50 +236,27 @@ impl Cgroup {
         Ok(())
     }
 
+    /// Kill every sandbox managed by this Faber cgroup. Service shutdown only:
+    /// individual requests kill their own request cgroup instead.
     pub fn kill_active_tasks() -> Result<()> {
         let path = Self::get_faber_cgroup_path()?;
-        let mut task_paths = Vec::new();
-        for entry in read_dir(path).map_err(|e| FaberError::Generic {
-            message: format!("Failed to enumerate active task cgroups: {e}"),
-        })? {
-            let entry = entry.map_err(|e| FaberError::Generic {
-                message: format!("Failed to inspect active task cgroup: {e}"),
-            })?;
-            if entry.file_type().is_ok_and(|kind| kind.is_dir())
-                && entry.file_name().to_string_lossy().starts_with("task-")
-            {
-                task_paths.push(entry.path());
-                let kill_path = entry.path().join("cgroup.kill");
-                if let Err(error) = write(&kill_path, "1")
-                    && error.kind() != std::io::ErrorKind::NotFound
-                {
-                    return Err(FaberError::WriteFile {
-                        e: error,
-                        details: format!("Failed to kill task cgroup at {}", kill_path.display()),
-                    });
-                }
-            }
+        let sandboxes = Self::sandbox_cgroups(&path);
+        for sandbox in &sandboxes {
+            request::kill_cgroup_tree(sandbox);
         }
-        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
-        for task_path in task_paths {
-            while std::time::Instant::now() < deadline {
-                let populated = read_to_string(task_path.join("cgroup.events"))
-                    .is_ok_and(|contents| contents.lines().any(|line| line == "populated 1"));
-                if !populated {
-                    if let Err(error) = remove_dir(&task_path)
-                        && error.kind() != std::io::ErrorKind::NotFound
-                    {
-                        debug!(path = %task_path.display(), %error, "task cgroup cleanup deferred");
-                    }
-                    break;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(10));
+        for sandbox in sandboxes {
+            if let Err(error) = request::remove_cgroup_tree(&sandbox) {
+                debug!(path = %sandbox.display(), %error, "sandbox cgroup cleanup deferred");
             }
         }
         Ok(())
     }
 
-    pub fn create_task_cgroup(&self, faber_cgroup_path: &Path) -> Result<TaskCgroup> {
-        TaskCgroup::new(self.config.clone(), faber_cgroup_path)
+    pub(crate) fn create_request_cgroup(&self, faber_cgroup_path: &Path) -> Result<RequestCgroup> {
+        RequestCgroup::new(faber_cgroup_path)
+    }
+
+    pub fn create_task_cgroup(&self, request_cgroup_path: &Path) -> Result<TaskCgroup> {
+        TaskCgroup::new(self.config.clone(), request_cgroup_path)
     }
 }

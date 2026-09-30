@@ -84,10 +84,11 @@ async fn api_rejects_parallel_fanout_before_execution() {
         response,
         Err((axum::http::StatusCode::UNPROCESSABLE_ENTITY, _))
     ));
-    assert!(task_cgroups().is_empty());
+    assert!(sandbox_cgroups().is_empty());
 }
 
-fn task_cgroups() -> Vec<PathBuf> {
+/// Request cgroups (and any legacy top-level task cgroups) under Faber.
+fn sandbox_cgroups() -> Vec<PathBuf> {
     let Some(faber_path) = faber_cgroup_path() else {
         return Vec::new();
     };
@@ -96,8 +97,28 @@ fn task_cgroups() -> Vec<PathBuf> {
         .flatten()
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))
         .filter(|path| {
-            path.file_name()
-                .is_some_and(|name| name.to_string_lossy().starts_with("task-"))
+            path.file_name().is_some_and(|name| {
+                let name = name.to_string_lossy();
+                name.starts_with("req-") || name.starts_with("task-")
+            })
+        })
+        .collect()
+}
+
+/// Task cgroups that currently exist beneath any request cgroup.
+fn task_cgroups() -> Vec<PathBuf> {
+    sandbox_cgroups()
+        .into_iter()
+        .flat_map(|request| {
+            std::fs::read_dir(&request)
+                .into_iter()
+                .flatten()
+                .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+                .filter(|path| {
+                    path.file_name()
+                        .is_some_and(|name| name.to_string_lossy().starts_with("task-"))
+                })
+                .collect::<Vec<_>>()
         })
         .collect()
 }
@@ -144,13 +165,13 @@ async fn aborting_an_api_request_still_cleans_the_detached_runtime() {
     );
 
     for _ in 0..400 {
-        if task_cgroups().is_empty() {
+        if sandbox_cgroups().is_empty() {
             return;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     panic!(
         "detached runtime leaked task cgroups after its wall timeout: {:?}",
-        task_cgroups()
+        sandbox_cgroups()
     );
 }

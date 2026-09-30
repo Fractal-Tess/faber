@@ -26,7 +26,7 @@ kernel and CI environments; it is not a proof against unknown kernel defects.
 | Syscalls | Every syscall entry in `compile_v1` and `native_v1` is invoked directly and must terminate with `SIGSYS`/`policy_violation` |
 | Network | Interface inventory, IPv4/IPv6 route tables, external nonblocking connects, resolver-file absence, native socket denial, unique net namespace per runtime |
 | Memory and processes | Real OOM kill with `memory.events`, swap disabled, fork exhaustion with `pids.events`, peak values, cgroup cleanup |
-| Timeout teardown | Atomic `cgroup.kill`, fork-successor stdout holders, bounded pipe grace, overall execution deadline, no leaked task cgroups |
+| Timeout teardown | Atomic `cgroup.kill`, fork-successor stdout holders, bounded pipe grace, overall execution deadline scoped to its own request cgroup, no leaked request or task cgroups |
 | CPU and rlimits | `cpu.max` throttling counters, independent `RLIMIT_CPU`, `EMFILE`, `EFBIG`, stack signal, zero core files |
 | I/O | stdout/stderr floods, binary-size caps, truncation reporting, concurrent stdin/stdout, large parallel result transport |
 | Lifecycle | Timeout, signal, output kill, policy kill, setup failure, detached API request, cgroup/root cleanup, concurrent distinct cgroups |

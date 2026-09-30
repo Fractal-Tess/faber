@@ -33,10 +33,10 @@ impl Drop for TaskCgroup {
 }
 
 impl TaskCgroup {
-    pub fn new(config: CgroupConfig, faber_cgroup_path: &Path) -> Result<Self> {
+    pub fn new(config: CgroupConfig, request_cgroup_path: &Path) -> Result<Self> {
         let task_id = generate_random_string(16);
         let task_cgroup_path =
-            faber_cgroup_path.join(format!("task-{}-{task_id}", std::process::id()));
+            request_cgroup_path.join(format!("task-{}-{task_id}", std::process::id()));
 
         create_dir_all(&task_cgroup_path).map_err(|e| FaberError::CreateDir {
             e,

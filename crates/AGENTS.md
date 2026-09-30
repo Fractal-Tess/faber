@@ -36,6 +36,7 @@ crates/
         ├── lib.rs           # Public API exports
         ├── cgroup/          # Cgroups v2 resource limits
         │   ├── core.rs      # Cgroup hierarchy and aggregate limits
+        │   ├── request.rs   # Per-request cgroup subtree and recursive kill
         │   └── task.rs      # Per-task cgroup management
         ├── container/       # Namespace isolation
         │   ├── core.rs      # Container struct, pivot_root
@@ -118,8 +119,8 @@ pub enum FaberError {
 
 ### Cgroup v2 Requirements
 ```rust
-// Cgroup path format
-/sys/fs/cgroup/faber/task-{id}/
+// Cgroup path format: one request cgroup per execution, one task cgroup per task
+/sys/fs/cgroup/faber/req-{id}/task-{id}/
 
 // Required controllers
 echo "+cpu +memory +pids" > /sys/fs/cgroup/faber/cgroup.subtree_control

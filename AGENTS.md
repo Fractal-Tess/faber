@@ -149,7 +149,7 @@ RUN apt-get update && apt-get install -y \
 - Use type aliases, never interfaces (TypeScript)
 - Run `cargo build` before commit (Rust validation)
 - Use TaskBuilder for complex task sequences (SDK)
-- Clean up cgroup directories after testing (`/sys/fs/cgroup/faber/task-*`)
+- Clean up cgroup directories after testing (`/sys/fs/cgroup/faber/req-*/task-*`)
 
 ---
 

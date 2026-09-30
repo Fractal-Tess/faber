@@ -658,19 +658,24 @@ fn container_roots() -> HashSet<PathBuf> {
         .collect()
 }
 
-fn assert_no_task_cgroups() {
-    let leaked: Vec<PathBuf> = std::fs::read_dir(faber_cgroup_path())
+fn sandbox_cgroups() -> Vec<PathBuf> {
+    std::fs::read_dir(faber_cgroup_path())
         .expect("failed to inspect the Faber cgroup")
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))
         .filter(|path| {
-            path.file_name()
-                .is_some_and(|name| name.to_string_lossy().starts_with("task-"))
+            path.file_name().is_some_and(|name| {
+                let name = name.to_string_lossy();
+                name.starts_with("req-") || name.starts_with("task-")
+            })
         })
-        .collect();
+        .collect()
+}
 
+fn assert_no_task_cgroups() {
+    let leaked = sandbox_cgroups();
     assert!(
         leaked.is_empty(),
-        "task cgroups leaked after execution: {leaked:?}"
+        "request or task cgroups leaked after execution: {leaked:?}"
     );
 }
 
@@ -737,6 +742,54 @@ fn namespace_inode(name: &str) -> u64 {
     std::fs::metadata(format!("/proc/self/ns/{name}"))
         .unwrap_or_else(|error| panic!("failed to inspect outer {name} namespace: {error}"))
         .ino()
+}
+
+#[test]
+fn overall_deadline_kills_only_the_expired_request() {
+    let _guard = lock_security_tests();
+    let expired = std::thread::spawn(|| {
+        RuntimeBuilder::default()
+            .with_task_group(
+                (0..4)
+                    .map(|_| ExecutionStep::Single(task("/bin/sleep", &["1"])))
+                    .collect(),
+            )
+            .with_timeout(std::time::Duration::from_secs(5))
+            .with_overall_timeout(std::time::Duration::from_millis(2500))
+            .build()
+            .execute()
+    });
+
+    // Start the second request shortly before the first one's deadline so
+    // its task is running when the deadline handler fires.
+    std::thread::sleep(std::time::Duration::from_millis(1800));
+    let survivor = RuntimeBuilder::default()
+        .with_task_group(vec![ExecutionStep::Single(task(
+            "/bin/sh",
+            &["-c", "echo start; sleep 1.5; echo finished"],
+        ))])
+        .with_timeout(std::time::Duration::from_secs(5))
+        .build()
+        .execute()
+        .expect("surviving request failed");
+    let _ = expired.join().expect("expired request panicked");
+
+    let RuntimeResult::Success(results) = survivor else {
+        panic!("container setup failed: {survivor:?}");
+    };
+    let TaskResult::Completed {
+        stdout,
+        exit_code,
+        stats,
+        ..
+    } = single_result(&results[0])
+    else {
+        panic!("surviving task failed: {:?}", results[0]);
+    };
+    assert_eq!(stats.outcome, TaskOutcome::Exited, "{stats:?}");
+    assert_eq!(*exit_code, 0);
+    assert_eq!(stdout, "start\nfinished\n");
+    assert_no_task_cgroups();
 }
 
 #[test]

@@ -61,7 +61,7 @@ cleanup() {
     echo "[4/4] Cleaning up..."
     sudo docker stop $CONTAINER_ID > /dev/null 2>&1 || true
     sudo docker rm $CONTAINER_ID > /dev/null 2>&1 || true
-    sudo rm -rf /sys/fs/cgroup/faber/task-* 2>/dev/null || true
+    sudo find /sys/fs/cgroup/faber -mindepth 1 -depth -type d \( -name 'req-*' -o -name 'task-*' \) -exec rmdir {} + 2>/dev/null || true
     echo -e "${GREEN}✓ Cleanup complete${NC}"
 }
 
