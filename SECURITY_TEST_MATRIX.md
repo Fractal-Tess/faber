@@ -11,7 +11,7 @@ kernel and CI environments; it is not a proof against unknown kernel defects.
 | Local NixOS host | x86_64, Linux 7.1.3, cgroup v2, rootful Docker 29.6.1 | Docker-only development, focused acceptance, repeated stress |
 | Local CPU | AMD Ryzen 7 5825U, 8 cores/16 threads, AMD-V, `/dev/kvm` available | Native x86_64 execution; KVM is available but no Faber microVM backend exists |
 | GitHub hosted VM | Ubuntu 24.04, x86_64, rootful privileged Docker | Fresh-VM full suite and five-round adversarial repetition on every push/PR |
-| Production target | `x86_64-unknown-linux-musl` | Compile check and production container execution |
+| Production target | Debian glibc (`x86_64-unknown-linux-gnu`, plus the CI image's configured multi-arch platforms) | Compile check and production container execution |
 | Multi-architecture images | linux/amd64 and linux/arm64 | Build-only for ARM64; ARM64 sandbox behavior is not runtime-tested |
 
 ## Executable attack coverage

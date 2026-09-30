@@ -1,5 +1,5 @@
 # --- Builder stage ---
-FROM rust:1.89.0-slim AS builder
+FROM rust:1.89.0-slim AS chef
 
 WORKDIR /faber
 
@@ -8,10 +8,18 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
+RUN cargo install cargo-chef --locked
 
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
+COPY --from=planner /faber/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
 
-RUN cargo build --release 
+RUN cargo build --release
 
 FROM debian:bookworm-slim
 
