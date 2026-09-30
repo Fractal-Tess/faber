@@ -2511,18 +2511,23 @@ fn pids_cgroup_enforces_the_process_limit() {
     assert!(stats.cleanup_succeeded);
 }
 
-/// Wait for this process's single live request cgroup to appear.
+/// Wait for this process's single live request cgroup to be in use: its
+/// limits are written before the jailer is started, and the jailer joins
+/// the supervisor leaf once it has read its job.
 fn wait_for_request_cgroup() -> PathBuf {
-    for _ in 0..200 {
-        if let Some(request) = sandbox_cgroups().into_iter().find(|path| {
+    for _ in 0..500 {
+        let request = sandbox_cgroups().into_iter().find(|path| {
             path.file_name()
                 .is_some_and(|name| name.to_string_lossy().starts_with("req-"))
-        }) {
+                && std::fs::read_to_string(path.join("supervisor/cgroup.procs"))
+                    .is_ok_and(|procs| !procs.trim().is_empty())
+        });
+        if let Some(request) = request {
             return request;
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    panic!("request cgroup never appeared");
+    panic!("no request cgroup came into use");
 }
 
 #[test]
@@ -2566,20 +2571,6 @@ fn request_cgroup_limits_cover_its_widest_step() {
     );
     // 16 per task plus its supervisor and init, plus the jailer.
     assert_eq!(read("pids.max"), "55");
-    // The jailer joins the supervisor leaf once it has read its job, a
-    // moment after the controller created the cgroup.
-    let jailer_joined = (0..200).any(|_| {
-        let joined = std::fs::read_to_string(request.join("supervisor/cgroup.procs"))
-            .is_ok_and(|procs| !procs.trim().is_empty());
-        if !joined {
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        joined
-    });
-    assert!(
-        jailer_joined,
-        "the jailer never joined the request's supervisor cgroup"
-    );
 
     let result = runtime
         .join()
