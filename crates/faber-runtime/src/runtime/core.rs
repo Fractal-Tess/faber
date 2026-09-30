@@ -628,7 +628,7 @@ impl Runtime {
                     return Err(FaberError::WriteFile {
                         e: std::io::Error::last_os_error(),
                         details: format!(
-                            "Refused task directory '{}' because it is not safely beneath the workspace",
+                            "Refused task directory '{}' because it is not safely beneath the workspace without following links",
                             parent.display()
                         ),
                     });
