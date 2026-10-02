@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "faber"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 
 [dependencies]
@@ -13,7 +13,7 @@ faber-runtime = { path = "crates/faber-runtime" }
 faber-store = { path = "crates/faber-store", features = ["full"] }
 tokio = { version = "1.47", features = ["rt-multi-thread", "macros"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 [profile.release]
 opt-level = 3

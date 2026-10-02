@@ -182,7 +182,47 @@ impl Config {
             max_concurrent_uploads: settings.positive("MAX_CONCURRENT_UPLOADS", 4)?,
             default_sandbox_profile,
             allowed_sandbox_profiles,
+            readonly_paths: Self::load_readonly_paths(settings)?,
+            cache: faber_api::CacheLimits {
+                max_entries: settings.positive("CACHE_MAX_ENTRIES", 1024)?,
+                max_bytes: settings.positive("CACHE_MAX_BYTES", 64 * 1024 * 1024)?,
+                ttl: Duration::from_secs(settings.positive("CACHE_TTL_SECS", 300)?),
+            },
         })
+    }
+
+    /// `SANDBOX_READONLY_PATHS`: comma-separated absolute paths of this image
+    /// that sandboxes see read-only. Replaces the default list.
+    fn load_readonly_paths(
+        settings: &Settings<impl Fn(&str) -> Option<String>>,
+    ) -> Result<Vec<String>, ConfigError> {
+        const FORBIDDEN: [&str; 6] = ["/", "/proc", "/sys", "/dev", "/tmp", "/faber"];
+        let default = faber_runtime::DEFAULT_READONLY_PATHS.join(",");
+        settings
+            .string("SANDBOX_READONLY_PATHS", &default)
+            .split(',')
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .map(|path| {
+                let normalized = path.trim_end_matches('/');
+                let valid = path.starts_with('/')
+                    && !path.split('/').any(|component| component == "..")
+                    && !FORBIDDEN.iter().any(|forbidden| {
+                        normalized == forbidden.trim_end_matches('/')
+                            || (forbidden.len() > 1
+                                && normalized.starts_with(&format!("{forbidden}/")))
+                    });
+                if valid {
+                    Ok(path.to_string())
+                } else {
+                    Err(format!(
+                        "SANDBOX_READONLY_PATHS: {path:?} must be an absolute path outside \
+                         /proc, /sys, /dev, /tmp and /faber"
+                    )
+                    .into())
+                }
+            })
+            .collect()
     }
 
     fn load_sandbox_profile(name: &str, value: &str) -> Result<SandboxProfile, ConfigError> {

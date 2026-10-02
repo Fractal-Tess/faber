@@ -8,14 +8,26 @@ use config::{Config, StoreBackend};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "faber=info,faber_api=info,faber_runtime=info".into()),
-        )
-        .try_init()?;
+    let log_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| "faber=info,faber_api=info,faber_runtime=info".into());
+    // LOG_FORMAT=json emits one JSON object per line for log collectors.
+    if std::env::var("LOG_FORMAT").is_ok_and(|format| format.eq_ignore_ascii_case("json")) {
+        tracing_subscriber::fmt()
+            .json()
+            .with_env_filter(log_filter)
+            .try_init()?;
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(log_filter)
+            .try_init()?;
+    }
 
     let config = Config::from_env()?;
+    if config.api_key.split(',').any(|key| key.trim().len() < 32) {
+        tracing::warn!(
+            "an API key is shorter than 32 characters; generate keys with `openssl rand -hex 32`"
+        );
+    }
     let limits = &config.execution_limits;
     let longest_request = limits
         .wall_timeout
@@ -30,6 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         );
     }
     Runtime::initialize()?;
+    Runtime::reclaim_stale_sandboxes()?;
     Runtime::configure_service_limits(
         &config.execution_limits.memory_max,
         config.execution_limits.pids_max,

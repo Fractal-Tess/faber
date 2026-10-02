@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::{
     handlers,
-    middleware::api_key_middleware,
+    middleware::{api_key_middleware, request_log_middleware},
     state::{AppState, ExecutionLimits},
 };
 
@@ -38,13 +38,16 @@ pub fn build_router(
             "/file/{id}",
             get(handlers::download_file).delete(handlers::delete_file),
         )
+        .route("/metrics", get(handlers::metrics))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             api_key_middleware,
         ))
         .with_state(state);
 
-    public_routes.merge(protected_routes)
+    public_routes
+        .merge(protected_routes)
+        .layer(middleware::from_fn(request_log_middleware))
 }
 
 #[cfg(test)]
@@ -86,6 +89,80 @@ mod tests {
             .body(Body::from(multipart_body(size)))
             .unwrap();
         router.oneshot(request).await.unwrap().status()
+    }
+
+    #[tokio::test]
+    async fn every_listed_key_is_accepted_and_responses_carry_a_request_id() {
+        let router = build_router(
+            "old-key, new-key".to_string(),
+            false,
+            create_store(StoreConfig::default()),
+            ExecutionLimits::default(),
+        );
+        let metrics = |key: &str| {
+            Request::get("/metrics")
+                .header("Authorization", format!("Bearer {key}"))
+                .body(Body::empty())
+                .unwrap()
+        };
+        for key in ["old-key", "new-key"] {
+            let response = router.clone().oneshot(metrics(key)).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{key}");
+            assert!(response.headers().contains_key("x-request-id"));
+        }
+        for key in ["old-key, new-key", "old", ""] {
+            let response = router.clone().oneshot(metrics(key)).await.unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{key:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn metrics_and_health_report_service_state() {
+        let router = build_router(
+            "test-key".to_string(),
+            false,
+            create_store(StoreConfig::default()),
+            ExecutionLimits {
+                max_concurrency: 7,
+                ..ExecutionLimits::default()
+            },
+        );
+        let text = |response: axum::response::Response| async {
+            let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+                .await
+                .unwrap();
+            String::from_utf8(bytes.to_vec()).unwrap()
+        };
+
+        let rejected = Request::post("/execute")
+            .header("Authorization", "Bearer test-key")
+            .header("Content-Type", "application/json")
+            .body(Body::from("[]"))
+            .unwrap();
+        assert_eq!(
+            router.clone().oneshot(rejected).await.unwrap().status(),
+            StatusCode::BAD_REQUEST
+        );
+
+        let metrics = Request::get("/metrics")
+            .header("Authorization", "Bearer test-key")
+            .body(Body::empty())
+            .unwrap();
+        let metrics = text(router.clone().oneshot(metrics).await.unwrap()).await;
+        assert!(metrics.contains("faber_execution_slots 7"), "{metrics}");
+        assert!(
+            metrics.contains("faber_execution_slots_in_use 0"),
+            "{metrics}"
+        );
+        assert!(
+            metrics.contains("faber_execute_responses_total{status=\"400\"} 1"),
+            "{metrics}"
+        );
+
+        let health = Request::get("/health").body(Body::empty()).unwrap();
+        let health = text(router.oneshot(health).await.unwrap()).await;
+        assert!(health.contains("\"status\":\"ok\""), "{health}");
+        assert!(health.contains(env!("CARGO_PKG_VERSION")), "{health}");
     }
 
     #[tokio::test]

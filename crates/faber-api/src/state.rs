@@ -1,4 +1,5 @@
-use crate::cache::ExecutionCache;
+use crate::cache::{CacheLimits, ExecutionCache};
+use crate::metrics::Metrics;
 use faber_runtime::SandboxProfile;
 use faber_store::FileStore;
 use std::sync::Arc;
@@ -28,6 +29,10 @@ pub struct ExecutionLimits {
     pub max_concurrent_uploads: usize,
     pub default_sandbox_profile: SandboxProfile,
     pub allowed_sandbox_profiles: Vec<SandboxProfile>,
+    /// Paths of the service image that sandboxes see read-only.
+    pub readonly_paths: Vec<String>,
+    /// Bounds of the result cache used when caching is enabled.
+    pub cache: CacheLimits,
 }
 
 impl Default for ExecutionLimits {
@@ -49,6 +54,10 @@ impl Default for ExecutionLimits {
             max_concurrent_uploads: 4,
             default_sandbox_profile: SandboxProfile::CompileV2,
             allowed_sandbox_profiles: vec![SandboxProfile::CompileV2, SandboxProfile::NativeV2],
+            readonly_paths: faber_runtime::DEFAULT_READONLY_PATHS
+                .map(String::from)
+                .to_vec(),
+            cache: CacheLimits::default(),
         }
     }
 }
@@ -57,14 +66,18 @@ impl Default for ExecutionLimits {
 pub struct AppState {
     pub cache: ExecutionCache,
     pub file_store: Arc<dyn FileStore>,
-    pub api_key: String,
+    /// Every key that is currently accepted.
+    pub api_keys: Arc<[String]>,
     pub cache_enabled: bool,
+    pub metrics: Arc<Metrics>,
     pub execution_limits: ExecutionLimits,
     pub execution_slots: Arc<Semaphore>,
     pub upload_slots: Arc<Semaphore>,
 }
 
 impl AppState {
+    /// `api_key` may hold several comma-separated keys, all of them accepted,
+    /// so that a key can be rotated without downtime.
     pub fn new(
         api_key: String,
         cache_enabled: bool,
@@ -80,10 +93,16 @@ impl AppState {
                     .max_concurrent_uploads
                     .min(Semaphore::MAX_PERMITS),
             )),
-            cache: ExecutionCache::new(),
+            cache: ExecutionCache::new(execution_limits.cache),
             file_store,
-            api_key,
+            api_keys: api_key
+                .split(',')
+                .map(str::trim)
+                .filter(|key| !key.is_empty())
+                .map(str::to_string)
+                .collect(),
             cache_enabled,
+            metrics: Arc::new(Metrics::default()),
             execution_limits,
         }
     }
