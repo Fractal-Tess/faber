@@ -5,8 +5,8 @@ use axum::{
     response::{IntoResponse, Json, Response},
 };
 use faber_runtime::{
-    CancellationToken, CgroupConfigBuilder, ExecutionStep, FaberError, Runtime, RuntimeBuilder,
-    RuntimeResult, TaskGroup, TaskGroupResult,
+    CancellationToken, CgroupConfigBuilder, ContainerConfigBuilder, ExecutionStep, FaberError,
+    Runtime, RuntimeBuilder, RuntimeResult, TaskGroup, TaskGroupResult,
 };
 use tokio::sync::OwnedSemaphorePermit;
 
@@ -65,6 +65,24 @@ impl Drop for CancelOnDrop {
 
 pub async fn execute(
     State(app_state): State<AppState>,
+    body: Json<TaskGroup>,
+) -> Result<Json<TaskGroupResult>, ExecuteError> {
+    let started = std::time::Instant::now();
+    let metrics = app_state.metrics.clone();
+    let result = run(app_state, body).await;
+    let status = match &result {
+        Ok(Json(task_group_result)) => {
+            metrics.record_tasks(task_group_result);
+            StatusCode::OK
+        }
+        Err(error) => error.status(),
+    };
+    metrics.record_response(status.as_u16(), started.elapsed());
+    result
+}
+
+async fn run(
+    app_state: AppState,
     Json(mut task_group): Json<TaskGroup>,
 ) -> Result<Json<TaskGroupResult>, ExecuteError> {
     if task_group.is_empty() {
@@ -115,6 +133,7 @@ pub async fn execute(
             )
         })?;
         if let Some(cached_result) = app_state.cache.try_from_hash(&task_hash) {
+            app_state.metrics.record_cache_hit();
             return Ok(Json(cached_result));
         }
         Some((app_state.cache.clone(), task_hash))
@@ -153,9 +172,13 @@ async fn execute_uncached(
         .build();
     let cancellation = CancellationToken::new();
     let _cancel_on_drop = CancelOnDrop(cancellation.clone());
+    let container_config = ContainerConfigBuilder::new()
+        .with_ro_bind_mounts(limits.readonly_paths)
+        .build();
     let runtime = RuntimeBuilder::default()
         .with_task_group(task_group)
         .with_cgroup_config(cgroup_config)
+        .with_container_config(container_config)
         .with_timeout(limits.wall_timeout)
         .with_cpu_time_limit(limits.cpu_time_limit)
         .with_output_limit(limits.output_limit)

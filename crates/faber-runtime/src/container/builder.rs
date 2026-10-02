@@ -14,8 +14,14 @@ impl ContainerConfigBuilder {
         }
     }
 
-    pub fn with_ro_bind_mounts(mut self, ro_bind_mounts: Vec<&'static str>) -> Self {
-        self.config.bind_mounts_ro = ro_bind_mounts.into_iter().map(String::from).collect();
+    /// Host paths (directories or files) the sandbox sees read-only at the
+    /// same location. Paths that do not exist are skipped.
+    pub fn with_ro_bind_mounts<I, S>(mut self, ro_bind_mounts: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.config.bind_mounts_ro = ro_bind_mounts.into_iter().map(Into::into).collect();
         self
     }
 

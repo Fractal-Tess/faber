@@ -147,10 +147,28 @@ impl Container {
                 .container_root_dir
                 .join(source.trim_start_matches('/'));
 
-            create_dir_all(&target).map_err(|e| FaberError::CreateDir {
-                e,
-                details: "Failed to create target directory".to_string(),
-            })?;
+            // A bind mount needs a mount point of the same kind as its source.
+            if Path::new(source).is_dir() {
+                create_dir_all(&target).map_err(|e| FaberError::CreateDir {
+                    e,
+                    details: format!("Failed to create mount point for {source}"),
+                })?;
+            } else {
+                if let Some(parent) = target.parent() {
+                    create_dir_all(parent).map_err(|e| FaberError::CreateDir {
+                        e,
+                        details: format!("Failed to create the directory holding {source}"),
+                    })?;
+                }
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&target)
+                    .map_err(|e| FaberError::CreateDir {
+                        e,
+                        details: format!("Failed to create mount point for {source}"),
+                    })?;
+            }
 
             mount(
                 Some(source.as_str()),

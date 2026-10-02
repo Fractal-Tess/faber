@@ -10,7 +10,7 @@ mod utils;
 
 pub use cancel::CancellationToken;
 pub use cgroup::CgroupConfigBuilder;
-pub use container::ContainerConfigBuilder;
+pub use container::{ContainerConfigBuilder, DEFAULT_READONLY_PATHS};
 pub use error::FaberError;
 
 pub use result::{
