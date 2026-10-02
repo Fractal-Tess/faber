@@ -29,7 +29,11 @@ Commands:
   test-security  scripts/dev.sh test-security inside the guest
   test-stress    scripts/dev.sh test-stress inside the guest (STRESS_ROUNDS)
   test-docker    scripts/test-docker.sh against the production image
+  test-toolchains  Compile and run C, C++, Python, Node.js, Java, Go and Rust
+                 programs through the default sandbox profile
   up             Serve the dev API on 127.0.0.1:$FABER_PORT until interrupted
+  soak           Mixed concurrent load against the production compose file
+                 (SOAK_SECONDS, SOAK_WORKERS), then check that nothing leaked
   demo           Serve demo/compose.yaml (production image) on
                  127.0.0.1:${FABER_PORT:-3300} until interrupted
   exec <script>  Run a host script as root inside the guest, from /faber-src
@@ -164,7 +168,7 @@ case "$command" in
         printf 'Removed %s\n' "$STATE_DIR"
         exit 0
         ;;
-    prepare | check | test | test-security | test-stress | test-docker | up | demo | exec | shell) ;;
+    prepare | check | test | test-security | test-stress | test-docker | test-toolchains | soak | up | demo | exec | shell) ;;
     *)
         usage
         exit 2
@@ -193,6 +197,7 @@ $COMPOSE build faber
 $COMPOSE run --rm --no-TTY faber cargo test --workspace --no-run
 docker build -f docker/prod/Dockerfile -t faber-test:latest .
 docker tag faber-test:latest vgfractal/faber:latest
+docker build -f docker/toolchains/Dockerfile -t faber-toolchains:latest docker/toolchains
 EOF
         run_job online "$limit"
         ;;
@@ -208,6 +213,37 @@ EOF
         cat >"$job" <<EOF
 $offline_env
 exec ./scripts/test-docker.sh
+EOF
+        run_job "$network" "$limit"
+        ;;
+    test-toolchains)
+        cat >"$job" <<EOF
+$offline_env
+exec ./scripts/test-toolchains.sh
+EOF
+        run_job "$network" "$limit"
+        ;;
+    soak)
+        # The production compose file as shipped, read-only root included.
+        cat >"$job" <<EOF
+set -Eeuo pipefail
+export API_KEY=soak-test-key FABER_IMAGE=faber-test:latest
+export SOAK_SECONDS=${SOAK_SECONDS:-120} SOAK_WORKERS=${SOAK_WORKERS:-16}
+prod='docker compose -f docker/prod/docker-compose.yaml'
+\$prod up --detach --no-build
+trap '\$prod down >/dev/null 2>&1' EXIT
+for _ in \$(seq 1 60); do curl -fsS http://localhost:3000/api/v1/health >/dev/null 2>&1 && break; sleep 1; done
+./scripts/soak.sh || {
+    docker inspect faber-prod --format 'container: {{.State.Status}} restarts={{.RestartCount}} oom_killed={{.State.OOMKilled}} exit={{.State.ExitCode}}'
+    \$prod logs faber 2>&1 | grep -v 'faber_api::middleware' | tail -40
+    dmesg | grep -iE 'oom|killed process|segfault' | tail -10
+    exit 1
+}
+echo '--- processes left in the container'
+\$prod top faber | tail -n +2
+leftover="\$(\$prod exec -T faber sh -c 'find /sys/fs/cgroup -type d -name "req-*" | wc -l; ls /tmp/faber 2>/dev/null | wc -l' | tr '\n' ' ')"
+echo "request cgroups and sandbox roots left: \$leftover"
+[[ "\$leftover" == "0 0 " ]]
 EOF
         run_job "$network" "$limit"
         ;;
