@@ -33,17 +33,21 @@ Implemented:
 - content-addressed memory, filesystem, and hybrid file stores
 - Docker-only hot reload, testing, health checks, and debugger attachment
 
-Not production-ready:
+Also implemented since: a re-executed jailer per request, per-request host
+identities, per-task PID namespaces, allowlist seccomp profiles, request-charged
+supervisors, a bounded result cache, metrics, and adversarial, toolchain and
+production-image tests in CI on x86_64 and ARM64.
 
-- seccomp profiles are service-controlled and cover known namespace/mount/x32
-  bypasses, but remain denylists rather than exhaustive syscall allowlists
-- disposable-VM race/concurrency stress remains incomplete
+Known limits of the current release:
+
+- one isolation tier: namespaces on a shared kernel (see Phase 5)
+- one API key scope: no tenants, per-key quotas or rate limits
+- the seccomp allowlist is derived from the Docker default profile, not traced
+  from Faber's workloads
 - library callers may opt out of memory ceilings, while the API service enforces
   finite memory, PID, CPU, wall-time, CPU-time, and output defaults
-- the in-memory execution cache has no TTL, bound, persistence, single-flight,
-  tenant scope, or cacheability contract
-- resource enforcement, timeout, cleanup, and breakout behavior lack adversarial
-  tests in CI
+- the result cache is in-memory, per instance, without single-flight
+- stored files cannot be used as task inputs yet
 
 Whole-execution caching is disabled by default until an explicit cacheability
 contract exists. Replaying `date`, random output, external state, or stale

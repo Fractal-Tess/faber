@@ -5,8 +5,15 @@ The tested hardware, attack families, and explicit exclusions are recorded in
 
 Faber's namespace backend runs untrusted processes in Linux namespaces and
 cgroup v2. It shares the outer host kernel, so it is not equivalent to a
-microVM and cannot contain a host-kernel vulnerability. Faber is not yet ready
-for public hostile workloads; the remaining release gates are tracked in
+microVM and cannot contain a host-kernel vulnerability.
+
+**Isolation tier.** Kernel-shared isolation, the class of a hardened
+container: suitable for running untrusted code from authenticated users on a
+host dedicated to Faber. It is not, on its own, a boundary for anonymous
+public workloads or between mutually hostile tenants; put each trust domain in
+its own VM for that. The Faber container is privileged, so a sandbox escape is
+a compromise of its host. Deployment guidance is in
+[`OPERATIONS.md`](OPERATIONS.md); stronger backends are tracked in
 [`ROADMAP.md`](ROADMAP.md).
 
 ## Threat model

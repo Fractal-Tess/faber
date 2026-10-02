@@ -32,35 +32,39 @@ Faber is an experimental task execution runtime that runs commands in Linux name
 
 ### Running Faber
 
-1. **Build a custom image** with your required tools:
-
-```dockerfile
-FROM vgfractal/faber AS faber
-FROM debian:latest
-
-RUN apt update && apt install -y \
-    gcc \
-    make \
-    libc-dev
-
-WORKDIR /opt
-COPY --from=faber /opt/faber /opt
-
-EXPOSE 3000/tcp
-ENTRYPOINT ["./faber"]
-```
-
-2. **Run the container**:
+1. **Start the service.** The published image contains GCC, G++ and Make. An
+   API key is required; generate one with `openssl rand -hex 32`.
 
 ```bash
-docker build -t my-faber .
-docker run --privileged --cgroupns=host -p 3000:3000 my-faber
+docker run -d --name faber --init \
+  --privileged --cgroupns=host \
+  -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+  --read-only --tmpfs /tmp:size=64m \
+  --memory 8g --memory-swap 8g --pids-limit 4096 \
+  -e API_KEY="$API_KEY" \
+  -p 127.0.0.1:3000:3000 \
+  vgfractal/faber:latest
+```
+
+   `docker/prod/docker-compose.yaml` is the same deployment as a Compose file.
+   Put a TLS-terminating reverse proxy in front before exposing it beyond
+   localhost; see [OPERATIONS.md](OPERATIONS.md).
+
+2. **Add toolchains** by extending the image. Anything under `/usr`, `/bin`
+   and `/lib` is visible to tasks read-only
+   (`docker/toolchains/Dockerfile` adds Python, Node.js, Java, Go and Rust):
+
+```dockerfile
+FROM vgfractal/faber:latest
+RUN apt-get update && apt-get install -y --no-install-recommends python3 \
+    && rm -rf /var/lib/apt/lists/*
 ```
 
 3. **Execute a task**:
 
 ```bash
 curl -X POST http://localhost:3000/api/v1/execute \
+  -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '[
     {
@@ -69,6 +73,8 @@ curl -X POST http://localhost:3000/api/v1/execute \
     }
   ]'
 ```
+
+---
 
 ## 📖 Usage Examples
 
@@ -122,7 +128,20 @@ curl -X POST http://localhost:3000/api/v1/execute \
 GET /api/v1/health
 ```
 
-Returns the service health status.
+Returns `{"status":"ok","version":"..."}` without authentication. Once
+shutdown has begun it answers `503` with `"status":"shutting_down"`, so a load
+balancer stops routing to an instance that is draining.
+
+### Metrics
+
+```bash
+GET /api/v1/metrics   # Authorization: Bearer <key>
+```
+
+Prometheus text format: `/execute` responses by status, tasks by outcome,
+request duration, task slots configured and in use, and result-cache hits and
+entries. Every response carries an `X-Request-Id` header that also appears in
+the request log line.
 
 ### Execute Tasks
 
@@ -170,10 +189,15 @@ is malformed or out of range; the error names the variable.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `API_KEY` | required | Key expected in the `Authorization` header (`Bearer <key>` or the raw key) |
+| `API_KEY` | required | Key expected in the `Authorization` header (`Bearer <key>` or the raw key). A comma-separated list accepts every listed key, so a key can be rotated without downtime |
 | `HOST` | `0.0.0.0` | Listen address |
 | `PORT` | `3000` | Listen port |
-| `CACHE_ENABLED` | `false` | Experimental whole-request memoization (`true`/`false`/`1`/`0`) |
+| `CACHE_ENABLED` | `false` | Whole-request memoization (`true`/`false`/`1`/`0`). Only for deterministic workloads: an identical request is answered from memory. Only requests whose every task exited 0 with complete output are remembered |
+| `CACHE_MAX_ENTRIES` | `1024` | Results held by the cache; the oldest is evicted first |
+| `CACHE_MAX_BYTES` | `67108864` | Output bytes held across all cached results |
+| `CACHE_TTL_SECS` | `300` | Age after which a cached result is discarded |
+| `LOG_FORMAT` | text | `json` writes one JSON object per log line |
+| `RUST_LOG` | `faber=info,faber_api=info,faber_runtime=info` | Log filter |
 | `SHUTDOWN_TIMEOUT_MS` | `5000` | How long in-flight requests may drain after SIGTERM; keep it below the container stop grace period (10 s for Docker) |
 
 ### Execution limits
@@ -194,6 +218,7 @@ is malformed or out of range; the error names the variable.
 | `EXECUTE_BODY_LIMIT_BYTES` | `1048576` | Maximum `/execute` request body |
 | `DEFAULT_SANDBOX_PROFILE` | `compile_v2` | Seccomp profile for tasks that do not name one |
 | `ALLOWED_SANDBOX_PROFILES` | `compile_v2,native_v2` | Profiles a request may select. `v2` profiles are allowlists (unlisted syscalls fail with `ENOSYS`); `v1` are the older denylists |
+| `SANDBOX_READONLY_PATHS` | `/bin,/lib,/lib64,/usr,/etc/alternatives,/etc/ld.so.cache,/etc/passwd,/etc/group` | Paths of the image that tasks see read-only. Replaces the default list; add what a toolchain keeps elsewhere, such as `/etc/java-17-openjdk` |
 | `SANDBOX_IDENTITY_BASE` | `100000` | First host UID/GID leased to requests |
 | `SANDBOX_IDENTITY_COUNT` | `65536` | Size of that range; give each Faber service on a kernel its own |
 
@@ -246,12 +271,11 @@ Faber consists of three main components:
 
 ## 📚 Documentation
 
-For detailed documentation, visit the [docs site](docs/) or check out:
-
-- [Getting Started Guide](docs/content/docs/getting-started.mdx)
-- [API Reference](docs/content/docs/api-reference.mdx)
-- [Configuration](docs/content/docs/configuration.mdx)
-- [Examples](docs/content/docs/examples.mdx)
+- [OPERATIONS.md](OPERATIONS.md) - deployment, sizing, monitoring and runbook
+- [SECURITY.md](SECURITY.md) - threat model, isolation invariants and how they are verified
+- [DEVELOPMENT.md](DEVELOPMENT.md) - development loop and the disposable test VM
+- [ROADMAP.md](ROADMAP.md) - what is planned and what is deliberately out of scope
+- [docs/](docs/) - the documentation site (API types, SDK, concepts)
 
 ## 🛠️ Development
 
@@ -287,36 +311,35 @@ faber/
 
 ## 🔐 Security
 
-Faber implements multiple layers of security:
+Faber runs every request in a namespace sandbox on the host kernel:
 
-- **Linux Namespaces** - Process, mount, network, and user namespace isolation
-- **Cgroups** - Resource limits for CPU, memory, and process counts
-- **Capability Dropping** - Minimal required capabilities
-- **Unprivileged Execution** - Tasks run as non-root users when possible
+- **Namespaces** - mount, network, UTS and IPC per request; PID and user per
+  task. Tasks have no network and see a per-process `/proc` and an empty `/sys`
+- **Identity** - each request runs as its own unprivileged host UID with no
+  capabilities, behind a re-executed jailer that holds none of the service's
+  memory or environment
+- **Seccomp** - allowlist profiles by default; violations kill the process
+- **Cgroups v2** - CPU, memory and process limits per task, per request and
+  for the whole service, plus rlimits and bounded output
+- **Authentication** - every route except `/health` requires the API key
 
-> **Note:** Currently requires root privileges for container setup. Authentication is not implemented - use in trusted networks or behind a reverse proxy.
+**Isolation tier.** This is kernel-shared isolation, the same class as a
+hardened container. It contains ordinary hostile programs and bounds their
+resource use; it does not protect against a Linux kernel vulnerability. For
+anonymous public workloads, run Faber inside a dedicated VM per trust domain.
+The threat model, verified invariants and residual risks are in
+[SECURITY.md](SECURITY.md); deployment and incident handling are in
+[OPERATIONS.md](OPERATIONS.md).
 
 ## 📊 Status
 
-### ✅ Implemented
+Tested on x86_64 and ARM64 with Linux 6.6 to 6.16 (5.8 is the minimum):
+sandbox acceptance and stress suites, a production-image smoke test, and C,
+C++, Python, Node.js, Java, Go and Rust toolchains under the default profile.
 
-- Container isolation (namespaces, cgroups)
-- Resource monitoring and limits
-- Sequential and parallel execution
-- Experimental whole-request memoization (disabled by default)
-- JavaScript/TypeScript SDK
-
-### 🚧 In Progress
-
-- Syscall filtering
-- Step caching
-- Unprivileged execution mode
-
-### 📋 Planned
-
-- Additional SDKs (Python, Go, PHP, Rust)
-- Enhanced documentation
-- Authentication support
+Not included: a gVisor or microVM backend, per-tenant keys and quotas, use of
+stored files as task inputs, and compile-artifact caching. See
+[ROADMAP.md](ROADMAP.md).
 
 ## 📄 License
 
