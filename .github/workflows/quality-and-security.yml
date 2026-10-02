@@ -67,9 +67,37 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run build
 
-  sandbox-adversarial:
-    name: Disposable VM sandbox acceptance
+  dependency-audit:
+    name: Dependency advisories
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
+
+  production-image:
+    name: Production image and toolchains
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Smoke-test the production image
+        run: ./scripts/test-docker.sh
+      - name: Run language toolchains through the default sandbox profile
+        run: ./scripts/test-toolchains.sh
+
+  sandbox-adversarial:
+    name: Sandbox acceptance (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4

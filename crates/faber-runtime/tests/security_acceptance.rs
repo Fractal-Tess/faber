@@ -221,7 +221,9 @@ int main(int argc, char **argv) {
         {"fsconfig", SYS_fsconfig},
         {"fsmount", SYS_fsmount},
         {"fsopen", SYS_fsopen},
+#ifdef SYS_fork
         {"fork", SYS_fork},
+#endif
         {"init_module", SYS_init_module},
         {"io_uring_setup", SYS_io_uring_setup},
         {"kcmp", SYS_kcmp},
@@ -252,7 +254,9 @@ int main(int argc, char **argv) {
         {"umount2", SYS_umount2},
         {"unshare", SYS_unshare},
         {"userfaultfd", SYS_userfaultfd},
+#ifdef SYS_vfork
         {"vfork", SYS_vfork},
+#endif
     };
     for (size_t index = 0; index < sizeof(entries) / sizeof(entries[0]); index++) {
         if (strcmp(argv[1], entries[index].name) == 0) {
@@ -1040,7 +1044,11 @@ fn security_probe_records_identity_namespaces_mounts_and_limits() {
             .all(|line| line.split_whitespace().nth(4) != Some("/sys/fs/cgroup")),
         "task unexpectedly retained a cgroup filesystem mount"
     );
-    for mountpoint in ["/bin", "/lib", "/lib64", "/usr"] {
+    // /lib64 exists only on some architectures.
+    for mountpoint in ["/bin", "/lib", "/lib64", "/usr"]
+        .into_iter()
+        .filter(|path| std::path::Path::new(path).exists())
+    {
         let mount = mountinfo_line(&state.mountinfo, mountpoint);
         let options = mount
             .split_whitespace()
@@ -2142,8 +2150,13 @@ fn every_seccomp_profile_rule_reports_a_policy_violation() {
         "unshare",
         "userfaultfd",
     ];
+    // fork and vfork are syscalls of their own only on x86_64; elsewhere libc
+    // implements them with clone.
+    #[cfg(target_arch = "x86_64")]
     const NATIVE_ONLY_BLOCKED: &[&str] =
         &["clone", "clone3", "fork", "socket", "socketpair", "vfork"];
+    #[cfg(not(target_arch = "x86_64"))]
+    const NATIVE_ONLY_BLOCKED: &[&str] = &["clone", "clone3", "socket", "socketpair"];
 
     let mut tasks = vec![task_with_file(
         "/usr/bin/gcc",
