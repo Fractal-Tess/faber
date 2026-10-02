@@ -1829,7 +1829,8 @@ impl Runtime {
     /// denied outright fails with `ENOSYS`, which programs treat like an
     /// older kernel. Derived from the Docker default profile with the
     /// interfaces Faber denies removed. Names unknown to this architecture
-    /// are skipped.
+    /// are skipped, and some syscalls go by different names on different
+    /// architectures (`newfstatat` is `fstatat` on ARM64), so both are listed.
     const ALLOWED_SYSCALLS: &'static [&'static str] = &[
         "accept",
         "accept4",
@@ -1900,6 +1901,7 @@ impl Runtime {
         "fsetxattr",
         "fstat",
         "fstat64",
+        "fstatat",
         "fstatat64",
         "fstatfs",
         "fstatfs64",
@@ -2007,7 +2009,6 @@ impl Runtime {
         "mq_timedsend_time64",
         "mq_unlink",
         "mremap",
-        "mseal",
         "msgctl",
         "msgget",
         "msgrcv",
@@ -2038,6 +2039,7 @@ impl Runtime {
         "preadv",
         "preadv2",
         "prlimit64",
+        "process_madvise",
         "process_mrelease",
         "pselect6",
         "pselect6_time64",
@@ -2148,6 +2150,7 @@ impl Runtime {
         "symlinkat",
         "sync",
         "sync_file_range",
+        "sync_file_range2",
         "syncfs",
         "sysinfo",
         "tee",
@@ -2218,6 +2221,10 @@ impl Runtime {
                 std::io::Error::other(format!("failed to build personality rules: {error}"))
             })?;
         rules.insert(libc::SYS_personality, personalities);
+        // mseal(2), Linux 6.10: newer than the syscall table this is built
+        // against, with the same number on every architecture. Loaders seal
+        // their mappings with it.
+        rules.insert(462, Vec::new());
 
         let architecture = std::env::consts::ARCH.try_into().map_err(|error| {
             std::io::Error::other(format!("unsupported seccomp architecture: {error}"))
@@ -2316,5 +2323,103 @@ impl Runtime {
         } else {
             Err(std::io::Error::last_os_error())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Runtime;
+    use syscalls::Sysno;
+
+    /// A dynamically linked program cannot start without these. Each entry
+    /// lists the names one syscall goes by across architectures.
+    #[test]
+    fn allowlist_covers_what_a_program_needs_to_start_on_this_architecture() {
+        let allowed =
+            |name: &str| Runtime::ALLOWED_SYSCALLS.contains(&name) && name.parse::<Sysno>().is_ok();
+        for alternatives in [
+            &["execve"][..],
+            &["openat"],
+            &["read"],
+            &["write"],
+            &["close"],
+            &["mmap"],
+            &["mprotect"],
+            &["munmap"],
+            &["brk"],
+            &["fstat"],
+            &["newfstatat", "fstatat"],
+            &["exit_group"],
+            &["rt_sigaction"],
+            &["rt_sigreturn"],
+            &["clone"],
+            &["wait4"],
+            &["set_tid_address"],
+            &["getrandom"],
+        ] {
+            assert!(
+                alternatives.iter().any(|name| allowed(name)),
+                "none of {alternatives:?} is allowed on this architecture"
+            );
+        }
+    }
+
+    /// Catches typos: a misspelt name would silently never be allowed.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn allowlist_names_are_syscalls_or_known_names_of_other_architectures() {
+        const OTHER_ARCHITECTURES: &[&str] = &[
+            "_llseek",
+            "_newselect",
+            "chown32",
+            "fadvise64_64",
+            "fchown32",
+            "fcntl64",
+            "fstat64",
+            "fstatat",
+            "fstatat64",
+            "fstatfs64",
+            "ftruncate64",
+            "getegid32",
+            "geteuid32",
+            "getgid32",
+            "getgroups32",
+            "getresgid32",
+            "getresuid32",
+            "getuid32",
+            "ipc",
+            "lchown32",
+            "lstat64",
+            "mmap2",
+            "recv",
+            "send",
+            "sendfile64",
+            "setfsgid32",
+            "setfsuid32",
+            "setgid32",
+            "setgroups32",
+            "setregid32",
+            "setresgid32",
+            "setresuid32",
+            "setreuid32",
+            "setuid32",
+            "sigprocmask",
+            "sigreturn",
+            "socketcall",
+            "stat64",
+            "statfs64",
+            "sync_file_range2",
+            "truncate64",
+            "ugetrlimit",
+            "waitpid",
+        ];
+        let unknown: Vec<&str> = Runtime::ALLOWED_SYSCALLS
+            .iter()
+            .copied()
+            .filter(|name| name.parse::<Sysno>().is_err())
+            .filter(|name| !OTHER_ARCHITECTURES.contains(name) && !name.ends_with("_time64"))
+            .filter(|name| !name.ends_with("time64") && *name != "clock_adjtime64")
+            .collect();
+        assert!(unknown.is_empty(), "not syscalls anywhere: {unknown:?}");
     }
 }
