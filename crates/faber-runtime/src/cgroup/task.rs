@@ -169,7 +169,11 @@ impl TaskCgroup {
             if let Ok(file) = File::open(&procs_path) {
                 let reader = BufReader::new(file);
                 for line in reader.lines().map_while(|line| line.ok()) {
-                    if let Ok(pid) = line.trim().parse::<i32>() {
+                    // Never 0 or below: kill(0) would signal our own
+                    // process group. See kill_listed_processes.
+                    if let Ok(pid) = line.trim().parse::<i32>()
+                        && pid > 0
+                    {
                         let _ = nix::sys::signal::kill(
                             nix::unistd::Pid::from_raw(pid),
                             nix::sys::signal::Signal::SIGKILL,

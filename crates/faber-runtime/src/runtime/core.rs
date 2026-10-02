@@ -431,11 +431,14 @@ impl Runtime {
     /// and PID namespace inits) and this request's cgroup subtree, then reap it.
     /// Other requests live in other request cgroups and are unaffected.
     fn terminate_request(child: Pid, request_cgroup: &RequestCgroup, child_reaped: bool) {
-        let _ = nix::sys::signal::kill(
-            Pid::from_raw(-child.as_raw()),
-            nix::sys::signal::Signal::SIGKILL,
-        );
+        // Signal by PID only while the jailer is unreaped: afterwards the
+        // number may belong to another request's jailer. Everything of this
+        // request is in its cgroup, which is killed below either way.
         if !child_reaped {
+            let _ = nix::sys::signal::kill(
+                Pid::from_raw(-child.as_raw()),
+                nix::sys::signal::Signal::SIGKILL,
+            );
             let _ = nix::sys::signal::kill(child, nix::sys::signal::Signal::SIGKILL);
         }
         request_cgroup.kill();

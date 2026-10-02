@@ -120,7 +120,7 @@ case "${1:-}" in
     test)
         require_cgroup_v2
         build_image
-        compose run --rm --no-TTY faber cargo test --workspace -- --test-threads=1
+        compose run --rm --no-TTY faber cargo test --workspace --no-fail-fast -- --test-threads=1
         ;;
     test-security)
         require_cgroup_v2

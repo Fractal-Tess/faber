@@ -54,7 +54,7 @@ async fn api_memory_limit_reports_out_of_memory() {
     let ExecutionStepResult::Single(TaskResult::Completed { stats, .. }) = &results[0] else {
         panic!("unexpected task result: {:?}", results[0]);
     };
-    assert_eq!(stats.outcome, TaskOutcome::OutOfMemory);
+    assert_eq!(stats.outcome, TaskOutcome::OutOfMemory, "{:?}", results[0]);
 }
 
 #[tokio::test(flavor = "current_thread")]

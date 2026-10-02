@@ -144,9 +144,13 @@ pub(crate) fn kill_cgroup_tree(path: &Path) {
 
 fn kill_listed_processes(path: &Path) {
     if let Ok(procs) = read_to_string(path.join("cgroup.procs")) {
+        // Never 0 or below: cgroup.procs prints 0 for a process it cannot
+        // name in this PID namespace, and kill(0) would signal our own
+        // process group.
         for pid in procs
             .lines()
             .filter_map(|line| line.trim().parse::<i32>().ok())
+            .filter(|pid| *pid > 0)
         {
             let _ = nix::sys::signal::kill(
                 nix::unistd::Pid::from_raw(pid),

@@ -3,6 +3,9 @@ use crate::types::{FileId, FileInfo, FileMetadata, StoredFile, UploadResult};
 use async_trait::async_trait;
 use bytes::Bytes;
 
+// async_trait marks the generated methods #[must_use]; their boxed futures
+// already are.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait FileStore: Send + Sync {
     async fn put(&self, content: Bytes, metadata: FileMetadata) -> StoreResult<UploadResult>;
