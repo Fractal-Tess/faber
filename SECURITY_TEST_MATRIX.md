@@ -12,7 +12,8 @@ kernel and CI environments; it is not a proof against unknown kernel defects.
 | Local CPU | AMD Ryzen 7 5825U, 8 cores/16 threads, AMD-V, `/dev/kvm` available | Native x86_64 execution; KVM is available but no Faber microVM backend exists |
 | GitHub hosted VM | Ubuntu 24.04, x86_64, rootful privileged Docker | Fresh-VM full suite and five-round adversarial repetition on every push/PR |
 | Production target | Debian glibc (`x86_64-unknown-linux-gnu`, plus the CI image's configured multi-arch platforms) | Compile check and production container execution |
-| Multi-architecture images | linux/amd64 and linux/arm64 | Build-only for ARM64; ARM64 sandbox behavior is not runtime-tested |
+| GitHub hosted ARM64 VM | Ubuntu 24.04, aarch64, rootful privileged Docker | The same full suite and five-round adversarial repetition on every push/PR |
+| Multi-architecture images | linux/amd64 and linux/arm64 | Both published; the amd64 image is smoke-tested and run through the language toolchain test on every push/PR |
 
 ## Executable attack coverage
 
@@ -53,7 +54,8 @@ suite must not be represented as protection from host-kernel compromise.
 - The `v2` allowlists are derived from the Docker default profile rather than
   traced from Faber's own workloads, so a legitimate but unlisted syscall fails
   with `ENOSYS`; the `v1` denylists allow everything not known to be dangerous.
-- ARM64 is build-tested but not runtime-tested.
+- The published ARM64 image itself is not smoke-tested (it is built under
+  emulation); ARM64 is covered by running the sandbox suites natively.
 - Sandbox identities are leased per service process; several Faber services on
   one kernel overlap unless each is given its own `SANDBOX_IDENTITY_BASE`.
 - Namespace isolation cannot prevent kernel vulnerabilities or all denial-of-service

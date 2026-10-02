@@ -333,9 +333,10 @@ The threat model, verified invariants and residual risks are in
 
 ## 📊 Status
 
-Tested on x86_64 and ARM64 with Linux 6.6 to 6.16 (5.8 is the minimum):
-sandbox acceptance and stress suites, a production-image smoke test, and C,
-C++, Python, Node.js, Java, Go and Rust toolchains under the default profile.
+Tested on every push: the sandbox acceptance and stress suites on x86_64 and
+ARM64, a production-image smoke test, and C, C++, Python, Node.js, Java, Go
+and Rust toolchains under the default profile (x86_64). The suites also pass
+on Linux 6.6, 6.12 and 6.16; 5.8 is the minimum.
 
 Not included: a gVisor or microVM backend, per-tenant keys and quotas, use of
 stored files as task inputs, and compile-artifact caching. See
