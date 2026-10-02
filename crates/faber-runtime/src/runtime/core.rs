@@ -30,7 +30,7 @@ type RlimitResource = libc::c_int;
 use crate::{
     CancellationToken,
     cgroup::{Cgroup, request::RequestCgroup, task::TaskCgroup},
-    container::Container,
+    container::{Container, SANDBOX_ROOTS},
     prelude::*,
     result::{ExecutionStepResult, RuntimeResult, TaskOutcome, TaskResult, TaskResultStats},
     runtime::{
@@ -165,6 +165,23 @@ struct CollectedOutput {
 impl Runtime {
     pub fn initialize() -> Result<()> {
         Cgroup::ensure_faber_cgroup_hierarchy()
+    }
+
+    /// Remove what a previous instance of the service left behind: sandbox
+    /// cgroups, with anything still running in them, and sandbox root
+    /// directories. For service startup only, before the first execution:
+    /// it assumes that no other runtime shares this process's cgroup.
+    pub fn reclaim_stale_sandboxes() -> Result<()> {
+        Cgroup::kill_active_tasks()?;
+        let Ok(roots) = std::fs::read_dir(SANDBOX_ROOTS) else {
+            return Ok(());
+        };
+        for root in roots.flatten() {
+            if let Err(error) = std::fs::remove_dir_all(root.path()) {
+                tracing::warn!(path = %root.path().display(), %error, "stale sandbox root not removed");
+            }
+        }
+        Ok(())
     }
 
     /// Configure the aggregate Faber cgroup for `task_slots` concurrently
