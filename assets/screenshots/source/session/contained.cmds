@@ -1,0 +1,8 @@
+cat jobs/fork-bomb.json
+
+for job in jobs/*.json; do
+  curl -s $FABER/execute -H "$AUTH" -H "$JSON" -d @$job |
+    jq -r --arg job $(basename $job .json) '.[0] | [$job, .stats.outcome,
+      .exit_code, "\(.stats.execution_time_ms)ms", .stats.oom_kill_count,
+      .stats.pids_limit_hit_count, ((.stdout + .stderr) | split("\n") | first // "")[0:50]] | @tsv'
+done | column -t -s $'\t' -N JOB,OUTCOME,EXIT,TIME,OOM,PIDS-HIT,OUTPUT

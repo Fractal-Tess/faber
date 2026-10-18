@@ -1,0 +1,17 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="style.css"></head><body>
+<div class="win big" style="width:1480px"><div class="bar"><i></i><i></i><i></i><span>bash · hostile jobs</span></div><pre><span class="p">~/faber-demo $ </span><span class="c">cat jobs/fork-bomb.json</span>
+[{<span class="k">&quot;cmd&quot;</span>: <span class="s">&quot;/bin/sh&quot;</span>, <span class="k">&quot;args&quot;</span>: [&quot;-c&quot;, &quot;f(){ f | f &amp; }; f&quot;]}]
+<span class="p">~/faber-demo $ </span><span class="c">for job in jobs/*.json; do</span>
+<span class="c">  curl -s $FABER/execute -H &quot;$AUTH&quot; -H &quot;$JSON&quot; -d @$job |</span>
+<span class="c">    jq -r --arg job $(basename $job .json) &#x27;.[0] | [$job, .stats.outcome,</span>
+<span class="c">      .exit_code, &quot;\(.stats.execution_time_ms)ms&quot;, .stats.oom_kill_count,</span>
+<span class="c">      .stats.pids_limit_hit_count, ((.stdout + .stderr) | split(&quot;\n&quot;) | first // &quot;&quot;)[0:50]] | @tsv&#x27;</span>
+<span class="c">done | column -t -s $&#x27;\t&#x27; -N JOB,OUTCOME,EXIT,TIME,OOM,PIDS-HIT,OUTPUT</span>
+<span class="h">JOB          OUTCOME        EXIT  TIME    OOM  PIDS-HIT  OUTPUT</span>
+fork-bomb    pids_limit     0     83ms    0    80        /bin/sh: 1: Cannot fork
+memory-hog   out_of_memory  137   206ms   1    0         
+network      exited         6     43ms    0    0         curl: (6) Could not resolve host: example.com
+read-shadow  exited         1     17ms    0    0         /bin/cat: /etc/shadow: No such file or directory
+spin         timed_out      137   5046ms  0    0         
+whoami       exited         0     37ms    0    0         nobody</pre></div>
+</body></html>

@@ -1,0 +1,11 @@
+cat primes.c
+
+jq -n --rawfile src primes.c '[
+  {cmd: "/usr/bin/gcc", args: ["-O2", "primes.c", "-o", "primes"],
+   files: {"primes.c": $src}},
+  {cmd: "./primes"}
+]' > job.json
+
+curl -s $FABER/execute -H "$AUTH" -H "$JSON" -d @job.json |
+  jq '.[] | {exit_code, stdout, outcome: .stats.outcome,
+             ms: .stats.execution_time_ms, peak_mem: .stats.memory_peak_bytes}'

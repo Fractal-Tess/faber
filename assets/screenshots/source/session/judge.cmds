@@ -1,0 +1,12 @@
+jq -n --rawfile src median.py '[
+  {cmd: "/usr/bin/python3", args: ["-m", "py_compile", "median.py"],
+   files: {"median.py": $src}},
+  [{cmd: "/usr/bin/python3", args: ["median.py"], stdin: "7 3 9"},
+   {cmd: "/usr/bin/python3", args: ["median.py"], stdin: "12 4 8 30"},
+   {cmd: "/usr/bin/python3", args: ["median.py"], stdin: "-5 -1 -9 0 2"}]
+]' > judge.json
+
+curl -s $FABER/execute -H "$AUTH" -H "$JSON" -d @judge.json |
+  jq -c 'flatten[] | [.stats.outcome, .exit_code, .stdout, .stats.execution_time_ms]'
+
+curl -s $FABER/metrics -H "$AUTH" | grep '^faber_tasks\|^faber_execute'

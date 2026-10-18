@@ -1,0 +1,13 @@
+curl -s $FABER/health; echo
+
+curl -s -w '  HTTP %{http_code}\n' $FABER/execute -H "$JSON" -d '[{"cmd": "/bin/true"}]'
+
+curl -s -w '  HTTP %{http_code}\n' $FABER/execute -H "$AUTH" -H "$JSON" \
+  -d '[{"cmd": "/bin/true", "sandbox_profile": "native_v1"}]'
+
+jq -nc '[[range(9) | {cmd: "/bin/true"}]]' |
+  curl -s -w '  HTTP %{http_code}\n' $FABER/execute -H "$AUTH" -H "$JSON" -d @-
+
+curl -s $FABER/execute -H "$AUTH" -H "$JSON" \
+  -d '[{"cmd": "/bin/sh", "args": ["-c", "yes faber | head -c 3000000"]}]' |
+  jq -c '.[0] | {bytes: (.stdout | length), truncated: .stats.stdout_truncated, outcome: .stats.outcome}'

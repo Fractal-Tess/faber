@@ -1,0 +1,1 @@
+[{"cmd": "/usr/bin/curl", "args": ["-sS", "-m", "3", "https://example.com"]}]

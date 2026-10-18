@@ -20,3 +20,7 @@ telemetry-id
 .changeset/*.md
 ! .changeset/config.json
 ! .changeset/README.md
+
+# README images: raw session transcripts, re-recorded when remaking images
+assets/screenshots/source/shots/
+assets/screenshots/source/session/*.json

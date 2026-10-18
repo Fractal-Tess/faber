@@ -1,0 +1,1 @@
+[{"cmd": "/bin/sh", "args": ["-c", "id -un; ls /"]}]

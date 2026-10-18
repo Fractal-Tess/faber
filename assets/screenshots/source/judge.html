@@ -1,0 +1,23 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="style.css"></head><body>
+<div class="win big" style="width:1300px"><div class="bar"><i></i><i></i><i></i><span>bash · one compile, three test cases in parallel</span></div><pre><span class="p">~/faber-demo $ </span><span class="c">jq -n --rawfile src median.py &#x27;[</span>
+<span class="c">  {cmd: &quot;/usr/bin/python3&quot;, args: [&quot;-m&quot;, &quot;py_compile&quot;, &quot;median.py&quot;],</span>
+<span class="c">   files: {&quot;median.py&quot;: $src}},</span>
+<span class="c">  [{cmd: &quot;/usr/bin/python3&quot;, args: [&quot;median.py&quot;], stdin: &quot;7 3 9&quot;},</span>
+<span class="c">   {cmd: &quot;/usr/bin/python3&quot;, args: [&quot;median.py&quot;], stdin: &quot;12 4 8 30&quot;},</span>
+<span class="c">   {cmd: &quot;/usr/bin/python3&quot;, args: [&quot;median.py&quot;], stdin: &quot;-5 -1 -9 0 2&quot;}]</span>
+<span class="c">]&#x27; &gt; judge.json</span>
+<span class="p">~/faber-demo $ </span><span class="c">curl -s $FABER/execute -H &quot;$AUTH&quot; -H &quot;$JSON&quot; -d @judge.json |</span>
+<span class="c">  jq -c &#x27;flatten[] | [.stats.outcome, .exit_code, .stdout, .stats.execution_time_ms]&#x27;</span>
+[&quot;exited&quot;,0,&quot;&quot;,70]
+[&quot;exited&quot;,0,&quot;7\n&quot;,57]
+[&quot;exited&quot;,0,&quot;10.0\n&quot;,50]
+[&quot;exited&quot;,0,&quot;-1\n&quot;,45]
+<span class="p">~/faber-demo $ </span><span class="c">curl -s $FABER/metrics -H &quot;$AUTH&quot; | grep &#x27;^faber_tasks\|^faber_execute&#x27;</span>
+faber_execute_responses_total{status=&quot;200&quot;} 8
+faber_tasks_total{outcome=&quot;exited&quot;} 9
+faber_tasks_total{outcome=&quot;out_of_memory&quot;} 1
+faber_tasks_total{outcome=&quot;pids_limit&quot;} 1
+faber_tasks_total{outcome=&quot;timed_out&quot;} 1
+faber_execute_duration_seconds_sum 5.880464
+faber_execute_duration_seconds_count 8</pre></div>
+</body></html>

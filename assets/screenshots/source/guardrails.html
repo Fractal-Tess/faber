@@ -1,0 +1,16 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="style.css"></head><body>
+<div class="win big" style="width:1420px"><div class="bar"><i></i><i></i><i></i><span>bash · what the API refuses</span></div><pre><span class="p">~/faber-demo $ </span><span class="c">curl -s $FABER/health; echo</span>
+{<span class="k">&quot;status&quot;</span>:<span class="s">&quot;ok&quot;</span>,<span class="k">&quot;version&quot;</span>:<span class="s">&quot;0.2.0&quot;</span>}
+<span class="p">~/faber-demo $ </span><span class="c">curl -s -w &#x27;  HTTP %{http_code}\n&#x27; $FABER/execute -H &quot;$JSON&quot; -d &#x27;[{&quot;cmd&quot;: &quot;/bin/true&quot;}]&#x27;</span>
+{<span class="k">&quot;error&quot;</span>:<span class="s">&quot;Missing or invalid API key&quot;</span>}  HTTP 401
+<span class="p">~/faber-demo $ </span><span class="c">curl -s -w &#x27;  HTTP %{http_code}\n&#x27; $FABER/execute -H &quot;$AUTH&quot; -H &quot;$JSON&quot; \</span>
+<span class="c">  -d &#x27;[{&quot;cmd&quot;: &quot;/bin/true&quot;, &quot;sandbox_profile&quot;: &quot;native_v1&quot;}]&#x27;</span>
+{<span class="k">&quot;error&quot;</span>:<span class="s">&quot;Requested sandbox profile is not allowed by service policy&quot;</span>}  HTTP 422
+<span class="p">~/faber-demo $ </span><span class="c">jq -nc &#x27;[[range(9) | {cmd: &quot;/bin/true&quot;}]]&#x27; |</span>
+<span class="c">  curl -s -w &#x27;  HTTP %{http_code}\n&#x27; $FABER/execute -H &quot;$AUTH&quot; -H &quot;$JSON&quot; -d @-</span>
+{<span class="k">&quot;error&quot;</span>:<span class="s">&quot;Task group exceeds configured execution limits&quot;</span>}  HTTP 422
+<span class="p">~/faber-demo $ </span><span class="c">curl -s $FABER/execute -H &quot;$AUTH&quot; -H &quot;$JSON&quot; \</span>
+<span class="c">  -d &#x27;[{&quot;cmd&quot;: &quot;/bin/sh&quot;, &quot;args&quot;: [&quot;-c&quot;, &quot;yes faber | head -c 3000000&quot;]}]&#x27; |</span>
+<span class="c">  jq -c &#x27;.[0] | {bytes: (.stdout | length), truncated: .stats.stdout_truncated, outcome: .stats.outcome}&#x27;</span>
+{<span class="k">&quot;bytes&quot;</span>:1048576,<span class="k">&quot;truncated&quot;</span>:true,<span class="k">&quot;outcome&quot;</span>:<span class="s">&quot;output_limit&quot;</span>}</pre></div>
+</body></html>

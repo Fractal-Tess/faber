@@ -2,7 +2,7 @@
 
 How to deploy Faber, what to watch, and what to do when something goes wrong.
 The security model is in [SECURITY.md](SECURITY.md); every setting is listed
-in the [README](README.md#️-configuration).
+in [INSTALL.md](INSTALL.md#configuration).
 
 ## What you are deploying
 
@@ -20,8 +20,8 @@ so **the Faber container is root-equivalent on its host**. Plan for that:
 
 ## Deployment
 
-Use `docker/prod/docker-compose.yaml`, or the equivalent `docker run` from the
-README. The parts that matter:
+Use `docker/prod/docker-compose.yaml`, or the equivalent `docker run` in
+[INSTALL.md](INSTALL.md). The parts that matter:
 
 | Setting | Why |
 |---|---|

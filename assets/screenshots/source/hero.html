@@ -1,0 +1,53 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="style.css"></head><body>
+<div class="win" style="left:56px;top:52px;width:900px"><div class="bar"><i></i><i></i><i></i><span>bash · compile and run C</span></div><pre><span class="p">~/faber-demo $ </span><span class="c">cat primes.c</span>
+#include &lt;stdio.h&gt;
+
+int main(void) {
+    int found = 0;
+    for (int n = 2; found &lt; 10; n++) {
+        int prime = 1;
+        for (int d = 2; d * d &lt;= n; d++)
+            if (n % d == 0) { prime = 0; break; }
+        if (prime) { printf(&quot;%d &quot;, n); found++; }
+    }
+    putchar(&#x27;\n&#x27;);
+    return 0;
+}
+<span class="p">~/faber-demo $ </span><span class="c">jq -n --rawfile src primes.c &#x27;[</span>
+<span class="c">  {cmd: &quot;/usr/bin/gcc&quot;, args: [&quot;-O2&quot;, &quot;primes.c&quot;, &quot;-o&quot;, &quot;primes&quot;],</span>
+<span class="c">   files: {&quot;primes.c&quot;: $src}},</span>
+<span class="c">  {cmd: &quot;./primes&quot;}</span>
+<span class="c">]&#x27; &gt; job.json</span>
+<span class="p">~/faber-demo $ </span><span class="c">curl -s $FABER/execute -H &quot;$AUTH&quot; -H &quot;$JSON&quot; -d @job.json |</span>
+<span class="c">  jq &#x27;.[] | {exit_code, stdout, outcome: .stats.outcome,</span>
+<span class="c">             ms: .stats.execution_time_ms, peak_mem: .stats.memory_peak_bytes}&#x27;</span>
+{
+  <span class="k">&quot;exit_code&quot;</span>: <span class="n">0</span>,
+  <span class="k">&quot;stdout&quot;</span>: <span class="s">&quot;&quot;</span>,
+  <span class="k">&quot;outcome&quot;</span>: <span class="s">&quot;exited&quot;</span>,
+  <span class="k">&quot;ms&quot;</span>: <span class="n">140</span>,
+  <span class="k">&quot;peak_mem&quot;</span>: <span class="n">7258112</span>
+}
+{
+  <span class="k">&quot;exit_code&quot;</span>: <span class="n">0</span>,
+  <span class="k">&quot;stdout&quot;</span>: <span class="s">&quot;2 3 5 7 11 13 17 19 23 29 \n&quot;</span>,
+  <span class="k">&quot;outcome&quot;</span>: <span class="s">&quot;exited&quot;</span>,
+  <span class="k">&quot;ms&quot;</span>: <span class="n">15</span>,
+  <span class="k">&quot;peak_mem&quot;</span>: <span class="n">786432</span>
+}</pre></div>
+<div class="win small" style="right:52px;bottom:64px;width:1010px"><div class="bar"><i></i><i></i><i></i><span>bash · hostile jobs</span></div><pre><span class="p">~/faber-demo $ </span><span class="c">cat jobs/fork-bomb.json</span>
+[{<span class="k">&quot;cmd&quot;</span>: <span class="s">&quot;/bin/sh&quot;</span>, <span class="k">&quot;args&quot;</span>: [&quot;-c&quot;, &quot;f(){ f | f &amp; }; f&quot;]}]
+<span class="p">~/faber-demo $ </span><span class="c">for job in jobs/*.json; do</span>
+<span class="c">  curl -s $FABER/execute -H &quot;$AUTH&quot; -H &quot;$JSON&quot; -d @$job |</span>
+<span class="c">    jq -r --arg job $(basename $job .json) &#x27;.[0] | [$job, .stats.outcome,</span>
+<span class="c">      .exit_code, &quot;\(.stats.execution_time_ms)ms&quot;, .stats.oom_kill_count,</span>
+<span class="c">      .stats.pids_limit_hit_count, ((.stdout + .stderr) | split(&quot;\n&quot;) | first // &quot;&quot;)[0:50]] | @tsv&#x27;</span>
+<span class="c">done | column -t -s $&#x27;\t&#x27; -N JOB,OUTCOME,EXIT,TIME,OOM,PIDS-HIT,OUTPUT</span>
+<span class="h">JOB          OUTCOME        EXIT  TIME    OOM  PIDS-HIT  OUTPUT</span>
+fork-bomb    pids_limit     0     83ms    0    80        /bin/sh: 1: Cannot fork
+memory-hog   out_of_memory  137   206ms   1    0         
+network      exited         6     43ms    0    0         curl: (6) Could not resolve host: example.com
+read-shadow  exited         1     17ms    0    0         /bin/cat: /etc/shadow: No such file or directory
+spin         timed_out      137   5046ms  0    0         
+whoami       exited         0     37ms    0    0         nobody</pre></div>
+</body></html>
